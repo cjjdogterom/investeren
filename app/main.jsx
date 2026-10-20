@@ -16,6 +16,7 @@ const THEMES = [
 const TABS = [
   { key: 'dashboard',    label: 'Dashboard' },
   { key: 'transacties',  label: 'Transacties' },
+  { key: 'verdeling',    label: 'Verdeling' },
   { key: 'pensioen',     label: 'Pensioen' },
 ];
 
@@ -644,6 +645,7 @@ function App() {
   const skipNextAutosaveRef = React.useRef(false);
   const [isMobile, setIsMobile] = React.useState(() => window.matchMedia('(max-width: 767px)').matches);
   const [mobileTab, setMobileTab] = React.useState('home');
+  const [mobilePartijenView, setMobilePartijenView] = React.useState('lijst');
   const [mobileAddTrigger, setMobileAddTrigger] = React.useState(0);
   const [mobileDetailPartyId, setMobileDetailPartyId] = React.useState(null);
   const [mobileTxOpen, setMobileTxOpen] = React.useState(false);
@@ -1305,6 +1307,9 @@ function App() {
           {activeTab === 'transacties' && (
             <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
           )}
+          {activeTab === 'verdeling' && (
+            <AllocationTab state={state} setState={setSyncedState} summaries={summaries} />
+          )}
           {activeTab === 'pensioen' && (
             <PensionTab summaries={summaries} />
           )}
@@ -1427,10 +1432,20 @@ function App() {
               onUpdateMeesman={updateMeesmanNav} />
           )}
           {mobileTab === 'partijen' && (
-            <MobilePartijenView summaries={summaries}
-              onOpenParty={partyId => setMobileDetailPartyId(partyId)}
-              onQuickAdd={() => { setMobileTab('home'); setMobileAddTrigger(t => t + 1); }}
-            />
+            <>
+              <div style={{ display: 'flex', gap: 6, padding: '14px 14px 0' }}>
+                <FilterChip active={mobilePartijenView === 'lijst'} onClick={() => setMobilePartijenView('lijst')}>Partijen</FilterChip>
+                <FilterChip active={mobilePartijenView === 'verdeling'} onClick={() => setMobilePartijenView('verdeling')}>Verdeling</FilterChip>
+              </div>
+              {mobilePartijenView === 'verdeling' ? (
+                <AllocationTab state={state} setState={setSyncedState} summaries={summaries} isMobile />
+              ) : (
+                <MobilePartijenView summaries={summaries}
+                  onOpenParty={partyId => setMobileDetailPartyId(partyId)}
+                  onQuickAdd={() => { setMobileTab('home'); setMobileAddTrigger(t => t + 1); }}
+                />
+              )}
+            </>
           )}
           {mobileTab === 'transacties' && (
             <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
@@ -1446,6 +1461,9 @@ function App() {
           )}
           {activeTab === 'transacties' && (
             <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
+          )}
+          {activeTab === 'verdeling' && (
+            <AllocationTab state={state} setState={setSyncedState} summaries={summaries} />
           )}
           {activeTab === 'pensioen' && (
             <PensionTab summaries={summaries} />

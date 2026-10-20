@@ -264,10 +264,24 @@ function Dashboard({ state, setState, tweaks, setTweaks, spotStatus, onRefreshSp
     });
   }, [setState]);
 
+  const deleteParty = React.useCallback((id, { deleteTransactions = false } = {}) => {
+    setState(s => {
+      const next = { ...s, parties: (s.parties || []).filter(p => p.id !== id) };
+      if (deleteTransactions) {
+        const stamp = new Date().toISOString();
+        const prevDeleted = s.deletedTransactionIds || {};
+        const tombstones = { ...prevDeleted };
+        for (const t of (s.transactions || [])) if (t.party === id) tombstones[t.id] = stamp;
+        next.transactions = (s.transactions || []).filter(t => t.party !== id);
+        next.deletedTransactionIds = tombstones;
+      }
+      return next;
+    });
+  }, [setState]);
   const deleteCustomParty = React.useCallback(id => {
     if (!confirm('Partij verwijderen? Bijbehorende transacties blijven bestaan.')) return;
-    setState(s => ({ ...s, parties: (s.parties || []).filter(p => p.id !== id) }));
-  }, [setState]);
+    deleteParty(id, { deleteTransactions: false });
+  }, [deleteParty]);
 
   // Render a widget by id
   const renderWidget = (wCfg) => {
@@ -731,6 +745,8 @@ function Dashboard({ state, setState, tweaks, setTweaks, spotStatus, onRefreshSp
       <AddPartyModal
         open={addPartyOpen} onClose={() => { setAddPartyOpen(false); setEditParty(null); }}
         onSave={saveCustomParty} initial={editParty} parties={allParties}
+        onDelete={(id, opts) => { deleteParty(id, opts); setAddPartyOpen(false); setEditParty(null); setDetailPartyId(null); }}
+        txCount={editParty ? (state.transactions || []).filter(t => t.party === editParty.id).length : 0}
       />
     </div>
   );
@@ -1210,7 +1226,7 @@ const COLOR_PRESETS = [
   'oklch(62% 0.13 170)','oklch(72% 0.22 310)','oklch(55% 0.05 160)',
 ];
 
-function AddPartyModal({ open, onClose, onSave, initial, parties = [] }) {
+function AddPartyModal({ open, onClose, onSave, initial, parties = [], onDelete, txCount = 0 }) {
   const blank = p => ({
     name:     p?.name     || '',
     subtitle: p?.subtitle || '',
@@ -1226,7 +1242,9 @@ function AddPartyModal({ open, onClose, onSave, initial, parties = [] }) {
     includeInTimeChart: (p?.includeInTimeChart ?? p?.includeInPortfolio) !== false,
   });
   const [form, setForm] = React.useState(() => blank(initial));
-  React.useEffect(() => { if (open) setForm(blank(initial)); }, [open, initial]);
+  const [confirmDel, setConfirmDel] = React.useState(false);
+  const [alsoDelTx, setAlsoDelTx] = React.useState(false);
+  React.useEffect(() => { if (open) { setForm(blank(initial)); setConfirmDel(false); setAlsoDelTx(false); } }, [open, initial]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const categoryOptions = React.useMemo(() => {
     const seen = new Set();
@@ -1354,8 +1372,41 @@ function AddPartyModal({ open, onClose, onSave, initial, parties = [] }) {
           </label>
         </div>
       </div>
+      {initial && confirmDel && (
+        <div style={{ padding:'14px 22px', background:'color-mix(in oklab, var(--negative) 10%, var(--surface-2))',
+          borderTop:'1px solid var(--border)' }}>
+          <div style={{ fontSize:13, fontWeight:600, color:'var(--fg)', marginBottom:6 }}>
+            Partij "{initial.name}" definitief verwijderen?
+          </div>
+          <div style={{ fontSize:12, color:'var(--fg-muted)', lineHeight:1.5, marginBottom:10 }}>
+            {txCount > 0
+              ? <>Deze partij heeft <strong style={{ color:'var(--fg)' }}>{txCount}</strong> transactie{txCount===1?'':'s'}. Standaard blijven die bestaan en verschijnen ze losstaand in je overzicht.</>
+              : 'Er zijn geen transacties aan deze partij gekoppeld.'}
+          </div>
+          {txCount > 0 && (
+            <label style={{ display:'flex', gap:8, alignItems:'center', fontSize:12, color:'var(--fg)', cursor:'pointer', marginBottom:10 }}>
+              <input type="checkbox" checked={alsoDelTx} onChange={e => setAlsoDelTx(e.target.checked)}
+                style={{ accentColor:'var(--negative)' }} />
+              Verwijder óók de {txCount} transactie{txCount===1?'':'s'} (gesynct naar Supabase).
+            </label>
+          )}
+          <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+            <Button variant="ghost" onClick={() => setConfirmDel(false)}>Terug</Button>
+            <Button variant="danger"
+              onClick={() => onDelete && onDelete(initial.id, { deleteTransactions: txCount > 0 && alsoDelTx })}
+              style={{ background:'var(--negative)', color:'#fff', borderColor:'var(--negative)' }}>
+              Definitief verwijderen
+            </Button>
+          </div>
+        </div>
+      )}
       <div style={{ padding:'12px 22px 18px', display:'flex', justifyContent:'space-between', gap:10, borderTop:'1px solid var(--border)', background:'var(--surface-2)' }}>
-        <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+        <div style={{ display:'flex', gap:8 }}>
+          <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+          {initial && onDelete && !confirmDel && (
+            <Button variant="danger" onClick={() => setConfirmDel(true)}>Verwijderen</Button>
+          )}
+        </div>
         <Button variant="primary" onClick={submit} style={{ opacity:valid?1:0.4 }}>
           {initial ? 'Opslaan' : 'Toevoegen'}
         </Button>
