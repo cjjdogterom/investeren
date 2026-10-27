@@ -1,624 +1,566 @@
-// Modals: add/edit transaction, party detail
+// Overlays (S4): TransactionSheet (add / edit) and TxDetailSheet.
 
-function Modal({ open, onClose, children, width = 520 }) {
-  const touchStart = React.useRef(null);
-  React.useEffect(() => {
-    if (!open) return;
-    const k = e => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [open, onClose]);
-  const handleTouchStart = e => {
-    const t = e.touches?.[0];
-    if (!t) return;
-    touchStart.current = { x: t.clientX, y: t.clientY };
-  };
-  const handleTouchEnd = e => {
-    const start = touchStart.current;
-    const t = e.changedTouches?.[0];
-    touchStart.current = null;
-    if (!start || !t) return;
-    const dx = t.clientX - start.x;
-    const dy = t.clientY - start.y;
-    if (dx > 80 && Math.abs(dy) < 60) onClose();
-  };
-  if (!open) return null;
-  return (
-    <div className="modal-backdrop" onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(10,10,10,0.45)',
-      backdropFilter:'blur(4px)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
-      <div className="modal-panel" onClick={e => e.stopPropagation()}
-        onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}
-        style={{ background:'var(--surface)',
-        border:'1px solid var(--border-strong)', borderRadius:'var(--radius-lg)',
-        width, maxWidth:'100%', maxHeight:'92vh', overflow:'auto',
-        boxShadow:'0 20px 60px rgba(0,0,0,0.35)' }}>
-        {children}
-      </div>
-    </div>
-  );
+injectStyles('modals', `
+.md-lead { margin: 0 0 12px; color: var(--fg-muted); font-size: 14px; }
+.md-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.md-type { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-2);
+  background: var(--surface); color: var(--fg); font: inherit; text-align: left; cursor: pointer; transition: background var(--d-1) var(--ease), border-color var(--d-1) var(--ease); }
+.md-type:hover { background: var(--surface-2); border-color: var(--border-strong); }
+.md-type[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.md-type__icon { width: 36px; height: 36px; border-radius: var(--r-2); background: var(--surface-2); display: grid; place-items: center; flex-shrink: 0; color: var(--fg); }
+.md-type__label { font-weight: 600; font-size: 14px; display: block; }
+.md-type__hint { color: var(--fg-muted); font-size: 12.5px; display: block; }
+.md-form { display: grid; gap: 16px; }
+.md-row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.md-typebar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-2); background: var(--surface-2); }
+.md-typebar__label { font-weight: 600; font-size: 14px; }
+.md-typebar__hint { color: var(--fg-muted); font-size: 13px; flex: 1; }
+.md-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.md-note { font-size: 12.5px; color: var(--warn); display: flex; align-items: center; gap: 6px; }
+.md-live { font-size: 13px; color: var(--fg-muted); background: var(--surface-2); border-radius: var(--r-2); padding: 8px 12px; }
+.md-live b { color: var(--fg); font-weight: 600; }
+.md-live .md-gain { color: var(--gain); }
+.md-fee { display: flex; gap: 8px; align-items: flex-start; }
+.md-fee .money-input, .md-fee > div:last-child { flex: 1; }
+.md-feeconv { font-size: 12.5px; color: var(--fg-muted); margin-top: 6px; }
+.md-addlink { background: none; border: 0; padding: 0; color: var(--fg-muted); font: 500 13px var(--font); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.md-addlink:hover { color: var(--fg); }
+.md-foot { display: flex; align-items: center; gap: 8px; width: 100%; }
+.md-foot__reason { flex: 1; font-size: 12.5px; color: var(--fg-subtle); min-width: 0; }
+.md-dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 0; font-size: 14px; }
+.md-dl dt { color: var(--fg-muted); }
+.md-dl dd { margin: 0; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.md-dl dd.md-dl__note { text-align: left; white-space: pre-wrap; }
+.md-detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.md-detail-amt { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; }
+.md-detail-amt.is-income { color: var(--gain); }
+.md-detail-amt.is-muted { color: var(--fg-muted); }
+.md-party { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+@media (max-width: 767.98px) {
+  .md-type { min-height: 72px; }
+  .md-dl { font-size: 15px; }
+}
+`);
+
+const MD_FORM_KEYS = ['party', 'type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'valueEur', 'feeEur', 'metalType', 'silverUnit', 'goldUnit', 'instrument', 'note'];
+const MD_TILE_ORDER = ['inleg', 'koop', 'verkoop', 'opname', 'dividend', 'rente', 'waardering', 'kosten', 'cashback'];
+const MD_SHORT = { cashback: 'Cashback', rente: 'Rente', kosten: 'Kosten' };
+const MD_METAL_TYPES = ['koop', 'verkoop', 'waardering', 'dividend', 'opname'];
+const MD_INSTR_TYPES = ['koop', 'verkoop', 'cashback', 'dividend'];
+const MD_FEE_TYPES = ['koop', 'verkoop', 'cashback'];
+
+function mdShortLabel(type) { return MD_SHORT[type] || TX_LABELS[type] || type; }
+function mdIsMixed(p) { return !!(p && (p.isMixed || p.unit === 'mixed')); }
+function mdUnitBased(p) { return !!p && (mdIsMixed(p) || ['part', 'crypto', 'gram', 'ounce'].includes(p.unit)); }
+
+// Number → editable nl-NL string (no grouping), '' for empty.
+function mdNum(v) {
+  if (v === '' || v == null) return '';
+  const n = +v;
+  if (!Number.isFinite(n)) return '';
+  return new Intl.NumberFormat('nl-NL', { useGrouping: false, maximumFractionDigits: 8 }).format(n);
 }
 
-function TransactionModal({ open, onClose, onSave, preset, parties, initial, transactions = [] }) {
-  const blank = (i, p) => ({
-    party:       i?.party       || p?.party       || parties[0].id,
-    type:        i?.type        || p?.type        || 'koop',
-    date:        i?.date        || new Date().toISOString().slice(0, 10),
-    amountEur:   i?.amountEur   ?? '',
-    quantity:    i?.quantity    ?? '',
-    unitPriceEur:i?.unitPriceEur ?? '',
-    orderValueEur:i?.amountEur   ?? '',
-    valueEur:    i?.valueEur    ?? '',
-    metalType:   i?.metalType   || 'goud',
-    silverUnit:  i?.silverUnit  || 'gram',
-    goldUnit:    i?.goldUnit    || 'gram',
-    instrument:  i?.instrument  || '',
-    feeMode:     'eur',
-    feeEur:      i?.feeEur      ?? '',
-    note:        i?.note        || '',
-  });
-
-  const [form, setForm] = React.useState(() => blank(initial, preset));
-
-  React.useEffect(() => {
-    if (open) setForm(blank(initial, preset));
-  }, [open, preset, initial]);
-
-  const party = parties.find(p => p.id === form.party) || parties[0];
-  const isMetal   = party.unit === 'gram' || party.unit === 'ounce';
-  const isMixed   = !!party.isMixed;
-  const isT212    = party.id === 'trading212';
-  const isUnitParty = party.unit === 'part'; // participaties / aandelen (use unitPriceEur for waardering)
-  const isGoldrepublicOrder = isMixed && ['koop', 'verkoop'].includes(form.type);
-
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const calcUnitPriceFromOrder = (quantity, orderValue) => {
-    const qty = +quantity || 0;
-    const value = +orderValue || 0;
-    return qty > 0 && value > 0 ? +(value / qty).toFixed(6) : null;
-  };
-  const setQuantity = v => setForm(f => {
-    const next = { ...f, quantity: v };
-    if (party.isMixed && ['koop', 'verkoop'].includes(f.type) && f.orderValueEur !== '') {
-      const px = calcUnitPriceFromOrder(v, f.orderValueEur);
-      if (px != null) next.unitPriceEur = px;
-    }
-    return next;
-  });
-  const setOrderValue = v => setForm(f => {
-    const next = { ...f, orderValueEur: v };
-    const px = calcUnitPriceFromOrder(f.quantity, v);
-    if (px != null) next.unitPriceEur = px;
-    return next;
-  });
-  const setUnitPrice = v => setForm(f => {
-    const next = { ...f, unitPriceEur: v };
-    if (party.isMixed && ['koop', 'verkoop'].includes(f.type) && f.quantity !== '') {
-      const total = (+f.quantity || 0) * (+v || 0);
-      next.orderValueEur = total > 0 ? +total.toFixed(2) : '';
-    }
-    return next;
-  });
-
-  // What fields are required for this transaction type?
-  const needs = (() => {
-    switch (form.type) {
-      case 'inleg': case 'opname': case 'rente': case 'kosten':
-        return ['amountEur'];
-      case 'koop': case 'verkoop': case 'cashback': case 'dividend':
-        return ['quantity', 'unitPriceEur'];
-      case 'waardering':
-        if (party.unit === 'bundle') return ['valueEur'];  // altijd totale portefeuillewaarde, nooit per stuk
-        if (isMetal || isMixed) return ['quantity'];
-        if (isUnitParty || party.unit === 'crypto') return ['unitPriceEur'];
-        return ['valueEur'];
-      default: return [];
-    }
-  })();
-
-  // Compute fee EUR from form (convert % → EUR if needed)
-  const calculatedUnitPriceEur = isGoldrepublicOrder
-    ? calcUnitPriceFromOrder(form.quantity, form.orderValueEur)
-    : null;
-  const effectiveUnitPriceEur = calculatedUnitPriceEur ?? (+form.unitPriceEur || 0);
-  const orderValue = (+form.quantity || 0) * effectiveUnitPriceEur;
-  const feeEurCalc = form.feeMode === 'pct' && orderValue > 0
-    ? (orderValue * (+form.feeEur || 0)) / 100
-    : +form.feeEur || 0;
-
-  const valid = form.party && form.type && form.date
-    && needs.every(n => {
-      const value = n === 'unitPriceEur' && calculatedUnitPriceEur != null
-        ? calculatedUnitPriceEur
-        : form[n];
-      return value !== '' && !Number.isNaN(+value);
-    });
-
-  // Unique instruments used in T212 transactions, sorted alphabetically
-  const t212Instruments = React.useMemo(() => {
-    const names = transactions
-      .filter(t => t.party === 'trading212' && t.instrument)
-      .map(t => t.instrument);
-    return [...new Set(names)].sort();
-  }, [transactions]);
-
-  const submit = () => {
-    if (!valid) return;
-    const tx = { id: initial?.id || makeId(), party: form.party, type: form.type, date: form.date };
-    if (form.note)         tx.note = form.note;
-    if (form.instrument)   tx.instrument = form.instrument.trim();
-    if (isMixed && (form.type === 'koop' || form.type === 'verkoop' || form.type === 'waardering' || form.type === 'dividend')) {
-      tx.metalType = form.metalType;
-      if (form.metalType === 'zilver') tx.silverUnit = form.silverUnit;
-      if (form.metalType === 'goud')   tx.goldUnit   = form.goldUnit;
-    }
-    for (const k of needs) {
-      tx[k] = k === 'unitPriceEur' && calculatedUnitPriceEur != null
-        ? +calculatedUnitPriceEur
-        : +form[k];
-    }
-    if (isGoldrepublicOrder && +form.orderValueEur > 0) {
-      tx.amountEur = +form.orderValueEur;
-    }
-    if (feeEurCalc > 0) tx.feeEur = +feeEurCalc.toFixed(4);
-    onSave(tx);
-    onClose();
-  };
-
-  const showFee = ['koop','verkoop','cashback'].includes(form.type);
-  const unitLabel = isMixed
-    ? (form.metalType === 'goud'
-        ? (form.goldUnit === 'ounce' ? 'ounce' : 'gram')
-        : (form.silverUnit === 'gram' ? 'gram' : 'ounce'))
-    : isMetal ? party.unit
-    : party.unit === 'crypto'  ? party.unitLabel
-    : party.unit === 'bundle'  ? '€'
-    : 'stuks';
-
-  // Filter types for Trading 212 (cashback makes most sense there)
-  const typeOptions = TX_TYPES.filter(t => {
-    if (t.key === 'cashback' && !isT212) return false;
-    // Bundle (Top 25): alleen inleg / opname / waardering
-    if (party.unit === 'bundle' && ['koop','verkoop','cashback','dividend','rente'].includes(t.key)) return false;
-    return true;
-  });
-
-  // Waardering for Meesman — show NAV per participatie field
-  const isMeesman = party.id === 'meesman';
-
-  return (
-    <Modal open={open} onClose={onClose} width={720}>
-      <div style={{ padding:'20px 22px 10px', borderBottom:'1px solid var(--border)' }}>
-        <div style={{ fontFamily:'var(--ff-display)', fontSize:24, fontWeight:500, letterSpacing:'-0.01em' }}>
-          {initial ? 'Transactie bewerken' : 'Nieuwe transactie'}
-        </div>
-        <div style={{ fontSize:13, color:'var(--fg-muted)', marginTop:4 }}>
-          Leg inleg, koop, verkoop of een waardering-update vast.
-        </div>
-      </div>
-
-      <div style={{ padding:22, display:'grid', gap:14 }}>
-        {/* Party + Type */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-          <Field label="Partij">
-            <Select value={form.party} onChange={e => set('party', e.target.value)}>
-              {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="Type">
-            <Select value={form.type} onChange={e => set('type', e.target.value)}>
-              {typeOptions.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </Select>
-          </Field>
-        </div>
-
-        {/* Date */}
-        <Field label="Datum">
-          <Input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
-        </Field>
-
-        {/* Trading 212: instrument selector */}
-        {isT212 && ['koop','verkoop','cashback','dividend'].includes(form.type) && (
-          <Field label="Instrument (aandeel / ETF)" hint="Typ een ticker of naam. Eerder gebruikte instrumenten verschijnen als suggesties.">
-            <div style={{ position:'relative' }}>
-              <input
-                list="t212-instruments"
-                value={form.instrument}
-                onChange={e => set('instrument', e.target.value)}
-                placeholder="bijv. VWCE, AAPL, VOO..."
-                style={{ ...inputStyle, width:'100%' }}
-              />
-              <datalist id="t212-instruments">
-                {t212Instruments.map(name => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-            </div>
-          </Field>
-        )}
-
-        {/* Goldrepublic: metal type selector */}
-        {isMixed && (form.type === 'koop' || form.type === 'verkoop' || form.type === 'waardering') && (
-          <>
-            <Field label="Metaal">
-              <div style={{ display:'flex', gap:8 }}>
-                {[{k:'goud',l:'Goud'},{k:'zilver',l:'Zilver'}].map(opt => (
-                  <button key={opt.k} onClick={() => set('metalType', opt.k)} type="button"
-                    style={{ flex:1, padding:'9px 12px', background:form.metalType===opt.k?'var(--fg)':'var(--surface-2)',
-                      color:form.metalType===opt.k?'var(--bg)':'var(--fg)',
-                      border:'1px solid '+(form.metalType===opt.k?'var(--fg)':'var(--border)'),
-                      borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontSize:13, fontWeight:500 }}>
-                    {opt.l}
-                  </button>
-                ))}
-              </div>
-            </Field>
-            {/* Zilver: eenheidskeuze gram of ounce */}
-            {form.metalType === 'zilver' && (
-              <Field label="Zilver eenheid" hint="1 troy ounce = 31,1 gram">
-                <div style={{ display:'flex', gap:8 }}>
-                  {[{k:'ounce',l:'Ounce (oz)'},{k:'gram',l:'Gram (g)'}].map(opt => (
-                    <button key={opt.k} onClick={() => set('silverUnit', opt.k)} type="button"
-                      style={{ flex:1, padding:'9px 12px', background:form.silverUnit===opt.k?'var(--fg)':'var(--surface-2)',
-                        color:form.silverUnit===opt.k?'var(--bg)':'var(--fg)',
-                        border:'1px solid '+(form.silverUnit===opt.k?'var(--fg)':'var(--border)'),
-                        borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontSize:13, fontWeight:500 }}>
-                      {opt.l}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-            )}
-            {/* Goud: eenheidskeuze gram of ounce */}
-            {form.metalType === 'goud' && (
-              <Field label="Goud eenheid" hint="1 troy ounce = 31,1 gram">
-                <div style={{ display:'flex', gap:8 }}>
-                  {[{k:'gram',l:'Gram (g)'},{k:'ounce',l:'Ounce (oz)'}].map(opt => (
-                    <button key={opt.k} onClick={() => set('goldUnit', opt.k)} type="button"
-                      style={{ flex:1, padding:'9px 12px', background:form.goldUnit===opt.k?'var(--fg)':'var(--surface-2)',
-                        color:form.goldUnit===opt.k?'var(--bg)':'var(--fg)',
-                        border:'1px solid '+(form.goldUnit===opt.k?'var(--fg)':'var(--border)'),
-                        borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontSize:13, fontWeight:500 }}>
-                      {opt.l}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-            )}
-          </>
-        )}
-
-        {/* Cash flows: inleg / opname / rente / kosten */}
-        {['inleg','opname','rente','kosten'].includes(form.type) && (
-          <Field label="Bedrag (€)">
-            <Input type="number" step="0.01" placeholder="0,00" value={form.amountEur} onChange={e => set('amountEur', e.target.value)} />
-          </Field>
-        )}
-
-        {/* koop / verkoop / cashback / dividend — quantity + unit price */}
-        {['koop','verkoop','cashback','dividend'].includes(form.type) && (
-          <>
-            <div style={{ display:'grid', gridTemplateColumns:isGoldrepublicOrder ? 'repeat(auto-fit, minmax(150px, 1fr))' : '1fr 1fr', gap:12 }}>
-              <Field label={`Aantal (${unitLabel})`}>
-                <Input type="number" step="0.0001" placeholder="0" value={form.quantity}
-                  onChange={e => setQuantity(e.target.value)} />
-              </Field>
-              {isGoldrepublicOrder && (
-                <Field label="Orderwaarde (€)">
-                  <Input type="number" step="0.01" placeholder="0,00" value={form.orderValueEur}
-                    onChange={e => setOrderValue(e.target.value)} />
-                </Field>
-              )}
-              <Field label={`Prijs per ${unitLabel} (€)`}>
-                <Input type="number" step="0.0001" placeholder="0,00" value={form.unitPriceEur}
-                  onChange={e => setUnitPrice(e.target.value)} />
-              </Field>
-            </div>
-            {/* Order total preview */}
-            {orderValue > 0 && (
-              <div style={{ fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)',
-                background:'var(--surface-2)', padding:'8px 12px', borderRadius:'var(--radius)' }}>
-                {form.type === 'dividend' ? 'Herbelegging: ' : 'Orderbedrag: '}
-                <span style={{ color: form.type === 'dividend' ? 'var(--positive)' : 'var(--fg)', fontWeight:500 }}>
-                  {fmtEur(orderValue, {decimals:2})}
-                </span>
-                {form.type === 'dividend' && (
-                  <span style={{ marginLeft:8, opacity:0.65 }}>· telt niet mee als inleg</span>
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Waardering */}
-        {form.type === 'waardering' && (
-          party.unit === 'bundle' ? (
-            <Field label="Totale portefeuillewaarde (€)" hint="Vul de huidige totale waarde van je gehele Top 25 bundel in. Winst/verlies wordt automatisch berekend.">
-              <Input type="number" step="0.01" value={form.valueEur} onChange={e => set('valueEur', e.target.value)} />
-            </Field>
-          ) : (isMetal || isMixed) ? (
-            <Field
-              label={`Totaal ${unitLabel} in bezit`}
-              hint="Huidige waarde wordt berekend via spot-prijs.">
-              <Input type="number" step="0.0001" value={form.quantity} onChange={e => set('quantity', e.target.value)} />
-            </Field>
-          ) : (isUnitParty || party.unit === 'crypto') ? (
-            <Field label="Koers / NAV per stuk (€)" hint="De huidige marktkoers of NAV per participatie/aandeel/token.">
-              <Input type="number" step="0.0001" value={form.unitPriceEur} onChange={e => set('unitPriceEur', e.target.value)} />
-            </Field>
-          ) : (
-            <Field label="Huidige totale waarde (€)" hint="Vervangt de laatste waardering voor deze partij.">
-              <Input type="number" step="0.01" value={form.valueEur} onChange={e => set('valueEur', e.target.value)} />
-            </Field>
-          )
-        )}
-
-        {/* Transaction fee */}
-        {showFee && (
-          <div>
-            <div style={{ fontSize:11, fontWeight:500, color:'var(--fg-muted)', marginBottom:8, textTransform:'uppercase', letterSpacing:'0.05em' }}>
-              Transactiekosten (optioneel)
-            </div>
-            <div style={{ display:'flex', gap:8, alignItems:'stretch' }}>
-              {/* Toggle € / % */}
-              <div style={{ display:'flex', border:'1px solid var(--border)', borderRadius:'var(--radius)', overflow:'hidden' }}>
-                {['eur','pct'].map(m => (
-                  <button key={m} onClick={() => set('feeMode', m)} type="button"
-                    style={{ padding:'9px 14px', background:form.feeMode===m?'var(--fg)':'var(--surface-2)',
-                      color:form.feeMode===m?'var(--bg)':'var(--fg-muted)',
-                      border:'none', cursor:'pointer', fontFamily:'var(--ff-mono)', fontSize:12, fontWeight:500 }}>
-                    {m === 'eur' ? '€' : '%'}
-                  </button>
-                ))}
-              </div>
-              <div style={{ flex:1 }}>
-                <Input type="number" step="0.01" min="0"
-                  placeholder={form.feeMode==='eur' ? '0,00' : '0.50'}
-                  value={form.feeEur} onChange={e => set('feeEur', e.target.value)} />
-              </div>
-              {form.feeMode === 'pct' && orderValue > 0 && +form.feeEur > 0 && (
-                <div style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)', whiteSpace:'nowrap', paddingLeft:4 }}>
-                  = {fmtEur(feeEurCalc, {decimals:2})}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Note */}
-        <Field label="Notitie (optioneel)">
-          <Textarea rows="2" value={form.note} onChange={e => set('note', e.target.value)} />
-        </Field>
-      </div>
-
-      <div style={{ padding:'14px 22px 20px', display:'flex', justifyContent:'space-between', gap:10,
-        borderTop:'1px solid var(--border)', background:'var(--surface-2)' }}>
-        <Button variant="ghost" onClick={onClose}>Annuleren</Button>
-        <Button variant="primary" onClick={submit} style={{ opacity:valid?1:0.4 }}>
-          {initial ? 'Opslaan' : 'Toevoegen'}
-        </Button>
-      </div>
-    </Modal>
-  );
-}
-
-// ===== Party detail drawer =====
-function PartyDetail({ open, onClose, party, summary, onAddTx, onDeleteTx, onEditTx, spots }) {
-  if (!open || !party) return null;
-  return (
-    <Modal open={open} onClose={onClose} width={960}>
-      <div className="party-detail-header" style={{ padding:'22px 26px 16px', borderBottom:'1px solid var(--border)',
-        display:'flex', alignItems:'start', justifyContent:'space-between', gap:18 }}>
-        <div>
-          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
-            <div style={{ width:10, height:10, borderRadius:3, background:party.color }} />
-            <Pill tone="neutral">{party.category}</Pill>
-          </div>
-          <div style={{ fontFamily:'var(--ff-display)', fontSize:28, fontWeight:500, letterSpacing:'-0.02em', lineHeight:1 }}>
-            {party.name}
-          </div>
-          <div style={{ fontSize:13, color:'var(--fg-muted)', marginTop:4 }}>{party.subtitle}</div>
-        </div>
-        <div className="party-detail-actions" style={{ display:'flex', gap:8, flexShrink:0 }}>
-          <Button variant="secondary" onClick={() => onAddTx({ party: party.id, type: 'waardering' })}>Waarde updaten</Button>
-          <Button variant="primary"   onClick={() => onAddTx({ party: party.id })}>+ Transactie</Button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="party-detail-stats" style={{ padding:22, display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, borderBottom:'1px solid var(--border)' }}>
-        <Stat label="Huidige waarde" value={fmtEur(summary.currentValueEur)} />
-        <Stat label="Ingelegd"       value={fmtEur(summary.invested)} />
-        <Stat label="Rendement €"    value={<Delta value={summary.pnl} format="eur" />} />
-        <Stat label="Rendement %"    value={<Delta value={summary.pnlPct} />} />
-      </div>
-
-      {/* Metal detail for gram/ounce parties */}
-      {(party.unit === 'gram' || party.unit === 'ounce') && (
-        <div style={{ padding:'12px 22px', background:'var(--surface-2)', borderBottom:'1px solid var(--border)',
-          display:'flex', gap:24, fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)' }}>
-          <span>Bezit: <span style={{ color:'var(--fg)' }}>{fmtQty(summary.quantity, party.unit)}</span></span>
-          <span>Spot: <span style={{ color:'var(--fg)' }}>{fmtEur(spotEurForParty(party, spots), {decimals:2})} / {party.unit}</span></span>
-          {summary.avgCost && <span>Gem. aankoop: <span style={{ color:'var(--fg)' }}>{fmtEur(summary.avgCost, {decimals:2})} / {party.unit}</span></span>}
-        </div>
-      )}
-
-      {/* Crypto holdings */}
-      {party.unit === 'crypto' && (
-        <div style={{ padding:'12px 22px', background:'var(--surface-2)', borderBottom:'1px solid var(--border)',
-          display:'flex', gap:24, fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)', flexWrap:'wrap' }}>
-          <span>Bezit: <span style={{ color:'var(--fg)' }}>{fmtQty(summary.quantity, party.unitLabel || party.unit, { decimals: 8 })}</span></span>
-          {summary.currentUnitPrice && <span>Koers: <span style={{ color:'var(--fg)' }}>{fmtEur(summary.currentUnitPrice, {decimals:2})}</span></span>}
-          {summary.avgCost && <span>Gem. aankoop: <span style={{ color:'var(--fg)' }}>{fmtEur(summary.avgCost, {decimals:2})}</span></span>}
-        </div>
-      )}
-
-      {/* Goldrepublic mixed metals */}
-      {party.isMixed && (
-        <div style={{ padding:'12px 22px', background:'var(--surface-2)', borderBottom:'1px solid var(--border)',
-          display:'flex', gap:24, fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)' }}>
-          <span>Goud: <span style={{ color:'oklch(78% 0.14 85)' }}>{fmtQty(summary.goldQty || 0, 'g')}</span></span>
-          <span>Zilver: <span style={{ color:'oklch(70% 0.03 240)' }}>{fmtQty(summary.silverQty || 0, 'oz')}</span></span>
-          <span>Spot goud: <span style={{ color:'var(--fg)' }}>{fmtEur(spots.goldSpotEurPerGram, {decimals:2})}/g</span></span>
-          <span>Spot zilver: <span style={{ color:'var(--fg)' }}>{fmtEur(spots.silverSpotEurPerOunce, {decimals:2})}/oz</span></span>
-        </div>
-      )}
-
-      {/* Fees + cashback summary */}
-      {(summary.totalFees > 0 || summary.totalCashback > 0) && (
-        <div style={{ padding:'10px 22px', background:'var(--surface-2)', borderBottom:'1px solid var(--border)',
-          display:'flex', gap:24, fontSize:12, color:'var(--fg-muted)', fontFamily:'var(--ff-mono)' }}>
-          {summary.totalFees > 0 && <span>Kosten betaald: <span style={{ color:'var(--negative)' }}>−{fmtEur(summary.totalFees, {decimals:2})}</span></span>}
-          {summary.totalCashback > 0 && <span>Via cashback: <span style={{ color:'var(--positive)' }}>{fmtEur(summary.totalCashback, {decimals:2})}</span></span>}
-        </div>
-      )}
-
-      <div style={{ padding:22 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:'var(--fg-muted)', textTransform:'uppercase', letterSpacing:'0.06em' }}>
-            Transacties ({summary.transactions.length})
-          </div>
-        </div>
-        <TxTable txs={[...summary.transactions].reverse()} party={party} onDelete={onDeleteTx} onEdit={onEditTx} />
-      </div>
-    </Modal>
-  );
-}
-
-function Stat({ label, value }) {
-  return (
-    <div>
-      <div style={{ fontSize:11, color:'var(--fg-muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>{label}</div>
-      <div style={{ fontSize:20, fontFamily:'var(--ff-mono)', fontWeight:500, color:'var(--fg)' }}>{value}</div>
-    </div>
-  );
-}
-
-function TxTable({ txs, party, onDelete, onEdit }) {
-  if (!txs.length) return <div style={{ fontSize:13, color:'var(--fg-dim)', padding:'24px 0' }}>Nog geen transacties.</div>;
-
-  // Bepaal de unit-label voor "aantal"
-  const unitLabel = party?.isMixed
-    ? '' // bij goldrepublic wisselt het per transactie
-    : party?.unit === 'crypto' ? (party.unitLabel || '')
-    : party?.unit === 'gram'   ? 'g'
-    : party?.unit === 'ounce'  ? 'oz'
-    : party?.unit === 'part'   ? 'part.'
-    : party?.unit === 'eur'    ? ''
-    : '';
-
-  // Helper om "aantal" netjes te tonen voor een transactie
-  const renderQty = (t) => {
-    if (t.quantity == null) return <span style={{ color:'var(--fg-dim)' }}>—</span>;
-    const sign = (t.type === 'verkoop' || t.type === 'opname') ? '−' : '';
-    const u = party?.isMixed
-      ? ((t.metalType === 'zilver' || t.silverUnit) ? (t.silverUnit === 'gram' ? 'g' : 'oz') : 'g')
-      : unitLabel;
-    return <span>{sign}{fmtQty(Math.abs(+t.quantity), u || '')}</span>;
-  };
-
-  // Helper voor "prijs per stuk"
-  const renderPrice = (t) => {
-    if (t.unitPriceEur == null) return <span style={{ color:'var(--fg-dim)' }}>—</span>;
-    return fmtEur(t.unitPriceEur, { decimals: 2 });
-  };
-
-  // Helper voor "totaal" — gebruikt amountEur als die er is, anders qty × price, of valueEur voor waarderingen
-  const renderTotal = (t) => {
-    let value = null;
-    if (t.type === 'waardering' && t.valueEur != null) value = +t.valueEur;
-    else if (t.amountEur != null) value = +t.amountEur;
-    else if (t.quantity != null && t.unitPriceEur != null) value = +t.quantity * +t.unitPriceEur;
-
-    if (value == null) return <span style={{ color:'var(--fg-dim)' }}>—</span>;
-
-    const positive = ['inleg', 'dividend', 'rente', 'cashback'].includes(t.type);
-    const negative = ['opname', 'verkoop', 'kosten'].includes(t.type);
-    const color = positive ? 'var(--positive)' : negative ? 'var(--negative)' : 'var(--fg)';
-    const sign  = positive ? '+' : negative ? '−' : '';
-    return <span style={{ color }}>{sign}{fmtEur(value, { decimals: 2 })}</span>;
-  };
-
-  return (
-    <div style={{ border:'1px solid var(--border)', borderRadius:'var(--radius)', overflow:'hidden' }}>
-      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-        <thead>
-          <tr style={{ background:'var(--surface-2)', color:'var(--fg-muted)', fontSize:11,
-            textTransform:'uppercase', letterSpacing:'0.05em' }}>
-            <th style={{ ...th, width:'22%' }}>Datum</th>
-            <th style={{ ...th, textAlign:'right', width:'24%' }}>Aantal</th>
-            <th style={{ ...th, textAlign:'right', width:'22%' }}>Prijs</th>
-            <th style={{ ...th, textAlign:'right', width:'22%' }}>Totaal</th>
-            <th style={{ ...th, width:'10%', textAlign:'right' }}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {txs.map(t => (
-            <tr key={t.id} style={{ borderTop:'1px solid var(--border)' }}>
-              <td style={{ ...td, fontFamily:'var(--ff-mono)', color:'var(--fg)' }}>
-                {fmtDate(t.date)}
-                {t.type !== 'koop' && (
-                  <div style={{ fontSize:10, color:'var(--fg-dim)', textTransform:'uppercase',
-                    letterSpacing:'0.04em', marginTop:2 }}>
-                    {TX_LABELS[t.type] || t.type}
-                  </div>
-                )}
-              </td>
-              <td style={{ ...td, textAlign:'right', fontFamily:'var(--ff-mono)' }}>{renderQty(t)}</td>
-              <td style={{ ...td, textAlign:'right', fontFamily:'var(--ff-mono)', color:'var(--fg-muted)' }}>{renderPrice(t)}</td>
-              <td style={{ ...td, textAlign:'right', fontFamily:'var(--ff-mono)', fontWeight:500 }}>{renderTotal(t)}</td>
-              <td style={{ ...td, textAlign:'right', whiteSpace:'nowrap' }}>
-                {onEdit && (
-                  <button onClick={() => onEdit(t)} title="Bewerken"
-                    style={{ background:'transparent', border:'none', color:'var(--fg-dim)',
-                      cursor:'pointer', fontSize:12, padding:'4px 6px', fontFamily:'inherit' }}>✎</button>
-                )}
-                <button onClick={() => onDelete(t.id)} title="Verwijder"
-                  style={{ background:'transparent', border:'none', color:'var(--fg-dim)',
-                    cursor:'pointer', fontSize:16, padding:'4px 6px' }}>×</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-const th = { padding:'10px 12px', textAlign:'left', fontWeight:500 };
-const td = { padding:'10px 12px', verticalAlign:'middle' };
-
-function txTone(type) {
-  if (['inleg','dividend','rente','cashback'].includes(type)) return 'positive';
-  if (['opname','kosten','verkoop'].includes(type)) return 'negative';
-  if (type === 'waardering') return 'accent';
-  return 'neutral';
-}
-
-function formatTxAmount(t, party) {
-  const rawUnit = party?.isMixed ? (t.metalType === 'zilver' ? 'ounce' : 'gram') : party?.unit;
-  const unit = rawUnit === 'crypto' ? (party?.unitLabel || rawUnit) : rawUnit;
-  switch (t.type) {
-    case 'inleg': case 'rente':
-      return <span style={{ color:'var(--positive)' }}>+{fmtEur(t.amountEur)}</span>;
-    case 'dividend':
-      if (t.quantity != null && t.unitPriceEur != null)
-        return <span style={{ color:'var(--positive)' }}>{fmtQty(t.quantity, unit==='eur'?'stuks':unit)} × {fmtEur(t.unitPriceEur,{decimals:2})} <span style={{ fontSize:10, color:'var(--positive)', opacity:0.7 }}>div.</span></span>;
-      return <span style={{ color:'var(--positive)' }}>+{fmtEur(t.amountEur)}</span>;
-    case 'cashback':
-      if (t.quantity != null) return <span style={{ color:'var(--positive)' }}>{fmtQty(t.quantity, unit==='eur'?'stuks':unit)} × {fmtEur(t.unitPriceEur,{decimals:2})}</span>;
-      return <span style={{ color:'var(--positive)' }}>+{fmtEur(t.amountEur)}</span>;
-    case 'opname': case 'kosten':
-      return <span style={{ color:'var(--negative)' }}>−{fmtEur(t.amountEur)}</span>;
-    case 'koop':
-      return <span>{fmtQty(t.quantity, unit==='eur'?'stuks':unit)} × {fmtEur(t.unitPriceEur,{decimals:2})}</span>;
-    case 'verkoop':
-      return <span>−{fmtQty(t.quantity, unit==='eur'?'stuks':unit)} × {fmtEur(t.unitPriceEur,{decimals:2})}</span>;
+function mdNeeds(type, party) {
+  const unit = party ? party.unit : null;
+  switch (type) {
+    case 'inleg': case 'rente': case 'kosten': return ['amountEur'];
+    case 'opname': return mdUnitBased(party) ? ['quantity'] : ['amountEur'];
+    case 'koop': case 'verkoop': case 'cashback': case 'dividend': return ['quantity', 'unitPriceEur'];
     case 'waardering':
-      if (unit==='gram'||unit==='ounce') return fmtQty(t.quantity, unit);
-      if (t.unitPriceEur != null) return `NAV ${fmtEur(t.unitPriceEur,{decimals:2})}`;
-      return fmtEur(t.valueEur);
-    default: return '';
+      if (unit === 'bundle') return ['valueEur'];
+      if (mdIsMixed(party) || unit === 'gram' || unit === 'ounce') return ['quantity'];
+      if (unit === 'part' || unit === 'crypto') return ['unitPriceEur'];
+      return ['valueEur'];
+    default: return [];
   }
 }
 
-Object.assign(window, { Modal, TransactionModal, PartyDetail, Stat, TxTable, th, td, txTone, formatTxAmount });
+function mdFormUnitLabel(form, party) {
+  if (!party) return 'stuks';
+  if (mdIsMixed(party)) {
+    return form.metalType === 'zilver' ? (form.silverUnit === 'gram' ? 'gram' : 'ounce') : (form.goldUnit === 'ounce' ? 'ounce' : 'gram');
+  }
+  if (party.unit === 'gram') return 'gram';
+  if (party.unit === 'ounce') return 'ounce';
+  if (party.unit === 'crypto') return party.unitLabel || 'stuks';
+  if (party.unit === 'part') return party.unitLabel || 'stuks';
+  return 'stuks';
+}
+
+function mdBlank(initial, preset, today) {
+  const i = initial || {};
+  const p = preset || {};
+  const f = {
+    party: i.party || p.party || '',
+    type: i.type || p.type || '',
+    date: i.date || today,
+    amountEur: mdNum(i.amountEur),
+    quantity: mdNum(i.quantity),
+    unitPriceEur: mdNum(i.unitPriceEur),
+    orderValueEur: mdNum(i.amountEur),
+    valueEur: mdNum(i.valueEur),
+    optAmount: mdNum(i.amountEur),
+    metalType: i.metalType || 'goud',
+    silverUnit: i.silverUnit || 'gram',
+    goldUnit: i.goldUnit || 'gram',
+    instrument: i.instrument || '',
+    feeMode: 'eur',
+    feeEur: mdNum(i.feeEur),
+    note: i.note || '',
+  };
+  if (initial && ['koop', 'verkoop', 'cashback', 'dividend'].includes(i.type)
+      && +i.quantity > 0 && +i.amountEur > 0 && !(+i.unitPriceEur > 0)) {
+    f.unitPriceEur = mdNum(+(+i.amountEur / +i.quantity).toFixed(6));
+  }
+  return f;
+}
+
+function mdTypeIcon(type) { return (TX_TYPE_META[type] && TX_TYPE_META[type].icon) || 'circle-plus'; }
+
+function TransactionSheet({ app, open, preset, initial, onClose }) {
+  const parties = (app && app.model && app.model.parties) || [];
+  const byId = React.useMemo(() => Object.fromEntries(parties.map(p => [p.id, p])), [parties]);
+  const today = todayIsoLocal();
+  const isEdit = !!initial;
+  const [form, setForm] = useState(() => mdBlank(initial, preset, today));
+  const [step, setStep] = useState(1);
+  const [typeNote, setTypeNote] = useState(null);
+  const [feeOpen, setFeeOpen] = useState(false);
+  const [tried, setTried] = useState(false);
+  const firstFieldRef = useRef(null);
+
+  const defaultPartyFor = React.useCallback(type => {
+    const ok = p => p && (!type || allowedTxTypes(p).includes(type));
+    const recent = ((app && app.prefs && app.prefs.recentParties) || []).map(id => byId[id]).find(ok);
+    if (recent) return recent.id;
+    const open1 = ((app && app.model && app.model.open) || []).map(s => s.party).find(ok);
+    if (open1) return open1.id;
+    const any = parties.find(ok) || parties[0];
+    return any ? any.id : '';
+  }, [app, byId, parties]);
+
+  useEffect(() => {
+    if (!open) return;
+    const f = mdBlank(initial, preset, todayIsoLocal());
+    if (!initial && f.type && !f.party) f.party = defaultPartyFor(f.type);
+    setForm(f);
+    setStep(initial || (preset && preset.type) ? 2 : 1);
+    setTypeNote(null);
+    setTried(false);
+    setFeeOpen(!!(initial && +initial.feeEur > 0));
+  }, [open, preset, initial]); // eslint-disable-line
+
+  const party = byId[form.party] || null;
+  const orphanId = isEdit && initial.party && !byId[initial.party] ? initial.party : null;
+
+  const allowedFor = (p, partyId) => {
+    if (!p) return TX_TYPES.map(t => t.key);
+    const base = allowedTxTypes(p);
+    if (isEdit && partyId === initial.party && !base.includes(initial.type)) return [...base, initial.type];
+    return base;
+  };
+
+  // Re-validate type when party changes.
+  const changeParty = id => {
+    setForm(f => {
+      const p = byId[id];
+      const allowed = allowedFor(p, id);
+      if (f.type && p && !allowed.includes(f.type)) {
+        const nt = allowed[0];
+        setTypeNote(`Type aangepast naar ${TX_LABELS[nt]}`);
+        return { ...f, party: id, type: nt };
+      }
+      setTypeNote(null);
+      return { ...f, party: id };
+    });
+  };
+  const changeType = t => {
+    setTypeNote(null);
+    setForm(f => ({ ...f, type: t }));
+  };
+  const pickTile = t => {
+    setForm(f => {
+      let pid = f.party;
+      if (!pid || !allowedTxTypes(byId[pid] || {}).includes(t)) pid = (preset && preset.party) || defaultPartyFor(t);
+      return { ...f, type: t, party: pid };
+    });
+    setTypeNote(null);
+    setStep(2);
+  };
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const isMixed = mdIsMixed(party);
+  const isGoldOrder = isMixed && ['koop', 'verkoop'].includes(form.type);
+  const calcPx = (q, ov) => { const qty = parseNlNumber(q) || 0, val = parseNlNumber(ov) || 0; return qty > 0 && val > 0 ? +(val / qty).toFixed(6) : null; };
+  const setQuantity = v => setForm(f => {
+    const n = { ...f, quantity: v };
+    if (isGoldOrder && f.orderValueEur !== '') { const px = calcPx(v, f.orderValueEur); if (px != null) n.unitPriceEur = mdNum(px); }
+    return n;
+  });
+  const setOrderValue = v => setForm(f => {
+    const n = { ...f, orderValueEur: v };
+    const px = calcPx(f.quantity, v); if (px != null) n.unitPriceEur = mdNum(px);
+    return n;
+  });
+  const setUnitPrice = v => setForm(f => {
+    const n = { ...f, unitPriceEur: v };
+    if (isGoldOrder && f.quantity !== '') {
+      const tot = (parseNlNumber(f.quantity) || 0) * (parseNlNumber(v) || 0);
+      n.orderValueEur = tot > 0 ? mdNum(+tot.toFixed(2)) : '';
+    }
+    return n;
+  });
+
+  const needs = mdNeeds(form.type, party);
+  const unitLabel = mdFormUnitLabel(form, party);
+  const calculatedPx = isGoldOrder ? calcPx(form.quantity, form.orderValueEur) : null;
+  const parsed = {
+    amountEur: parseNlNumber(form.amountEur),
+    quantity: parseNlNumber(form.quantity),
+    unitPriceEur: calculatedPx != null ? calculatedPx : parseNlNumber(form.unitPriceEur),
+    valueEur: parseNlNumber(form.valueEur),
+  };
+  const qtyN = parsed.quantity || 0;
+  const pxN = parsed.unitPriceEur || 0;
+  const orderValue = qtyN * pxN;
+  const feeRaw = parseNlNumber(form.feeEur) || 0;
+  const showFee = MD_FEE_TYPES.includes(form.type);
+  const feeEur = !showFee ? 0 : (form.feeMode === 'pct' ? (orderValue > 0 ? orderValue * feeRaw / 100 : 0) : feeRaw);
+  const showInstrument = party && party.id === 'trading212' && MD_INSTR_TYPES.includes(form.type);
+  const showMetal = isMixed && MD_METAL_TYPES.includes(form.type);
+  const showOptAmount = form.type === 'opname' && mdUnitBased(party);
+
+  const errors = {};
+  for (const k of needs) {
+    const v = parsed[k];
+    if (v == null || !Number.isFinite(v)) {
+      errors[k] = k === 'quantity' ? 'Vul een aantal in' : k === 'unitPriceEur' ? 'Prijs moet groter zijn dan 0' : 'Vul een bedrag in';
+    } else if ((k === 'quantity' || k === 'unitPriceEur') && !(v > 0)) {
+      errors[k] = k === 'quantity' ? 'Vul een aantal in' : 'Prijs moet groter zijn dan 0';
+    } else if ((k === 'amountEur' || k === 'valueEur') && v < 0) {
+      errors[k] = 'Vul een bedrag in';
+    }
+  }
+  const baseValid = !!(form.party && form.type && /^\d{4}-\d{2}-\d{2}$/.test(form.date || ''));
+  const valid = baseValid && Object.keys(errors).length === 0;
+  const reason = !form.party ? 'Kies een partij' : !form.date ? 'Kies een datum' : Object.values(errors)[0] || null;
+  const errFor = k => (errors[k] && (tried || (form[k] !== '' && form[k] != null))) ? errors[k] : null;
+
+  const t212Instruments = React.useMemo(() => {
+    const names = ((app && app.state && app.state.transactions) || []).filter(t => t.party === 'trading212' && t.instrument).map(t => t.instrument);
+    return [...new Set(names)].sort();
+  }, [app && app.state && app.state.transactions]); // eslint-disable-line
+
+  const submit = () => {
+    setTried(true);
+    if (!valid) return;
+    const base = initial ? Object.fromEntries(Object.entries(initial).filter(([k]) => !MD_FORM_KEYS.includes(k) && k !== 'updatedAt')) : {};
+    const tx = { ...base, id: (initial && initial.id) || makeId(), party: form.party, type: form.type, date: form.date };
+    if (form.note.trim()) tx.note = form.note.trim();
+    if (showInstrument && form.instrument.trim()) tx.instrument = form.instrument.trim();
+    if (showMetal) {
+      tx.metalType = form.metalType;
+      if (form.metalType === 'zilver') tx.silverUnit = form.silverUnit; else tx.goldUnit = form.goldUnit;
+    }
+    for (const k of needs) tx[k] = Number(parsed[k]);
+    const ov = parseNlNumber(form.orderValueEur) || 0;
+    if (isGoldOrder && ov > 0) tx.amountEur = ov;
+    if (showOptAmount) { const oa = parseNlNumber(form.optAmount) || 0; if (oa > 0) tx.amountEur = oa; }
+    if (feeEur > 0) tx.feeEur = +feeEur.toFixed(4);
+    app.saveTx(tx);
+    onClose && onClose();
+  };
+
+  const onKeyDown = e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && step === 2) { e.preventDefault(); submit(); }
+  };
+
+  // Live line
+  const liveLine = (() => {
+    if (!party || !form.type) return null;
+    if (['koop', 'verkoop', 'cashback'].includes(form.type) && orderValue > 0) {
+      return <>Orderbedrag <b className="num">{fmtMoney(orderValue, { decimals: 2 })}</b>
+        {feeEur > 0 && <> · {form.type === 'verkoop' ? 'netto' : 'totaal'} <b className="num">{fmtMoney(form.type === 'verkoop' ? orderValue - feeEur : orderValue + feeEur, { decimals: 2 })}</b></>}</>;
+    }
+    if (form.type === 'dividend' && orderValue > 0) {
+      return <>Herbelegging <b className="num md-gain">{fmtMoney(orderValue, { decimals: 2 })}</b> · telt niet mee als inleg</>;
+    }
+    if (form.type === 'waardering' && needs[0] === 'valueEur') {
+      const prev = ((app.state && app.state.transactions) || [])
+        .filter(t => t.party === party.id && t.type === 'waardering' && t.valueEur != null && t.valueEur !== '' && (!initial || t.id !== initial.id))
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (!prev) return null;
+      const diff = parsed.valueEur != null ? parsed.valueEur - +prev.valueEur : null;
+      return <>Vorige waardering <b className="num">{fmtMoney(+prev.valueEur)}</b> · {fmtDateShort(prev.date)}
+        {diff != null && <> · verschil <b className="num">{fmtMoney(diff, { sign: true })}</b></>}</>;
+    }
+    if (form.type === 'inleg' && (party.unit === 'bundle' || party.unit === 'eur') && parsed.amountEur > 0) {
+      const sm = app.model && app.model.byId && app.model.byId[party.id];
+      if (!sm) return null;
+      return <>Nieuwe waarde {party.name}: <b className="num">{fmtMoney((sm.currentValueEur || 0) + parsed.amountEur)}</b></>;
+    }
+    return null;
+  })();
+
+  const presetParty = preset && preset.party ? byId[preset.party] : null;
+  const tileTypes = MD_TILE_ORDER.filter(k => k !== 'cashback' || (presetParty && allowedTxTypes(presetParty).includes('cashback')));
+  const recent = ((app.prefs && app.prefs.recentParties) || []).map(id => byId[id]).filter(Boolean).slice(0, 5);
+
+  const typeOptions = party ? allowedFor(party, party.id) : TX_TYPES.map(t => t.key);
+  const ids = 'md-tx';
+
+  const footer = step === 2 ? (
+    <div className="md-foot">
+      <span className="md-foot__reason">{!valid && reason ? reason : <span className="sr-only">Ctrl+Enter om op te slaan</span>}</span>
+      <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+      <Button variant="primary" disabled={!valid} onClick={submit} data-testid="tx-submit">{isEdit ? 'Opslaan' : 'Toevoegen'}</Button>
+    </div>
+  ) : null;
+
+  return (
+    <Sheet open={open} onClose={onClose} testId="tx-sheet" width={520}
+      title={isEdit ? 'Transactie bewerken' : 'Nieuwe transactie'}
+      subtitle="Leg inleg, koop, verkoop of een waardering vast."
+      onBack={!isEdit && step === 2 && !(preset && preset.type) ? () => setStep(1) : undefined}
+      footer={footer}>
+      {step === 1 ? (
+        <div>
+          <p className="md-lead">Wat wil je vastleggen?</p>
+          <div className="md-types">
+            {tileTypes.map(k => {
+              const disabled = !!(presetParty && !allowedTxTypes(presetParty).includes(k));
+              return (
+                <button key={k} type="button" className="md-type" data-testid={`tx-type-${k}`} aria-disabled={disabled || undefined}
+                  onClick={() => { if (!disabled) pickTile(k); }}>
+                  <span className="md-type__icon"><Icon name={mdTypeIcon(k)} size={18} /></span>
+                  <span><span className="md-type__label">{mdShortLabel(k)}</span><span className="md-type__hint">{TX_TYPE_META[k] ? TX_TYPE_META[k].hint : ''}</span></span>
+                </button>
+              );
+            })}
+          </div>
+          {presetParty && (
+            <p className="md-lead" style={{ marginTop: 12, fontSize: 13 }}>Voor {presetParty.name}. Niet beschikbare types zijn uitgeschakeld.</p>
+          )}
+        </div>
+      ) : (
+        <div className="md-form" onKeyDown={onKeyDown}>
+          {isEdit ? (
+            <Field label="Type" htmlFor={`${ids}-type`}>
+              <Select id={`${ids}-type`} value={form.type} onChange={e => changeType(e.target.value)}>
+                {typeOptions.map(k => <option key={k} value={k}>{TX_LABELS[k]}</option>)}
+              </Select>
+            </Field>
+          ) : (
+            <div className="md-typebar">
+              <span className="md-type__icon"><Icon name={mdTypeIcon(form.type)} size={18} /></span>
+              <span className="md-typebar__label">{TX_LABELS[form.type]}</span>
+              <span className="md-typebar__hint">{TX_TYPE_META[form.type] ? TX_TYPE_META[form.type].hint : ''}</span>
+              {!(preset && preset.type) && <Button size="sm" variant="ghost" onClick={() => setStep(1)}>Wijzig</Button>}
+            </div>
+          )}
+          {typeNote && <div className="md-note" role="status"><Icon name="info" size={14} />{typeNote}</div>}
+
+          <Field label="Partij" htmlFor={`${ids}-party`}
+            hint={party && party.unit === 'bundle' ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
+            {recent.length > 0 && (
+              <div className="md-chips">
+                {recent.map(p => (
+                  <Chip key={p.id} active={form.party === p.id} swatch={partyColorOf(p)} onClick={() => changeParty(p.id)}>{p.name}</Chip>
+                ))}
+              </div>
+            )}
+            <Select id={`${ids}-party`} value={form.party} onChange={e => changeParty(e.target.value)}>
+              {!form.party && <option value="">Kies een partij</option>}
+              {orphanId && <option value={orphanId}>Onbekend ({orphanId})</option>}
+              {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </Field>
+
+          <Field label="Datum" htmlFor={`${ids}-date`}>
+            <div className="md-chips">
+              <Chip active={form.date === today} onClick={() => set('date', today)}>Vandaag</Chip>
+              <Chip active={form.date === addDaysIso(today, -1)} onClick={() => set('date', addDaysIso(today, -1))}>Gisteren</Chip>
+            </div>
+            <Input id={`${ids}-date`} type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+          </Field>
+
+          {showInstrument && (
+            <Field label="Instrument (aandeel / ETF)" htmlFor={`${ids}-instr`} hint="Eerder gebruikte instrumenten verschijnen als suggesties.">
+              <Input id={`${ids}-instr`} list={`${ids}-instr-list`} value={form.instrument} placeholder="bijv. VWCE, AAPL, VOO…"
+                onChange={e => set('instrument', e.target.value)} />
+              <datalist id={`${ids}-instr-list`}>{t212Instruments.map(n => <option key={n} value={n} />)}</datalist>
+              {t212Instruments.length > 0 && (
+                <div className="md-chips" style={{ marginTop: 8, marginBottom: 0 }}>
+                  {t212Instruments.filter(n => !form.instrument || n.toLowerCase().includes(form.instrument.toLowerCase())).slice(0, 8).map(n => (
+                    <Chip key={n} active={form.instrument === n} onClick={() => set('instrument', n)}>{n}</Chip>
+                  ))}
+                </div>
+              )}
+            </Field>
+          )}
+
+          {showMetal && (
+            <div className="md-row2">
+              <Field label="Metaal">
+                <Segmented ariaLabel="Metaal" full value={form.metalType} onChange={v => set('metalType', v)}
+                  options={[{ value: 'goud', label: 'Goud' }, { value: 'zilver', label: 'Zilver' }]} />
+              </Field>
+              <Field label={form.metalType === 'zilver' ? 'Zilver eenheid' : 'Goud eenheid'} hint="1 troy ounce = 31,1 gram">
+                {form.metalType === 'zilver' ? (
+                  <Segmented ariaLabel="Eenheid zilver" full value={form.silverUnit} onChange={v => set('silverUnit', v)}
+                    options={[{ value: 'gram', label: 'Gram' }, { value: 'ounce', label: 'Ounce' }]} />
+                ) : (
+                  <Segmented ariaLabel="Eenheid goud" full value={form.goldUnit} onChange={v => set('goldUnit', v)}
+                    options={[{ value: 'gram', label: 'Gram' }, { value: 'ounce', label: 'Ounce' }]} />
+                )}
+              </Field>
+            </div>
+          )}
+
+          {needs.includes('amountEur') && (
+            <Field label="Bedrag (€)" htmlFor={`${ids}-amt`} error={errFor('amountEur')}>
+              <MoneyInput id={`${ids}-amt`} large value={form.amountEur} onChange={v => set('amountEur', v)} placeholder="0,00" />
+            </Field>
+          )}
+
+          {['koop', 'verkoop', 'cashback', 'dividend'].includes(form.type) && (
+            <div className="md-row2">
+              <Field label={`Aantal (${unitLabel})`} htmlFor={`${ids}-qty`} error={errFor('quantity')}>
+                <MoneyInput id={`${ids}-qty`} prefix="" value={form.quantity} onChange={setQuantity} placeholder="0" />
+              </Field>
+              {isGoldOrder && (
+                <Field label="Orderwaarde (€)" htmlFor={`${ids}-ov`}>
+                  <MoneyInput id={`${ids}-ov`} value={form.orderValueEur} onChange={setOrderValue} placeholder="0,00" />
+                </Field>
+              )}
+              <Field label={`Prijs per ${unitLabel} (€)`} htmlFor={`${ids}-px`} error={errFor('unitPriceEur')}>
+                <MoneyInput id={`${ids}-px`} value={form.unitPriceEur} onChange={setUnitPrice} placeholder="0,00" />
+              </Field>
+            </div>
+          )}
+
+          {form.type === 'opname' && needs.includes('quantity') && (
+            <div className="md-row2">
+              <Field label={`Aantal (${unitLabel})`} htmlFor={`${ids}-oq`} error={errFor('quantity')}>
+                <MoneyInput id={`${ids}-oq`} prefix="" large value={form.quantity} onChange={v => set('quantity', v)} placeholder="0" />
+              </Field>
+              <Field label="Bedrag (€)" htmlFor={`${ids}-oa`} hint="Optioneel: wat je ervoor kreeg.">
+                <MoneyInput id={`${ids}-oa`} value={form.optAmount} onChange={v => set('optAmount', v)} placeholder="0,00" />
+              </Field>
+            </div>
+          )}
+
+          {form.type === 'waardering' && (
+            needs[0] === 'valueEur' ? (
+              <Field htmlFor={`${ids}-val`} error={errFor('valueEur')}
+                label={party && party.unit === 'bundle' ? 'Totale portefeuillewaarde (€)' : 'Huidige totale waarde (€)'}
+                hint={party && party.unit === 'bundle' ? 'Vervangt de laatste waardering; winst/verlies wordt automatisch berekend.' : 'Vervangt de laatste waardering voor deze partij.'}>
+                <MoneyInput id={`${ids}-val`} large value={form.valueEur} onChange={v => set('valueEur', v)} placeholder="0" />
+              </Field>
+            ) : needs[0] === 'quantity' ? (
+              <Field label={`Totaal ${unitLabel} in bezit`} htmlFor={`${ids}-wq`} error={errFor('quantity')} hint="Huidige waarde wordt berekend via spot-prijs.">
+                <MoneyInput id={`${ids}-wq`} prefix="" large value={form.quantity} onChange={v => set('quantity', v)} placeholder="0" />
+              </Field>
+            ) : (
+              <Field label="Koers / NAV per stuk (€)" htmlFor={`${ids}-wp`} error={errFor('unitPriceEur')} hint="De huidige marktkoers of NAV per participatie/aandeel/token.">
+                <MoneyInput id={`${ids}-wp`} large value={form.unitPriceEur} onChange={v => set('unitPriceEur', v)} placeholder="0,00" />
+              </Field>
+            )
+          )}
+
+          {showFee && (feeOpen ? (
+            <Field label="Transactiekosten" htmlFor={`${ids}-fee`}>
+              <div className="md-fee">
+                <Segmented ariaLabel="Kosten in euro of procent" value={form.feeMode} onChange={v => set('feeMode', v)}
+                  options={[{ value: 'eur', label: '€' }, { value: 'pct', label: '%' }]} />
+                <MoneyInput id={`${ids}-fee`} prefix={form.feeMode === 'eur' ? '€' : ''} suffix={form.feeMode === 'pct' ? '%' : undefined}
+                  value={form.feeEur} onChange={v => set('feeEur', v)} placeholder={form.feeMode === 'eur' ? '0,00' : '0,5'} showParsed={false} />
+              </div>
+              {form.feeMode === 'pct' && feeEur > 0 && <div className="md-feeconv num">= {fmtMoney(feeEur, { decimals: 2 })}</div>}
+            </Field>
+          ) : (
+            <button type="button" className="md-addlink" onClick={() => setFeeOpen(true)}><Icon name="plus" size={14} />Transactiekosten</button>
+          ))}
+
+          <Field label="Notitie (optioneel)" htmlFor={`${ids}-note`}>
+            <Textarea id={`${ids}-note`} rows={2} value={form.note} onChange={e => set('note', e.target.value)} />
+          </Field>
+
+          {liveLine && <div className="md-live" aria-live="polite">{liveLine}</div>}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function TxDetailSheet({ app, open, txId, onClose }) {
+  const txs = (app && app.state && app.state.transactions) || [];
+  const tx = open ? txs.find(t => t.id === txId) : null;
+  useEffect(() => {
+    if (open && !tx && onClose) onClose();
+  }, [open, tx]); // eslint-disable-line
+  if (!open || !tx) return null;
+  const party = (app.model.byId[tx.party] || {}).party || (app.model.parties || []).find(p => p.id === tx.party) || null;
+  const unit = txUnitLabel(tx, party);
+  const info = txAmountInfo(tx, party);
+  const has = v => v !== undefined && v !== null && v !== '';
+  const rows = [];
+  rows.push(['Type', TX_LABELS[tx.type] || tx.type]);
+  rows.push(['Partij', party
+    ? <span className="md-party"><Monogram party={party} size={28} />{party.name}</span>
+    : `Onbekend (${tx.party})`]);
+  rows.push(['Datum', fmtDateLong(tx.date)]);
+  if (+tx.quantity) rows.push(['Aantal', fmtQty(+tx.quantity, unit, { decimals: party && party.unit === 'crypto' ? 8 : 4 })]);
+  if (+tx.unitPriceEur) rows.push(['Prijs per eenheid', <Money value={+tx.unitPriceEur} decimals={4} />]);
+  if (+tx.quantity && +tx.unitPriceEur) rows.push(['Orderbedrag', <Money value={txGross(tx)} decimals={2} />]);
+  if (has(tx.amountEur)) rows.push(['Bedrag', <Money value={+tx.amountEur} decimals={2} />]);
+  if (+tx.feeEur) rows.push(['Transactiekosten', <Money value={-Math.abs(+tx.feeEur)} decimals={2} />]);
+  const net = txNetTotal(tx);
+  if (tx.type !== 'waardering' && net != null) rows.push(['Netto totaal', <Money value={net} decimals={2} />]);
+  if (tx.metalType) {
+    const u = tx.metalType === 'zilver' ? (tx.silverUnit === 'gram' ? 'gram' : 'ounce') : (tx.goldUnit === 'ounce' ? 'ounce' : 'gram');
+    rows.push(['Metaal', `${tx.metalType === 'zilver' ? 'Zilver' : 'Goud'} · ${u}`]);
+  }
+  if (tx.instrument) rows.push(['Instrument', tx.instrument]);
+  if (has(tx.valueEur)) rows.push(['Totale waarde', <Money value={+tx.valueEur} decimals={2} />]);
+  if (tx.note) rows.push(['Notitie', tx.note, true]);
+  if (tx.updatedAt) rows.push(['Laatst gewijzigd', `${fmtDateLong(String(tx.updatedAt).slice(0, 10))} · ${fmtTime(tx.updatedAt)}`]);
+  if (tx._t212Id) rows.push(['Bron', 'Geïmporteerd uit Trading 212']);
+
+  const footer = (
+    <div className="md-foot">
+      <span className="md-foot__reason" />
+      <Button variant="danger" icon="trash-2" onClick={() => app.deleteTx(tx.id).then(ok => { if (ok && onClose) onClose(); })}>Verwijderen</Button>
+      <Button variant="primary" icon="pencil" onClick={() => app.editTx(tx)}>Bewerken</Button>
+    </div>
+  );
+  return (
+    <Sheet open={open} onClose={onClose} testId="tx-detail" width={440} size="medium"
+      title={TX_LABELS[tx.type] || 'Transactie'} subtitle={`${party ? party.name : 'Onbekende partij'} · ${fmtDateLong(tx.date)}`} footer={footer}>
+      <div className="md-detail-head">
+        <span className="md-type__icon"><Icon name={mdTypeIcon(tx.type)} size={18} /></span>
+        <MdAmount info={info} />
+      </div>
+      <dl className="md-dl">
+        {rows.map(([k, v, isNote]) => (
+          <React.Fragment key={k}>
+            <dt>{k}</dt>
+            <dd className={isNote ? 'md-dl__note' : 'num'}>{v}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </Sheet>
+  );
+}
+
+// Amount text from txAmountInfo, masked under privacy.
+function MdAmount({ info, className }) {
+  const privacy = usePrivacy();
+  const cls = mdCx('md-detail-amt num', info.tone === 'income' && 'is-income', info.tone === 'muted' && 'is-muted', className);
+  if (privacy && /€/.test(info.text)) return <span className={cls} aria-label="bedrag verborgen">{info.text.replace(/€\s?[\d.,]+/, '€ •••••')}</span>;
+  return <span className={cls}>{info.text}</span>;
+}
+function mdCx(...p) { return p.filter(Boolean).join(' '); }
+
+Object.assign(window, { TransactionSheet, TxDetailSheet });

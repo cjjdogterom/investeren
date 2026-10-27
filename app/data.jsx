@@ -43,6 +43,8 @@ const WIDGET_REGISTRY = [
   { id: 'fees_summary',     label: 'Transactiekosten',      desc: 'Totale kosten betaald',           chartTypes: ['cijfers'],              defaultSize: 'small'  },
   { id: 'metal_holdings',   label: 'Edelmetalen detail',    desc: 'Hoeveelheden edelmetalen',        chartTypes: ['cijfers'],              defaultSize: 'small'  },
   { id: 'goals',            label: 'Doelen voortgang',      desc: 'Vooruitgang per doel',            chartTypes: ['voortgang'],            defaultSize: 'medium' },
+  { id: 'attention',        label: 'Aandacht',              desc: 'Wat vraagt je aandacht',          chartTypes: ['lijst'],                defaultSize: 'small'  },
+  { id: 'pension_card',     label: 'Pensioen-kaart',        desc: 'Voortgang pensioendoel',          chartTypes: ['voortgang'],            defaultSize: 'small'  },
 ];
 
 const DEFAULT_WIDGETS = [
@@ -58,6 +60,8 @@ const DEFAULT_WIDGETS = [
   { id: 'fees_summary',     enabled: true,  chartType: 'cijfers',   size: 'small'  },
   { id: 'metal_holdings',   enabled: false, chartType: 'cijfers',   size: 'small'  },
   { id: 'goals',            enabled: false, chartType: 'voortgang', size: 'medium' },
+  { id: 'attention',        enabled: true,  chartType: 'lijst',     size: 'small'  },
+  { id: 'pension_card',     enabled: true,  chartType: 'voortgang', size: 'small'  },
 ];
 
 const today = new Date();
@@ -196,7 +200,9 @@ function saveState(state) {
   } catch (e) {
     // Storage quota: bewaar zonder grote history-arrays
     try {
-      const { goldHistory, silverHistory, btcHistory, ethHistory, paxgHistory, ...slim } = state;
+      // Geen object-rest: Babel maakt daar een globale _excluded van die botst met ui.jsx
+      const slim = { ...state };
+      for (const k of ['goldHistory', 'silverHistory', 'btcHistory', 'ethHistory', 'paxgHistory']) delete slim[k];
       localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
     } catch {}
   }
@@ -237,6 +243,13 @@ function daysBetween(a, b) {
   const start = new Date(`${a}T00:00:00Z`);
   const end = new Date(`${b}T00:00:00Z`);
   return Math.max(0, Math.round((end - start) / 86400000));
+}
+
+// Unit price with fallback amountEur / quantity (koop/cashback without unitPriceEur, e.g. canonical BTC buys)
+function dtTxPrice(t) {
+  if (+t.unitPriceEur > 0) return +t.unitPriceEur;
+  if (+t.amountEur > 0 && +t.quantity > 0) return +t.amountEur / +t.quantity;
+  return 0;
 }
 
 function txCashAmount(t) {
@@ -404,7 +417,7 @@ function summarizeParty(party, transactions, spots) {
       case 'koop':
       case 'cashback': {
         const qty = +t.quantity || 0;
-        const px  = +t.unitPriceEur || 0;
+        const px  = dtTxPrice(t);
         if (party.unit === 'bundle') {
           const amount = (+t.amountEur || 0) || qty * px;
           quantity += amount;
@@ -610,12 +623,12 @@ function buildPartyTimeSeries(transactions, parties, spots) {
             const mt = t.metalType || 'goud';
             if (mt === 'goud') s.goldQty += goldToGram(+t.quantity||0, t.goldUnit);
             else s.silverQty += silverToOz(+t.quantity||0, t.silverUnit);
-            s.cost += (+t.quantity||0) * (+t.unitPriceEur||0);
-            if (s.lastTotal != null) s.lastTotal += (+t.quantity||0) * (+t.unitPriceEur||0);
+            s.cost += (+t.quantity||0) * dtTxPrice(t);
+            if (s.lastTotal != null) s.lastTotal += (+t.quantity||0) * dtTxPrice(t);
           } else {
             s.qty += +t.quantity||0;
-            s.cost += (+t.quantity||0) * (+t.unitPriceEur||0);
-            if (s.lastTotal != null) s.lastTotal += (+t.quantity||0) * (+t.unitPriceEur||0);
+            s.cost += (+t.quantity||0) * dtTxPrice(t);
+            if (s.lastTotal != null) s.lastTotal += (+t.quantity||0) * dtTxPrice(t);
           }
           break;
         case 'dividend': {
@@ -744,7 +757,7 @@ function buildMonthlyFlows(transactions) {
   const map = new Map();
   for (const t of transactions) {
     const key = t.date.slice(0, 7);
-    if (!map.has(key)) map.set(key, { month: key, inleg: 0, opname: 0, dividend: 0, kosten: 0, koop: 0, verkoop: 0, fees: 0 });
+    if (!map.has(key)) map.set(key, { month: key, inleg: 0, opname: 0, dividend: 0, kosten: 0, koop: 0, verkoop: 0, fees: 0, rente: 0 });
     const m = map.get(key);
     if (t.type === 'inleg')    m.inleg    += +t.amountEur || 0;
     if (t.type === 'opname')   m.opname   += +t.amountEur || 0;
@@ -756,9 +769,10 @@ function buildMonthlyFlows(transactions) {
       m.dividend += divVal;
     }
     if (t.type === 'kosten')   m.kosten   += +t.amountEur || 0;
+    if (t.type === 'rente')    m.rente    += +t.amountEur || 0;
     if (t.type === 'koop' || t.type === 'cashback')
-      m.koop += (+t.quantity||0) * (+t.unitPriceEur||0);
-    if (t.type === 'verkoop')  m.verkoop  += (+t.quantity||0) * (+t.unitPriceEur||0);
+      m.koop += (+t.quantity||0) * dtTxPrice(t);
+    if (t.type === 'verkoop')  m.verkoop  += (+t.amountEur || 0) || (+t.quantity||0) * dtTxPrice(t);
     if (t.feeEur)              m.fees     += +t.feeEur;
   }
   return [...map.values()].sort((a,b) => a.month.localeCompare(b.month));
@@ -774,10 +788,8 @@ function fmtEur(n, opts = {}) {
 }
 function fmtPct(n, opts = {}) {
   const { decimals = 2, sign = true } = opts;
-  if (n == null || Number.isNaN(n)) return '—';
-  const s = Math.abs(n).toFixed(decimals);
-  const prefix = n > 0 && sign ? '+' : n < 0 ? '−' : '';
-  return `${prefix}${s}%`;
+  const p = dtSignedParts(n, decimals, sign);
+  return p ? `${p.prefix}${p.body}%` : '—';
 }
 function fmtQty(n, unit, opts = {}) {
   if (n == null) return '—';
@@ -794,7 +806,875 @@ function fmtMonth(ym) {
   return new Date(+y, +m - 1, 1).toLocaleDateString('nl-NL', { month: 'short', year: '2-digit' });
 }
 
+// =====================================================================
+// ===== Redesign foundation (F1): prefs, formatters, domain helpers ====
+// =====================================================================
+
+// ----- UI prefs (per device, never synced) -----
+const UI_PREFS_KEY = 'investeringen-ui-v1';
+const MQ_MOBILE = '(max-width: 767.98px)';
+const DEFAULT_UI_PREFS = {
+  v: 1,
+  theme: 'system',
+  cvd: false,
+  privacy: false,
+  startPrivate: false,
+  sidebarCollapsed: false,
+  period: '1J',
+  chartMode: 'value',
+  exclPE: false,
+  resultMode: 'eur',
+  stackMode: 'pct',
+  positionsGrouping: 'class',
+  positionsSort: { key: 'value', dir: 'desc' },
+  positionsSecondary: 'pnl',
+  collapsedGroups: [],
+  showClosed: false,
+  txView: 'list',
+  monthBarsMode: 'month',
+  recentParties: [],
+};
+
+function themeFromLegacy(theme) {
+  if (['dark', 'terminal', 'nord', 'nebula', 'catppuccin', 'gruvbox', 'rosepine'].includes(theme)) return 'dark';
+  if (['warm', 'solarized'].includes(theme)) return 'light';
+  return 'system';
+}
+
+function loadUiPrefs(state) {
+  try {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY)); } catch (e) { stored = null; }
+    let prefs;
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+      prefs = { ...DEFAULT_UI_PREFS, ...stored };
+    } else {
+      const map = { pnl_eur: 'pnl', pnl_pct: 'pnlPct', value: 'value', invested: 'invested', share: 'value', ytd_pct: 'pnl' };
+      const counts = {};
+      for (const v of Object.values((state && state.tileMetrics) || {})) {
+        const k = map[v];
+        if (k) counts[k] = (counts[k] || 0) + 1;
+      }
+      let seed = 'pnl', best = 0;
+      for (const [k, c] of Object.entries(counts)) if (c > best) { best = c; seed = k; }
+      prefs = { ...DEFAULT_UI_PREFS, theme: themeFromLegacy(state && state.tweaks && state.tweaks.theme), positionsSecondary: seed };
+    }
+    if (prefs.startPrivate) prefs.privacy = true;
+    return prefs;
+  } catch (e) {
+    return { ...DEFAULT_UI_PREFS };
+  }
+}
+
+function saveUiPrefs(prefs) {
+  try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* ignore */ }
+}
+
+// ----- Formatters (nl-NL, U+2212 minus, U+202F after €) -----
+const MONTHS_NL = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+const MONTHS_NL_LONG = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+
+const DT_NF_CACHE = {};
+function dtNf(min, max = min) {
+  const k = min + ':' + max;
+  if (!DT_NF_CACHE[k]) DT_NF_CACHE[k] = new Intl.NumberFormat('nl-NL', { minimumFractionDigits: min, maximumFractionDigits: max });
+  return DT_NF_CACHE[k];
+}
+
+// Shared sign/rounding algorithm for money, pct and pt. Returns null for missing / non-finite.
+function dtSignedParts(n, decimals = 0, sign = false) {
+  if (n == null || n === '') return null;
+  const v = typeof n === 'number' ? n : Number(n);
+  if (!Number.isFinite(v)) return null;
+  const f = Math.pow(10, decimals);
+  const abs = Math.round(Math.abs(v) * f) / f;
+  const r = v < 0 ? -abs : abs;
+  const prefix = r < 0 ? '−' : (sign && r > 0 ? '+' : '');
+  return { prefix, body: dtNf(decimals).format(abs), r };
+}
+
+function fmtMoney(n, opts = {}) {
+  const { decimals = 0, sign = false } = opts;
+  const p = dtSignedParts(n, decimals, sign);
+  return p ? `${p.prefix}€ ${p.body}` : '—';
+}
+
+function fmtPt(n, opts = {}) {
+  const { decimals = 1 } = opts;
+  const p = dtSignedParts(n, decimals, true);
+  return p ? `${p.prefix}${p.body} pt` : '—';
+}
+
+function fmtCompact(n) {
+  if (n == null || n === '') return '—';
+  const v = +n;
+  if (!Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  let body;
+  if (Math.round(a) < 1000) {
+    body = String(Math.round(a));
+  } else if (Math.round(a / 1000) < 1000) {
+    const k = a / 1000;
+    const tenths = Math.round(k * 10);
+    body = (tenths < 100 && tenths % 10 !== 0) ? dtNf(1).format(tenths / 10) + 'k' : String(Math.round(k)) + 'k';
+  } else {
+    const m = Math.round(a / 1e5) / 10;
+    body = (Number.isInteger(m) ? dtNf(0).format(m) : dtNf(1).format(m)) + ' mln';
+  }
+  const prefix = v < 0 && body !== '0' ? '−' : '';
+  return `${prefix}€ ${body}`;
+}
+
+function dtParseIso(iso) {
+  if (!iso || typeof iso !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(iso);
+  if (!m) return null;
+  return { y: +m[1], m: +m[2], d: m[3] ? +m[3] : 1 };
+}
+
+function fmtDateLong(iso) {
+  const p = dtParseIso(iso);
+  return p ? `${p.d} ${MONTHS_NL[p.m - 1]} ${p.y}` : '—';
+}
+
+function fmtDateShort(iso, todayIso = todayIsoLocal()) {
+  const p = dtParseIso(iso);
+  if (!p) return '—';
+  const t = dtParseIso(todayIso);
+  return t && t.y === p.y ? `${p.d} ${MONTHS_NL[p.m - 1]}` : `${p.d} ${MONTHS_NL[p.m - 1]} ${p.y}`;
+}
+
+function fmtAxisMonth(iso) {
+  const p = dtParseIso(iso);
+  return p ? `${MONTHS_NL[p.m - 1]} ${String(p.y).slice(2)}` : '';
+}
+
+function fmtMonthName(ym) {
+  const p = dtParseIso(ym);
+  if (!p) return '—';
+  const n = MONTHS_NL_LONG[p.m - 1];
+  return `${n.charAt(0).toUpperCase()}${n.slice(1)} ${p.y}`;
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '—';
+  return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+}
+
+function fmtRelDay(iso, todayIso = todayIsoLocal()) {
+  if (!dtParseIso(iso)) return '—';
+  const day = iso.slice(0, 10);
+  if (day === todayIso) return 'vandaag';
+  if (addDaysIso(day, 1) === todayIso) return 'gisteren';
+  return fmtDateShort(day, todayIso);
+}
+
+function parseNlNumber(str) {
+  if (str == null) return null;
+  if (typeof str === 'number') return Number.isFinite(str) ? str : null;
+  let s = String(str).trim().replace(/[€%\s  ]/g, '').replace(/−/g, '-');
+  if (!s) return null;
+  const hasDot = s.includes('.'), hasComma = s.includes(',');
+  if (hasDot && hasComma) s = s.replace(/\./g, '').replace(',', '.');
+  else if (hasComma) {
+    if ((s.match(/,/g) || []).length !== 1) return null;
+    s = s.replace(',', '.');
+  } else if ((s.match(/\./g) || []).length > 1) s = s.replace(/\./g, '');
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// ----- Asset classes, colours, monograms -----
+const ASSET_CLASSES = [
+  { key: 'pe',    label: 'Private equity', color: 'var(--cat-pe)' },
+  { key: 'idx',   label: 'Indexfondsen',   color: 'var(--cat-idx)' },
+  { key: 'pm',    label: 'Edelmetaal',     color: 'var(--cat-pm)' },
+  { key: 'cr',    label: 'Crypto',         color: 'var(--cat-cr)' },
+  { key: 'cf',    label: 'Crowdfunding',   color: 'var(--cat-cf)' },
+  { key: 'br',    label: 'Broker',         color: 'var(--cat-br)' },
+  { key: 'other', label: 'Overig',         color: 'var(--cat-other)' },
+  { key: 'liq',   label: 'Liquide',        color: 'var(--cat-liq)' },
+];
+const ASSET_CLASS_BY_KEY = Object.fromEntries(ASSET_CLASSES.map(c => [c.key, c]));
+
+function assetClassOf(p) {
+  const id = p && p.id;
+  const cat = String((p && p.category) || '').trim().toLowerCase();
+  if (id === 'cash' || cat === 'liquide' || cat === 'cash') return 'liq';
+  if (cat === 'private equity') return 'pe';
+  if (['indexfondsen', 'aandelen', 'etf', "etf's", 'fondsen'].includes(cat)) return 'idx';
+  if (cat === 'edelmetaal' || ['goldrepublic', 'goud', 'zilver'].includes(id)) return 'pm';
+  if (cat === 'crypto') return 'cr';
+  if (cat === 'crowdfunding') return 'cf';
+  if (cat === 'broker') return 'br';
+  return 'other';
+}
+
+function partyColorOf(party) {
+  if (!party) return ASSET_CLASS_BY_KEY.other.color;
+  return party.useOwnColor === true && party.color ? party.color : ASSET_CLASS_BY_KEY[assetClassOf(party)].color;
+}
+
+function monogramOf(party) {
+  if (!party) return '?';
+  if (party.id === 'goud') return 'Au';
+  if (party.id === 'zilver') return 'Ag';
+  if (party.id === 'goldrepublic') return 'GR';
+  if (party.unit === 'eur' || assetClassOf(party) === 'liq') return '€';
+  if (party.unit === 'crypto' && /^[A-Za-z]{2,4}$/.test(party.unitLabel || '')) return party.unitLabel.toUpperCase();
+  const words = String(party.name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '?';
+  if (words.length >= 2 && /^\p{L}/u.test(words[1])) return (words[0][0] + words[1][0]).toUpperCase();
+  const caps = words[0].match(/\p{Lu}/gu) || [];
+  if (caps.length >= 2) return caps[0] + caps[1];
+  return words[0].charAt(0).toUpperCase() + (words[0].charAt(1) || '').toLowerCase();
+}
+
+// ----- Holdings helpers -----
+const ATTENTION_THRESHOLDS = { concentrationPct: 40, driftPt: 5, staleDays: 30, navStaleDays: 7, priceStaleHours: 2 };
+
+function dtUnitKind(party) {
+  if (!party) return 'part';
+  if (party.isMixed || party.unit === 'mixed') return 'mixed';
+  return party.unit || 'part';
+}
+function dtFmt2(n) { return dtNf(2).format(+n || 0); }
+function dtLastHistDate(hist) { return Array.isArray(hist) && hist.length ? hist[hist.length - 1].date : null; }
+
+function holdingQtyText(s) {
+  const p = s.party, q = +s.quantity || 0;
+  switch (dtUnitKind(p)) {
+    case 'part':   return `${dtFmt2(q)} ${p.unitLabel || 'part.'}`;
+    case 'gram':   return `${dtFmt2(q)} g`;
+    case 'ounce':  return `${dtFmt2(q)} oz`;
+    case 'crypto': return fmtQty(q, p.unitLabel, { decimals: q < 1 ? 6 : 4 });
+    case 'mixed':  return `Au ${dtFmt2(s.goldQty)} g · Ag ${dtFmt2(s.silverQty)} oz`;
+    default:       return '—';
+  }
+}
+
+function holdingPriceText(s, spots = {}) {
+  const p = s.party, px = s.currentUnitPrice;
+  switch (dtUnitKind(p)) {
+    case 'part': {
+      const date = (p.id === 'meesman' ? dtLastHistDate(spots.meesmanNavHistory) : null) || s.lastValuationDate;
+      return `NAV ${fmtMoney(px, { decimals: 4 })}${date ? ' · ' + fmtDateShort(date) : ''}`;
+    }
+    case 'crypto': return `Spot ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`;
+    case 'gram':   return `Spot ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`;
+    case 'ounce':  return `Spot ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`;
+    case 'mixed':  return `Goud ${fmtMoney(spots.goldSpotEurPerGram, { decimals: 2 })}/g · Zilver ${fmtMoney(spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`;
+    default:
+      return s.lastValuationDate ? `Waardering ${fmtMoney(s.currentValueEur)} · ${fmtDateShort(s.lastValuationDate)}` : 'Ingelegd';
+  }
+}
+
+function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
+  const p = s.party, px = s.currentUnitPrice;
+  const kind = dtUnitKind(p);
+  switch (kind) {
+    case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
+    case 'crypto': return { text: `${holdingQtyText(s)} · ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`, staleDays: null };
+    case 'gram':   return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null };
+    case 'ounce':  return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`, staleDays: null };
+    case 'mixed':  return { text: `Au ${fmtQty(s.goldQty || 0, 'g', { decimals: 2 })} · Ag ${fmtQty(s.silverQty || 0, 'oz', { decimals: 2 })}`, staleDays: null };
+    default: {
+      const text = s.lastValuationDate ? `Waardering · ${fmtDateShort(s.lastValuationDate, todayIso)}` : (p.subtitle || 'Geen waardering');
+      let staleDays = null;
+      if (s.lastValuationDate && (s.currentValueEur || 0) > 0) {
+        const days = daysBetween(s.lastValuationDate, todayIso);
+        if (days > ATTENTION_THRESHOLDS.staleDays) staleDays = days;
+      }
+      return { text, staleDays };
+    }
+  }
+}
+
+function goalProgress(s) {
+  const p = s.party;
+  if (!(+p.goal > 0)) return null;
+  const goal = +p.goal;
+  const kind = dtUnitKind(p);
+  if (kind === 'gram' || kind === 'ounce') {
+    const unit = kind === 'gram' ? 'g' : 'oz';
+    return { pct: (+s.quantity || 0) / goal * 100, label: `${dtFmt2(s.quantity)} van ${dtNf(0, 2).format(goal)} ${unit}` };
+  }
+  return { pct: (+s.currentValueEur || 0) / goal * 100, label: `${fmtMoney(s.currentValueEur)} van ${fmtMoney(goal)}` };
+}
+
+function cagrOf(s, todayIso = todayIsoLocal()) {
+  const first = s.transactions && s.transactions.length ? s.transactions[0].date : null;
+  if (!first) return { pct: null, years: 0 };
+  const years = Math.max(1 / 12, daysBetween(first, todayIso) / 365.25);
+  const value = +s.currentValueEur || 0, invested = +s.invested || 0;
+  const pct = (invested > 0 && value > 0 && years >= 1) ? (Math.pow(value / invested, 1 / years) - 1) * 100 : null;
+  return { pct, years };
+}
+
+function isClosedSummary(s) {
+  return !!s && s.transactions.length > 0 && Math.abs(s.currentValueEur || 0) < 0.5;
+}
+
+// ----- Party form constants (moved from dashboard.jsx; existing labels kept, mixed added) -----
+const PARTY_UNIT_OPTIONS = [
+  { value: 'bundle', label: 'Totale waarde — zoals Top 25 / Trading 212', defaultLabel: '€', unitLabel: '€' },
+  { value: 'part',   label: 'Aantal × prijs — normale aandelen / participaties', defaultLabel: 'st.', unitLabel: 'st.' },
+  { value: 'eur',    label: 'Eurobedrag — cash / sparen', defaultLabel: '€', unitLabel: '€' },
+  { value: 'crypto', label: 'Token × koers — Bitcoin / Ethereum / PAXG', defaultLabel: 'TOKEN', unitLabel: 'TOKEN' },
+  { value: 'gram',   label: 'Gram × spotprijs — goud', defaultLabel: 'g', unitLabel: 'g' },
+  { value: 'ounce',  label: 'Ounce × spotprijs — zilver', defaultLabel: 'oz', unitLabel: 'oz' },
+  { value: 'mixed',  label: 'Gemengd goud + zilver', defaultLabel: 'g/oz', unitLabel: 'g/oz' },
+];
+const CATEGORY_OPTIONS = ['Indexfondsen', 'Crypto', 'Edelmetaal', 'Broker', 'Liquide', 'Overig', 'Private Equity', 'Crowdfunding'];
+const CUSTOM_CATEGORY_VALUE = '__custom__';
+const COLOR_PRESETS = [
+  'oklch(58% 0.14 255)','oklch(72% 0.18 55)','oklch(60% 0.12 265)',
+  'oklch(76% 0.14 85)','oklch(62% 0.15 195)','oklch(55% 0.16 145)',
+  'oklch(70% 0.03 240)','oklch(65% 0.18 320)','oklch(68% 0.15 30)',
+  'oklch(62% 0.13 170)','oklch(72% 0.22 310)','oklch(55% 0.05 160)',
+];
+
+// ----- Transaction helpers -----
+const TX_TYPE_META = {
+  inleg:      { icon: 'arrow-down-to-line', hint: 'Geld erbij',        income: false },
+  koop:       { icon: 'circle-plus',        hint: 'Stukken erbij',     income: false },
+  verkoop:    { icon: 'circle-minus',       hint: 'Stukken eraf',      income: false },
+  opname:     { icon: 'arrow-up-from-line', hint: 'Geld eraf',         income: false },
+  dividend:   { icon: 'coins',              hint: 'Uitkering',         income: true  },
+  rente:      { icon: 'percent',            hint: 'Rente, rendement',  income: true  },
+  waardering: { icon: 'diamond',            hint: 'Nieuwe waarde',     income: false },
+  kosten:     { icon: 'receipt',            hint: 'Fee, beheer',       income: false },
+  cashback:   { icon: 'gift',               hint: 'Cashback',          income: true  },
+};
+
+function allowedTxTypes(party) {
+  return TX_TYPES.map(t => t.key).filter(k => {
+    if (k === 'cashback' && !(party && party.id === 'trading212')) return false;
+    if (party && party.unit === 'bundle' && ['koop', 'verkoop', 'cashback', 'dividend', 'rente'].includes(k)) return false;
+    return true;
+  });
+}
+
+function txUnitLabel(t, party) {
+  if (!party) return '';
+  if (dtUnitKind(party) === 'mixed') {
+    return t.metalType === 'zilver' ? (t.silverUnit === 'gram' ? 'g' : 'oz') : (t.goldUnit === 'ounce' ? 'oz' : 'g');
+  }
+  switch (party.unit) {
+    case 'crypto': return party.unitLabel || '';
+    case 'gram':   return 'g';
+    case 'ounce':  return 'oz';
+    case 'part':   return party.unitLabel || 'part.';
+    default:       return '';
+  }
+}
+
+function txGross(t) {
+  const qty = +t.quantity || 0, px = dtTxPrice(t);
+  if (qty > 0 && px > 0) return qty * px;
+  return +t.amountEur || 0;
+}
+
+function txNetTotal(t) {
+  const fee = +t.feeEur || 0;
+  switch (t.type) {
+    case 'koop': case 'cashback': return txGross(t) + fee;
+    case 'verkoop':  return txGross(t) - fee;
+    case 'dividend': return txGross(t);
+    case 'inleg': case 'opname': case 'rente': case 'kosten': return +t.amountEur || 0;
+    case 'waardering': return t.valueEur != null && t.valueEur !== '' ? +t.valueEur : null;
+    default: return +t.amountEur || 0;
+  }
+}
+
+function txAmountInfo(t, party) {
+  if (t.type === 'waardering') {
+    let text = '—';
+    if (t.valueEur != null && t.valueEur !== '') text = `= ${fmtMoney(+t.valueEur, { decimals: (+t.valueEur) % 1 === 0 ? 0 : 2 })}`;
+    else if (t.unitPriceEur != null && t.unitPriceEur !== '') text = `NAV ${fmtMoney(+t.unitPriceEur, { decimals: 2 })}`;
+    else if (t.quantity != null && t.quantity !== '') text = `= ${fmtQty(+t.quantity, txUnitLabel(t, party))}`;
+    return { text, tone: 'muted', sign: '' };
+  }
+  const total = txNetTotal(t) || 0;
+  const plus = ['inleg', 'rente', 'dividend', 'cashback', 'koop'].includes(t.type);
+  const income = ['inleg', 'rente', 'dividend', 'cashback'].includes(t.type);
+  const signed = plus ? Math.abs(total) : -Math.abs(total);
+  return { text: fmtMoney(signed, { decimals: 2, sign: true }), tone: income ? 'income' : 'neutral', sign: plus ? '+' : '−' };
+}
+
+function txDetailsText(t, party) {
+  const prefix = t.instrument ? `${t.instrument} · ` : '';
+  const qty = +t.quantity || 0, px = +t.unitPriceEur || 0;
+  if (qty > 0 && px > 0) {
+    const isCrypto = party && party.unit === 'crypto';
+    return prefix + fmtQty(qty, txUnitLabel(t, party), isCrypto ? { decimals: 8 } : {}) + ' × ' + fmtMoney(px, { decimals: 2 });
+  }
+  if (+t.amountEur) return prefix + fmtMoney(+t.amountEur, { decimals: 2 });
+  if (t.valueEur != null && t.valueEur !== '') return prefix + '= ' + fmtMoney(+t.valueEur, { decimals: 2 });
+  if (px) return prefix + 'NAV ' + fmtMoney(px, { decimals: 2 });
+  return t.instrument || '';
+}
+
+// ----- Series and model -----
+function dtDailyDates(startIso, endIso) {
+  const out = [];
+  if (!startIso) return out;
+  for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) out.push(iso);
+  return out;
+}
+
+function buildFlowSeries(transactions, parties) {
+  if (!transactions || !transactions.length) return { dates: [], netByParty: {} };
+  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  const todayIso = todayIsoLocal();
+  const dates = dtDailyDates(sorted[0].date, todayIso);
+  const idx = new Map(dates.map((x, i) => [x, i]));
+  const netByParty = {};
+  for (const p of parties || []) {
+    const arr = new Array(dates.length).fill(0);
+    const txs = sorted.filter(t => t.party === p.id);
+    const points = [];
+    const seen = new Set();
+    for (const t of txs) {
+      if (t.date > todayIso || seen.has(t.date)) continue;
+      seen.add(t.date);
+      const sm = summarizeParty(p, txs.filter(x => x.date <= t.date), {});
+      points.push([idx.get(t.date), sm.costBasis - sm.realizedPnl]);
+    }
+    let pi = 0, cur = 0;
+    for (let i = 0; i < dates.length; i++) {
+      while (pi < points.length && points[pi][0] <= i) { cur = points[pi][1]; pi++; }
+      arr[i] = cur;
+    }
+    netByParty[p.id] = arr;
+  }
+  return { dates, netByParty };
+}
+
+function dtIncluded(p) { return (p.includeInTotal ?? p.includeInPortfolio) !== false; }
+function dtInChart(p)  { return (p.includeInTimeChart ?? p.includeInPortfolio) !== false; }
+
+function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {} } = {}) {
+  parties = parties || [];
+  transactions = transactions || [];
+  summaries = summaries || parties.map(p => summarizeParty(p, transactions, spots));
+  flows = flows || buildFlowSeries(transactions, parties);
+  valueSeries = valueSeries || buildPartyTimeSeries(transactions, parties, spots);
+  const todayIso = todayIsoLocal();
+
+  const byId = {};
+  summaries.forEach(s => { byId[s.party.id] = s; });
+  const included = summaries.filter(s => dtIncluded(s.party));
+  const chartIds = summaries.filter(s => dtInChart(s.party)).map(s => s.party.id);
+  const empty = [], closed = [], open = [];
+  for (const s of summaries) {
+    if (!s.transactions.length) empty.push(s);
+    else if (isClosedSummary(s)) closed.push(s);
+    else open.push(s);
+  }
+
+  // Totals
+  const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
+  const value = sum(included, s => s.currentValueEur);
+  const invested = sum(included, s => s.invested);
+  const pnl = sum(included, s => s.pnl);
+  const includedIds = new Set(included.map(s => s.party.id));
+  const cutoff = addDaysIso(todayIso, -365);
+  let income12m = 0;
+  for (const t of transactions) {
+    if (!includedIds.has(t.party) || !(t.date > cutoff)) continue;
+    if (t.type === 'rente') income12m += +t.amountEur || 0;
+    else if (t.type === 'dividend') {
+      const q = +t.quantity || 0, px = +t.unitPriceEur || 0;
+      income12m += (q > 0 && px > 0) ? q * px : (+t.amountEur || 0);
+    }
+  }
+  let fees = 0, feeTxCount = 0, firstTxDate = null;
+  for (const t of transactions) {
+    const f = +t.feeEur || 0;
+    fees += f + (t.type === 'kosten' ? (+t.amountEur || 0) : 0);
+    if (f > 0 || t.type === 'kosten') feeTxCount++;
+    if (t.date && (!firstTxDate || t.date < firstTxDate)) firstTxDate = t.date;
+  }
+  const totals = {
+    value, invested, pnl,
+    netInvested: sum(included, s => s.costBasis - s.realizedPnl),
+    pnlPct: invested > 0 ? pnl / invested * 100 : null,
+    realized: sum(included, s => s.realizedPnl),
+    income: sum(included, s => s.totalIncome),
+    income12m, fees, feeTxCount,
+    txCount: transactions.length, firstTxDate,
+    openCount: open.length, closedCount: closed.length,
+  };
+
+  // Classes (included, slot order)
+  const openIds = new Set(open.map(s => s.party.id));
+  const classes = [];
+  for (const c of ASSET_CLASSES) {
+    const ss = included.filter(s => assetClassOf(s.party) === c.key);
+    if (!ss.length) continue;
+    const v = sum(ss, s => s.currentValueEur);
+    if (!(v > 0.5 || ss.some(s => openIds.has(s.party.id)))) continue;
+    classes.push({ key: c.key, label: c.label, color: c.color, value: v, share: value > 0 ? v / value * 100 : 0, pnl: sum(ss, s => s.pnl), summaries: ss });
+  }
+
+  // Series
+  const dates = (valueSeries && valueSeries.dates && valueSeries.dates.length) ? valueSeries.dates : (flows.dates || []);
+  const n = dates.length;
+  const byParty = {}, netByParty = {};
+  const sameAxis = flows.dates && flows.dates.length === n && n > 0 && flows.dates[0] === dates[0] && flows.dates[n - 1] === dates[n - 1];
+  let flowIdx = null;
+  if (!sameAxis && flows.dates) flowIdx = new Map(flows.dates.map((x, i) => [x, i]));
+  for (const p of parties) {
+    const vs = valueSeries && valueSeries.byParty && valueSeries.byParty[p.id];
+    byParty[p.id] = vs && vs.length === n ? vs.slice() : new Array(n).fill(0);
+    const fs = flows.netByParty && flows.netByParty[p.id];
+    if (!fs) netByParty[p.id] = new Array(n).fill(0);
+    else if (sameAxis) netByParty[p.id] = fs.slice();
+    else {
+      const arr = new Array(n);
+      let last = 0;
+      for (let i = 0; i < n; i++) {
+        const j = flowIdx.get(dates[i]);
+        if (j != null) last = fs[j];
+        arr[i] = last;
+      }
+      netByParty[p.id] = arr;
+    }
+  }
+  if (n > 0) {
+    const L = n - 1;
+    for (const p of parties) {
+      const s = byId[p.id];
+      if (!s) continue;
+      byParty[p.id][L] = s.currentValueEur || 0;
+      netByParty[p.id][L] = (s.costBasis || 0) - (s.realizedPnl || 0);
+    }
+  }
+  const valueArr = new Array(n).fill(0), netArr = new Array(n).fill(0);
+  for (const id of chartIds) {
+    const v = byParty[id], nn = netByParty[id];
+    for (let i = 0; i < n; i++) { valueArr[i] += v[i] || 0; netArr[i] += nn[i] || 0; }
+  }
+  const flow = netArr.map((x, i) => (i === 0 ? x : x - netArr[i - 1]));
+  const series = { dates, value: valueArr, net: netArr, flow, byParty, netByParty, ids: chartIds.slice() };
+
+  const partyIds = new Set(parties.map(p => p.id));
+  const orphans = transactions.filter(t => !partyIds.has(t.party));
+
+  const dateIdx = new Map(dates.map((x, i) => [x, i]));
+  const chartSet = new Set(chartIds);
+  const markers = [];
+  for (const t of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (!chartSet.has(t.party)) continue;
+    const s = byId[t.party];
+    const index = dateIdx.get(t.date);
+    if (index == null) continue;
+    if (t.type === 'waardering' && (s.party.unit === 'bundle' || s.party.unit === 'eur')) {
+      const v = t.valueEur != null && t.valueEur !== '' ? +t.valueEur : (t.unitPriceEur != null ? +t.unitPriceEur : null);
+      markers.push({ index, date: t.date, kind: 'waardering', partyId: t.party, label: `Waardering ${s.party.name}${v != null ? ' · ' + fmtMoney(v) : ''}` });
+    } else if (t.type === 'opname') {
+      markers.push({ index, date: t.date, kind: 'opname', partyId: t.party, label: `Opname ${s.party.name} · ${fmtMoney(txGross(t))}` });
+    }
+  }
+
+  return { parties, summaries, byId, included, chartIds, open, closed, empty, totals, classes, series, orphans, markers };
+}
+
+function seriesExcluding(series, partyIds) {
+  const ids = (partyIds || []).filter(id => (series.ids ? series.ids.includes(id) : true) && series.byParty && series.byParty[id]);
+  const value = series.value.slice(), net = series.net.slice();
+  for (const id of ids) {
+    const v = series.byParty[id], nn = (series.netByParty && series.netByParty[id]) || [];
+    for (let i = 0; i < value.length; i++) { value[i] -= v[i] || 0; net[i] -= nn[i] || 0; }
+  }
+  const flow = net.map((x, i) => (i === 0 ? x : x - net[i - 1]));
+  return { dates: series.dates, value, net, flow };
+}
+
+function holdingsAt(model, index) {
+  const out = {};
+  const { byParty = {}, netByParty = {} } = (model && model.series) || {};
+  for (const id of Object.keys(byParty)) {
+    const arr = byParty[id];
+    if (!arr || index == null || index < 0 || index >= arr.length) continue;
+    const value = arr[index] || 0;
+    const net = (netByParty[id] && netByParty[id][index]) || 0;
+    out[id] = { value, net, pnl: value - net };
+  }
+  return out;
+}
+
+// ----- Periods and returns -----
+const PERIODS = [
+  { key: '1M',  label: '1M',    context: 'afgelopen maand' },
+  { key: '3M',  label: '3M',    context: 'afgelopen 3 maanden' },
+  { key: 'YTD', label: 'YTD',   context: 'dit jaar' },
+  { key: '1J',  label: '1J',    context: 'afgelopen jaar' },
+  { key: 'ALL', label: 'Alles', context: 'sinds {datum}' },
+];
+
+function periodRange(dates, key, todayIso) {
+  const len = (dates && dates.length) || 0;
+  if (!len) return { i0: 0, i1: -1, all: key === 'ALL', enabled: false };
+  const i1 = len - 1;
+  if (key === 'ALL') return { i0: 0, i1, all: true, enabled: len >= 2 };
+  const t = todayIso || dates[i1];
+  const start = key === '1M' ? addDaysIso(t, -30)
+    : key === '3M' ? addDaysIso(t, -91)
+    : key === 'YTD' ? `${t.slice(0, 4)}-01-01`
+    : addDaysIso(t, -365);
+  let i0 = dates.findIndex(x => x >= start);
+  if (i0 < 0) i0 = i1;
+  return { i0, i1, all: false, enabled: i1 - i0 >= 1 };
+}
+
+function periodStats({ dates, value, net }, i0, i1, all = false) {
+  const V0 = all ? 0 : value[i0], N0 = all ? 0 : net[i0];
+  const V1 = value[i1], N1 = net[i1];
+  const gain = (V1 - N1) - (V0 - N0);
+  const t0 = all ? addDaysIso(dates[0], -1) : dates[i0];
+  const D = Math.max(1, daysBetween(t0, dates[i1]));
+  let S = 0;
+  for (let i = all ? i0 : i0 + 1; i <= i1; i++) {
+    const F = net[i] - (i > 0 ? net[i - 1] : 0);
+    if (F) S += ((D - daysBetween(t0, dates[i])) / D) * F;
+  }
+  const denom = V0 + S;
+  const pct = denom > 0 ? gain / denom * 100 : null;
+  let prod = 1, twrGaps = 0;
+  for (let i = Math.max(i0 + 1, 1); i <= i1; i++) {
+    const F = net[i] - net[i - 1];
+    const den = value[i - 1] + F;
+    if (den < 1) continue;
+    const f = value[i] / den;
+    if (f < 0.5 || f > 2) { twrGaps++; continue; }
+    prod *= f;
+  }
+  const twr = twrGaps > 0 ? null : (prod - 1) * 100;
+  const annualized = (pct != null && D >= 365) ? (Math.pow(1 + pct / 100, 365 / D) - 1) * 100 : null;
+  return { gain, pct, twr, twrGaps, annualized, startValue: V0, endValue: V1, startNet: N0, endNet: N1, netFlow: N1 - N0, days: D };
+}
+
+function cumulativeTwr({ dates, value, net }, i0, i1) {
+  const out = [];
+  if (i1 < i0) return out;
+  out.push(0);
+  let prod = 1;
+  for (let i = i0 + 1; i <= i1; i++) {
+    const F = net[i] - net[i - 1];
+    const den = value[i - 1] + F;
+    if (den >= 1) {
+      const f = value[i] / den;
+      if (f >= 0.5 && f <= 2) prod *= f;
+    }
+    out.push((prod - 1) * 100);
+  }
+  return out;
+}
+
+function xirr({ dates, net, value, flow }) {
+  if (!dates || dates.length < 2) return null;
+  const last = dates[dates.length - 1];
+  if (daysBetween(dates[0], last) < 365) return null;
+  const fl = flow || net.map((x, i) => (i === 0 ? x : x - net[i - 1]));
+  const cfs = [];
+  for (let i = 0; i < dates.length; i++) if (Math.abs(fl[i]) > 1e-9) cfs.push([daysBetween(dates[0], dates[i]), -fl[i]]);
+  cfs.push([daysBetween(dates[0], last), value[value.length - 1]]);
+  const npv = r => cfs.reduce((a, [dd, c]) => a + c / Math.pow(1 + r, dd / 365), 0);
+  let lo = -0.99, hi = 10, flo = npv(lo), fhi = npv(hi);
+  if (!Number.isFinite(flo) || !Number.isFinite(fhi) || flo * fhi > 0) return null;
+  let mid = 0;
+  for (let k = 0; k < 200; k++) {
+    mid = (lo + hi) / 2;
+    const fm = npv(mid);
+    if (Math.abs(fm) < 1e-7) break;
+    if (flo * fm < 0) { hi = mid; } else { lo = mid; flo = fm; }
+  }
+  return mid * 100;
+}
+
+function monthlyNetFlows({ dates, flow }, months = 12, todayIso = todayIsoLocal()) {
+  const endKey = todayIso.slice(0, 7);
+  let startKey;
+  if (months > 0) {
+    let y = +endKey.slice(0, 4), m = +endKey.slice(5, 7) - (months - 1);
+    while (m < 1) { m += 12; y--; }
+    startKey = `${y}-${String(m).padStart(2, '0')}`;
+  } else {
+    startKey = dates && dates.length ? dates[0].slice(0, 7) : endKey;
+  }
+  const keys = [];
+  for (let y = +startKey.slice(0, 4), m = +startKey.slice(5, 7); ; ) {
+    const k = `${y}-${String(m).padStart(2, '0')}`;
+    keys.push(k);
+    if (k >= endKey) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  const map = new Map(keys.map(k => [k, { month: k, net: 0, inflow: 0, outflow: 0 }]));
+  (dates || []).forEach((dd, i) => {
+    const row = map.get(dd.slice(0, 7));
+    const f = flow ? flow[i] : 0;
+    if (!row || !f) return;
+    if (f > 0) row.inflow += f; else row.outflow += -f;
+  });
+  for (const row of map.values()) row.net = row.inflow - row.outflow;
+  return [...map.values()];
+}
+
+function downsample(arr, max) {
+  const n = (arr && arr.length) || 0;
+  if (n <= max) return n ? arr.slice() : [];
+  const step = Math.ceil(n / max);
+  const out = [];
+  for (let i = 0; i < n; i += step) out.push(arr[i]);
+  if ((n - 1) % step !== 0) out.push(arr[n - 1]);
+  return out;
+}
+
+// ----- Drift -----
+function driftRows(summaries, targetAllocation, tolerancePt = ATTENTION_THRESHOLDS.driftPt) {
+  const grouping = (targetAllocation && targetAllocation.grouping) || 'category';
+  const map = new Map();
+  for (const s of (summaries || []).filter(x => dtIncluded(x.party))) {
+    const key = grouping === 'party' ? s.party.id : (s.party.category || 'Overig');
+    const label = grouping === 'party' ? s.party.name : (s.party.category || 'Overig');
+    const color = grouping === 'party' ? partyColorOf(s.party) : ASSET_CLASS_BY_KEY[assetClassOf({ category: key })].color;
+    const g = map.get(key) || { key, label, color, value: 0 };
+    g.value += Math.max(0, s.currentValueEur || 0);
+    map.set(key, g);
+  }
+  const groups = [...map.values()].sort((a, b) => b.value - a.value);
+  const targets = (targetAllocation && targetAllocation[grouping]) || {};
+  const hasTargets = Object.values(targets).some(v => +v > 0);
+  const total = groups.reduce((a, g) => a + g.value, 0);
+  const rows = groups.map(g => {
+    const current = total > 0 ? g.value / total * 100 : 0;
+    const target = hasTargets ? (+targets[g.key] || 0) : null;
+    const drift = hasTargets ? current - target : null;
+    return { ...g, current, target, drift, outside: hasTargets && Math.abs(drift) > tolerancePt };
+  });
+  return { grouping, hasTargets, rows };
+}
+
+// ----- Prices -----
+const PRICE_ASSETS = [
+  { key: 'btc',     symbol: 'BTC',   label: 'Bitcoin',  spotKey: 'btcSpotEur',            histKey: 'btcHistory',        unit: '',    decimals: 0 },
+  { key: 'eth',     symbol: 'ETH',   label: 'Ethereum', spotKey: 'ethSpotEur',            histKey: 'ethHistory',        unit: '',    decimals: 0 },
+  { key: 'paxg',    symbol: 'PAXG',  label: 'Pax Gold', spotKey: 'paxgSpotEur',           histKey: 'paxgHistory',       unit: '',    decimals: 0 },
+  { key: 'gold',    symbol: 'XAU',   label: 'Goud',     spotKey: 'goldSpotEurPerGram',    histKey: 'goldHistory',       unit: '/g',  decimals: 2 },
+  { key: 'silver',  symbol: 'XAG',   label: 'Zilver',   spotKey: 'silverSpotEurPerOunce', histKey: 'silverHistory',     unit: '/oz', decimals: 2 },
+  { key: 'meesman', symbol: 'MWRLD', label: 'Meesman',  spotKey: 'meesmanNavEur',         histKey: 'meesmanNavHistory', unit: '',    decimals: 4 },
+];
+
+function dtHistVal(h) { return h == null ? null : +(h.nav ?? h.value ?? h.price ?? h.close); }
+
+function priceChange(history, days = 30) {
+  if (!Array.isArray(history) || history.length < 2) return null;
+  const last = history[history.length - 1];
+  const target = addDaysIso(last.date, -days);
+  let base = null;
+  for (let i = history.length - 2; i >= 0; i--) if (history[i].date <= target) { base = history[i]; break; }
+  if (!base) return null;
+  const a = dtHistVal(base), b = dtHistVal(last);
+  if (!(a > 0) || !Number.isFinite(b)) return null;
+  return (b / a - 1) * 100;
+}
+
+// ----- Overzicht modules -----
+const OVERVIEW_MODULES = [
+  { id: 'party_grid',    label: 'Posities' },
+  { id: 'allocation',    label: 'Verdeling' },
+  { id: 'attention',     label: 'Aandacht' },
+  { id: 'monthly_inleg', label: 'Netto inleg per maand' },
+  { id: 'returns',       label: 'Resultaat per positie' },
+  { id: 'activity_feed', label: 'Recente activiteit' },
+  { id: 'pension_card',  label: 'Pensioen-kaart (mobiel)' },
+];
+
+function mergeWidgets(stored) {
+  const list = (Array.isArray(stored) ? stored : DEFAULT_WIDGETS).map(w => ({ ...w }));
+  const have = new Set(list.map(w => w.id));
+  for (const w of DEFAULT_WIDGETS) if (!have.has(w.id)) list.push({ ...w });
+  return list;
+}
+
+function isModuleEnabled(widgets, id) {
+  const w = mergeWidgets(widgets).find(x => x.id === id);
+  return !w || w.enabled !== false;
+}
+
+// ----- Pension -----
+const PENSION_DEFAULTS = { age: 30, retireAge: 65, monthly: 2500, wdRate: 4, retRate: 7, inflation: 2.5 };
+const PENSION_LIMITS = {
+  age:       { min: 18,   max: 70,    step: 1   },
+  retireAge: { min: null, max: 85,    step: 1   },
+  monthly:   { min: 500,  max: 10000, step: 100 },
+  wdRate:    { min: 2,    max: 8,     step: 0.5 },
+  retRate:   { min: 1,    max: 15,    step: 0.5 },
+  inflation: { min: 0,    max: 6,     step: 0.1 },
+};
+
+function computePension(inputs, currentValue) {
+  const inp = { ...PENSION_DEFAULTS, ...(inputs || {}) };
+  const age = +inp.age, retireAge = +inp.retireAge, monthly = +inp.monthly;
+  const wdRate = +inp.wdRate, retRate = +inp.retRate, inflation = +inp.inflation;
+  const cv = +currentValue || 0;
+  const years = Math.max(0, retireAge - age);
+  const realRate = ((1 + retRate / 100) / (1 + inflation / 100) - 1) * 100;
+  const neededCorpus = wdRate > 0 ? monthly * 12 / (wdRate / 100) : 0;
+  const neededCorpusReal = neededCorpus * Math.pow(1 + inflation / 100, years);
+  const fvCurrent = cv * Math.pow(1 + retRate / 100, years);
+  const r = retRate / 100 / 12, n = years * 12, gap = neededCorpusReal - fvCurrent;
+  const monthlySavings = (n > 0 && r > 0 && gap > 0) ? gap * r / (Math.pow(1 + r, n) - 1) : 0;
+  const onTrack = fvCurrent >= neededCorpusReal;
+  const progress = neededCorpusReal > 0 ? Math.min(100, fvCurrent / neededCorpusReal * 100) : 0;
+  const withdrawNow = cv * (wdRate / 100) / 12;
+  const valueAt = m => cv * Math.pow(1 + retRate / 100, m / 12) + (r > 0 ? monthlySavings * (Math.pow(1 + r, m) - 1) / r : monthlySavings * m);
+  const targets = [0.25, 0.5, 0.75, 1].map(f => neededCorpusReal * f);
+  const achieved = [null, null, null, null];
+  for (let m = 0; m <= n; m++) {
+    const v = valueAt(m);
+    targets.forEach((t, i) => { if (achieved[i] == null && v >= t * (1 - 1e-9)) achieved[i] = age + m / 12; });
+  }
+  const milestones = [25, 50, 75, 100].map((pct, i) => ({ pct, value: targets[i], age: achieved[i] }));
+  const maxAge = Math.max(85, retireAge + 10);
+  const ages = [];
+  for (let a = age; a <= maxAge; a++) ages.push(a);
+  const scenario = rate => {
+    const out = [cv];
+    let v = cv;
+    const totalMonths = (maxAge - age) * 12;
+    for (let m = 1; m <= totalMonths; m++) {
+      const ageAtStart = age + (m - 1) / 12;
+      if (ageAtStart < retireAge) v = v * (1 + rate / 1200) + monthlySavings;
+      else v = Math.max(0, v * (1 + rate / 1200) - monthly * Math.pow(1 + inflation / 100, m / 12));
+      if (m % 12 === 0) out.push(v);
+    }
+    return out;
+  };
+  const low = scenario(Math.max(0, retRate - 3)), mid = scenario(retRate), high = scenario(retRate + 2);
+  return { years, realRate, neededCorpus, neededCorpusReal, fvCurrent, monthlySavings, onTrack, progress, withdrawNow, milestones, ages, low, mid, high, maxAge };
+}
+
+
 Object.assign(window, {
+  STORAGE_KEY, todayIsoLocal, addDaysIso, daysBetween, txCashAmount,
+  bundleSnapshotAtDate, bundleValuations, bundleWeeklyInterpolatedValue, weeklyInterpolatedValue,
+  unitValuationPoints, totalValuationPoints,
+  UI_PREFS_KEY, DEFAULT_UI_PREFS, loadUiPrefs, saveUiPrefs, themeFromLegacy, MQ_MOBILE, MONTHS_NL, MONTHS_NL_LONG,
+  fmtMoney, fmtPt, fmtCompact, fmtDateLong, fmtDateShort, fmtAxisMonth, fmtMonthName, fmtTime, fmtRelDay, parseNlNumber,
+  ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf,
+  PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
+  TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
+  holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
+  buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
+  PERIODS, periodRange, periodStats, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
+  PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,

@@ -1,27 +1,5 @@
-// App root: state, theme, tabs, tweaks, gist sync, price history
+// App root (S1 shell): state, sync, prices, routing, shell, overlays
 
-const THEMES = [
-  { key: 'minimal',     label: 'Minimalistisch', className: 'theme-minimal'     },
-  { key: 'dark',        label: 'Premium Dark',   className: 'theme-dark'        },
-  { key: 'warm',        label: 'Warm & rustig',  className: 'theme-warm'        },
-  { key: 'terminal',    label: 'Bloomberg',      className: 'theme-terminal'    },
-  { key: 'nord',        label: 'Nord',           className: 'theme-nord'        },
-  { key: 'solarized',   label: 'Solarized',      className: 'theme-solarized'   },
-  { key: 'nebula',      label: 'Nebula',         className: 'theme-nebula'      },
-  { key: 'catppuccin',  label: 'Catppuccin',     className: 'theme-catppuccin'  },
-  { key: 'gruvbox',     label: 'Gruvbox',        className: 'theme-gruvbox'     },
-  { key: 'rosepine',    label: 'Rose Pine',      className: 'theme-rosepine'    },
-];
-
-const TABS = [
-  { key: 'dashboard',    label: 'Dashboard' },
-  { key: 'transacties',  label: 'Transacties' },
-  { key: 'verdeling',    label: 'Verdeling' },
-  { key: 'pensioen',     label: 'Pensioen' },
-];
-
-const OZ_TO_GRAM     = 31.1034768;
-const T212_PROXY        = 'https://corsproxy.io/?url=';
 const SUPABASE_CFG_KEY  = 'investeringen-supabase-v1';
 const SUPABASE_CFG_VERSION = 2;
 const SUPABASE_PULL_INTERVAL_MS = 8000;
@@ -265,18 +243,12 @@ async function supabaseLoadAll(client) {
   }
 
   const portfolioData = portfolioRes.data?.data || {};
-  const {
-    transactions: _legacyTransactions,
-    portfolioDailyValues: _legacyValues,
-    goldHistory: _legacyGold,
-    silverHistory: _legacySilver,
-    btcHistory: _legacyBtc,
-    ethHistory: _legacyEth,
-    paxgHistory: _legacyPaxg,
-    meesmanNavHistory: _legacyMeesman,
-    lastWeeklySpotSave: _legacyWeekly,
-    ...settings
-  } = portfolioData;
+  // Geen object-rest destructuring: Babel-standalone maakt daarvoor globale `_excludedN`
+  // helpers die tussen bestanden botsen. Daarom expliciet kopiëren en verwijderen.
+  const _legacyTransactions = portfolioData.transactions;
+  const settings = { ...portfolioData };
+  ['transactions', 'portfolioDailyValues', 'goldHistory', 'silverHistory', 'btcHistory', 'ethHistory',
+    'paxgHistory', 'meesmanNavHistory', 'lastWeeklySpotSave'].forEach(k => { delete settings[k]; });
 
   const transactionsLoaded = !txRes.error;
   const transactions = transactionsLoaded
@@ -310,6 +282,14 @@ async function supabaseSaveSettings(client, state) {
   const currentParties = current?.data?.parties;
   if (Array.isArray(currentParties) && currentParties.length) {
     settings.parties = normalizeParties(mergeByNewest(currentParties, settings.parties || []));
+  }
+  // Partij-tombstones: remote + lokaal samenvoegen en verwijderde partijen niet terugschrijven.
+  const deletedPartyIds = mergeDeletedIds(current?.data?.deletedPartyIds, settings.deletedPartyIds);
+  if (Object.keys(deletedPartyIds).length) {
+    settings.deletedPartyIds = deletedPartyIds;
+    if (Array.isArray(settings.parties)) {
+      settings.parties = settings.parties.filter(p => !isDeletedByTombstone(p, deletedPartyIds));
+    }
   }
   const { error } = await client
     .from('portfolio')
@@ -362,7 +342,7 @@ async function supabaseUpsertAssetPriceRows(client, rows = []) {
     .from('asset_price_history')
     .upsert(cleanRows, { onConflict: 'asset,date' });
   if (error?.code === 'PGRST204' && /source|updated_at/i.test(error.message || '')) {
-    const legacyRows = cleanRows.map(({ source, updated_at, ...row }) => row);
+    const legacyRows = cleanRows.map(r => ({ asset: r.asset, date: r.date, nav: r.nav }));
     ({ error } = await client
       .from('asset_price_history')
       .upsert(legacyRows, { onConflict: 'asset,date' }));
@@ -534,27 +514,6 @@ async function fetchMeesmanHistory() {
   throw new Error('Geen historische data beschikbaar via Yahoo Finance');
 }
 
-async function fetchMeesmanNav() {
-  const end   = new Date().toISOString().slice(0, 10);
-  const start = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
-  const id    = '0P0001IJJX%24%242%24%241';
-  const qs    = `id=${id}&currencyId=EUR&idtype=Morningstar&frequency=daily&startDate=${start}&endDate=${end}&outputType=COMPACTJSON`;
-  const hosts = ['tools.morningstar.nl', 'tools.morningstar.be', 'lt.morningstar.com', 'tools.morningstar.co.uk'];
-  const token = 't92wz0sj7c';
-  for (const host of hosts) {
-    try {
-      const endpoint = `https://${host}/api/rest.svc/timeseries_price/${token}?${qs}`;
-      const res = await fetch(T212_PROXY + encodeURIComponent(endpoint)).then(r => r.json());
-      const history = res?.TimeSeries?.Security?.[0]?.HistoryDetail || [];
-      if (!history.length) continue;
-      const navHistory = history
-        .map(h => ({ date: h.EndDate.slice(0, 10), nav: +h.Value }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-      return { meesmanNavEur: navHistory[navHistory.length - 1].nav, meesmanNavHistory: navHistory };
-    } catch (_) {}
-  }
-  throw new Error('Geen NAV-data ontvangen (alle Morningstar-endpoints geprobeerd)');
-}
 
 // Roept de Supabase Edge Function "t212-proxy" aan (server-side, geen CORS, key blijft serverside).
 // Geeft { account, transactions } terug. Vereist een gedeployde t212-proxy + T212_API_KEY secret.
@@ -622,15 +581,470 @@ function mapT212Valuation(account) {
   };
 }
 
+
+// ── Routing (S1) ──────────────────────────────────────────────
+const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
+const SH_SECTION_TITLES = {
+  weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', sync: 'Synchronisatie', t212: 'Trading 212',
+  partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over',
+};
+const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
+const SH_WEEKDAYS = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
+const SH_STALE_MS = 2 * 60 * 60 * 1000;
+
+function shNormalizePath(path) {
+  let p = String(path || '').trim();
+  if (p.startsWith('#')) p = p.slice(1);
+  if (!p.startsWith('/')) p = '/' + p;
+  return p;
+}
+
+// → { route, redirect } ; redirect = normalized path to replace the hash with (or null)
+function shParseRoute(hash) {
+  const raw = shNormalizePath(hash || '');
+  const qi = raw.indexOf('?');
+  const pathPart = qi >= 0 ? raw.slice(0, qi) : raw;
+  const qs = qi >= 0 ? raw.slice(qi + 1) : '';
+  const query = {};
+  try { new URLSearchParams(qs).forEach((v, k) => { query[k] = v; }); } catch (e) { /* ignore */ }
+  const segs = pathPart.split('/').filter(Boolean).map(s => { try { return decodeURIComponent(s); } catch (e) { return s; } });
+  const name = segs[0] || '';
+  const mk = (n, params = {}) => ({ name: n, params, query });
+  if (!name) return { route: mk('overzicht'), redirect: null };
+  if (name === 'overzicht' && segs.length === 1) return { route: mk('overzicht'), redirect: null };
+  if (name === 'posities' && segs.length <= 2) return { route: mk('posities', segs[1] ? { partyId: segs[1] } : {}), redirect: null };
+  if (name === 'transacties' && segs.length === 1) return { route: mk('transacties'), redirect: null };
+  if (name === 'plan') {
+    if (segs.length === 1) return { route: mk('plan', { tab: 'verdeling' }), redirect: '/plan/verdeling' + (qs ? '?' + qs : '') };
+    if (segs.length === 2 && (segs[1] === 'verdeling' || segs[1] === 'pensioen')) return { route: mk('plan', { tab: segs[1] }), redirect: null };
+  }
+  if (name === 'instellingen') {
+    if (segs.length === 1) return { route: mk('instellingen', { section: null }), redirect: null };
+    if (segs.length === 2 && SH_SETTINGS_SECTIONS.includes(segs[1])) return { route: mk('instellingen', { section: segs[1] }), redirect: null };
+  }
+  return { route: { name: 'overzicht', params: {}, query: {} }, redirect: '/overzicht' };
+}
+
+function shIsTyping(t) {
+  if (!t) return false;
+  const tag = t.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!t.isContentEditable;
+}
+
+function shSpotState(spotStatus) {
+  const fetchedAt = spotStatus?.fetchedAt;
+  const age = fetchedAt ? Date.now() - Date.parse(fetchedAt) : Infinity;
+  if (spotStatus?.loading) return 'busy';
+  if (spotStatus?.error) return 'error';
+  if (!(age <= SH_STALE_MS)) return 'stale';
+  return 'ok';
+}
+
+function shSyncInfo(app) {
+  const s = app.syncStatus || {};
+  if (!app.sbOk) return { status: 'off', label: 'Niet gekoppeld', time: null, icon: 'cloud' };
+  if (s.loading) return { status: 'busy', label: 'Synchroniseren…', time: null, icon: 'loader' };
+  if (s.error) return { status: 'error', label: 'Sync mislukt', time: null, icon: 'cloud-alert' };
+  if (s.syncedAt) return { status: 'ok', label: 'Gesynchroniseerd', time: fmtTime(s.syncedAt), icon: 'cloud-check' };
+  return { status: 'off', label: 'Nog niet gesynchroniseerd', time: null, icon: 'cloud' };
+}
+
+function shGreeting(h = new Date().getHours()) {
+  if (h >= 6 && h < 12) return 'Goedemorgen';
+  if (h >= 12 && h < 18) return 'Goedemiddag';
+  return 'Goedenavond';
+}
+
+injectStyles('shell', `
+  .sh-app { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); transition: grid-template-columns var(--d-3) var(--ease); }
+  .sh-app.is-collapsed { grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr); }
+  .sh-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px; gap: 2px; overflow: hidden auto; z-index: var(--z-sidebar); user-select: none; -webkit-user-select: none; }
+  .sh-brand { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 2px 0 6px; margin-bottom: 8px; }
+  .sh-brand__name { font-weight: 600; font-size: 14px; letter-spacing: -.01em; white-space: nowrap; }
+  .sh-brand .icon-btn { margin-left: auto; }
+  .sh-nav { display: flex; flex-direction: column; gap: 1px; }
+  .sh-nav-item { position: relative; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: var(--r-2); color: var(--fg-muted); font-size: 13.5px; font-weight: 500; white-space: nowrap; text-decoration: none; background: none; border: 0; cursor: pointer; font-family: inherit; width: 100%; text-align: left; transition: background var(--d-1) var(--ease), color var(--d-1) var(--ease); }
+  .sh-nav-item:hover { background: var(--surface-2); color: var(--fg); }
+  .sh-nav-item[aria-current="page"] { background: var(--surface-2); color: var(--fg); }
+  .sh-nav-item[aria-current="page"]::before { content: ""; position: absolute; left: -10px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
+  .sh-nav-item__count { margin-left: auto; font-size: 11.5px; color: var(--fg-subtle); }
+  .sh-nav-item .kbd { margin-left: auto; opacity: 0; transition: opacity var(--d-1); }
+  .sh-nav-item:hover .kbd { opacity: 1; }
+  .sh-nav-item:hover .sh-nav-item__count { display: none; }
+  .sh-nav-item--sub { height: 28px; padding-left: 34px; font-size: 13px; }
+  .sh-nav-item__pip { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-left: auto; }
+  .sh-sep { height: 1px; background: var(--border); margin: 12px 6px; flex: none; }
+  .sh-ticker { padding: 0 2px; }
+  .sh-ticker__head { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 0 0 6px; color: var(--fg-subtle); font-size: 11.5px; font-weight: 500; }
+  .sh-ticker__state { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+  .sh-ticker__state--stale, .sh-ticker__state--error { color: var(--warn); }
+  .sh-ticker__head .icon-btn { width: 24px; height: 24px; }
+  .sh-tick { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 8px; height: 32px; padding: 0 6px; border-radius: var(--r-2); width: 100%; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+  .sh-tick:hover { background: var(--surface-2); }
+  .sh-tick__sym { font-size: 11px; font-weight: 600; color: var(--fg-muted); letter-spacing: .02em; }
+  .sh-tick__spark { min-width: 0; overflow: hidden; display: flex; align-items: center; }
+  .sh-tick__px { text-align: right; font-size: 12px; line-height: 14px; font-weight: 500; white-space: nowrap; }
+  .sh-tick__px small { display: block; font-size: 10.5px; font-weight: 400; color: var(--fg-subtle); }
+  .sh-side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .sh-theme { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: var(--surface-2); margin: 0 2px; }
+  .sh-theme button { flex: 1; height: 26px; border-radius: 4px; display: grid; place-items: center; color: var(--fg-subtle); background: none; border: 0; cursor: pointer; }
+  .sh-theme button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: inset 0 0 0 1px var(--border); }
+  .sh-app.is-collapsed .sh-brand__name, .sh-app.is-collapsed .sh-nav-item__label, .sh-app.is-collapsed .sh-nav-item__count,
+  .sh-app.is-collapsed .sh-nav-item .kbd, .sh-app.is-collapsed .sh-nav-item--sub, .sh-app.is-collapsed .sh-ticker,
+  .sh-app.is-collapsed .sh-theme, .sh-app.is-collapsed .sh-ticker-sep { display: none; }
+  .sh-app.is-collapsed .sh-brand { flex-direction: column; height: auto; gap: 8px; padding: 0; }
+  .sh-app.is-collapsed .sh-brand .icon-btn { margin: 0; }
+  .sh-app.is-collapsed .sh-nav-item { justify-content: center; padding: 0; }
+  .sh-canvas { min-width: 0; min-height: 0; margin: 8px 8px 8px 0; border-radius: var(--r-4); background: var(--canvas); border: 1px solid var(--border); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; position: relative; }
+  .sh-topbar { position: sticky; top: 0; z-index: var(--z-topbar); height: var(--topbar-h); display: flex; align-items: center; gap: 12px; padding: 0 16px 0 20px; background: color-mix(in srgb, var(--canvas) 95%, transparent); border-bottom: 1px solid var(--border); }
+  .sh-topbar__title { font-size: 15px; font-weight: 600; letter-spacing: -.006em; margin: 0; white-space: nowrap; }
+  .sh-topbar__right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .sh-sync { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border-radius: var(--r-2); font-size: 12.5px; color: var(--fg-muted); background: none; border: 0; cursor: pointer; font-family: inherit; white-space: nowrap; }
+  .sh-sync:hover { background: var(--surface-2); color: var(--fg); }
+  .sh-sync--error { color: var(--warn); }
+  .sh-content { min-width: 0; }
+  .sh-placeholder { padding: 48px 24px; color: var(--fg-subtle); font-size: 13px; text-align: center; }
+  .sh-syncpanel { display: flex; flex-direction: column; gap: 10px; width: 300px; max-width: 100%; padding: 4px; }
+  .sh-sheet .sh-syncpanel { width: auto; padding: 0; }
+  .sh-syncpanel__status { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+  .sh-syncpanel__err { font-size: 12.5px; color: var(--warn); line-height: 18px; word-break: break-word; }
+  .sh-syncpanel__meta { font-size: 12px; color: var(--fg-subtle); }
+  .sh-link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; text-align: left; display: inline-flex; align-items: center; gap: 4px; }
+  .sh-link:hover { text-decoration: underline; }
+  .sh-mheader { position: sticky; top: 0; z-index: var(--z-mheader); padding-top: env(safe-area-inset-top); background: color-mix(in srgb, var(--bg) 95%, transparent); border-bottom: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  .sh-mheader__in { height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 4px 0 16px; }
+  .sh-mheader__in--back { padding-left: 4px; }
+  .sh-mheader__greet { min-width: 0; }
+  .sh-mheader__hello { font-size: 15px; font-weight: 650; line-height: 1.2; }
+  .sh-mheader__sub { font-size: 13px; color: var(--fg-muted); line-height: 1.3; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .sh-mheader__sub--stale { color: var(--warn); }
+  .sh-mheader__title { font-size: 18px; font-weight: 650; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sh-mheader__actions { margin-left: auto; display: flex; flex: none; }
+  .sh-mheader .icon-btn { width: 44px; height: 44px; color: var(--fg); }
+  .sh-mheader .icon-btn--warn { color: var(--warn); }
+  .sh-mheader .icon-btn--off { color: var(--fg-subtle); }
+  .sh-mcontent { padding-bottom: calc(var(--tabbar-h) + 24px); min-width: 0; }
+  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; background: color-mix(in srgb, var(--bg) 96%, transparent); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  .sh-tab { height: 100%; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-subtle); font-size: 11px; font-weight: 550; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
+  .sh-tab[aria-current="page"] { color: var(--fg); }
+  .sh-tab-add { justify-self: center; width: 56px; height: 40px; border-radius: 14px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; cursor: pointer; transition: transform var(--d-1) var(--ease); }
+  .sh-tab-add:active { transform: scale(.94); }
+  .sh-confirm__typed { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .sh-confirm__check { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--fg); cursor: pointer; }
+`);
+
+// ── Shell components ─────────────────────────────────────────
+function ShNavLink({ to, icon, label, current, count, pip, kbd, sub = false, testId, onNavigate, title }) {
+  return (
+    <a href={'#' + to} className={'sh-nav-item' + (sub ? ' sh-nav-item--sub' : '')} aria-current={current ? 'page' : undefined}
+      data-testid={testId} title={title || label}
+      onClick={e => { e.preventDefault(); onNavigate(to); }}>
+      {icon && <Icon name={icon} size={16} />}
+      <span className="sh-nav-item__label">{label}</span>
+      {count != null && <span className="sh-nav-item__count num">{count}</span>}
+      {pip && <span className="sh-nav-item__pip" role="img" aria-label="aandacht" />}
+      {kbd && count == null && !pip && <Kbd>{kbd}</Kbd>}
+    </a>
+  );
+}
+
+function ShTicker({ app }) {
+  const st = shSpotState(app.spotStatus);
+  const fetchedAt = app.spotStatus?.fetchedAt;
+  const errId = 'sh-ticker-err';
+  return (
+    <section className="sh-ticker" aria-label="Koersen">
+      <div className="sh-ticker__head">
+        <span>Koersen</span>
+        <span className={'sh-ticker__state sh-ticker__state--' + st} aria-live="polite"
+          title={st === 'error' ? app.spotStatus.error : undefined} aria-describedby={st === 'error' ? errId : undefined}>
+          {st === 'error' ? <Icon name="triangle-alert" size={12} />
+            : st === 'stale' ? <Icon name="clock" size={12} />
+            : <StatusDot status={st} />}
+          <span className="num">{st === 'stale' ? (fetchedAt ? 'Koersen van ' + fmtTime(fetchedAt) : 'Niet ververst') : fetchedAt ? fmtTime(fetchedAt) : '—'}</span>
+          {st === 'error' && <span id={errId} className="sr-only">{app.spotStatus.error}</span>}
+        </span>
+        <IconButton icon="refresh-cw" label="Koersen verversen" size="sm" iconSize={13}
+          data-testid="refresh-prices" disabled={!!app.spotStatus?.loading} onClick={e => app.refreshSpot(e)} />
+      </div>
+      {PRICE_ASSETS.map(a => {
+        const hist = app.spots[a.histKey] || [];
+        const values = hist.slice(-30).map(h => +h.nav).filter(v => Number.isFinite(v));
+        const ch = priceChange(hist, 30);
+        const last = hist.length ? hist[hist.length - 1] : null;
+        const sub = a.key === 'meesman'
+          ? (last ? 'NAV ' + fmtDateShort(last.date) : 'NAV')
+          : a.unit === '/g' ? 'per gram' : a.unit === '/oz' ? 'per ounce'
+          : ch == null ? '' : (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + fmtPct(Math.abs(ch), { decimals: 1, sign: false }) + ' 30d';
+        return (
+          <button key={a.key} type="button" className="sh-tick" onClick={() => app.navigate('/instellingen/koersen')}
+            title={`${a.label} · 30 dagen ${ch == null ? '—' : fmtPct(ch, { decimals: 1 })}`}>
+            <span className="sh-tick__sym">{a.symbol}</span>
+            <span className="sh-tick__spark">
+              {window.Sparkline ? <Sparkline values={values} width={56} height={14} endTone="neutral" /> : null}
+            </span>
+            <span className="sh-tick__px num">{fmtMoney(app.spots[a.spotKey], { decimals: a.decimals })}<small>{sub}</small></span>
+          </button>
+        );
+      })}
+    </section>
+  );
+}
+
+function ShSidebar({ app, collapsed, counts, driftWarn }) {
+  const r = app.route;
+  const go = to => app.navigate(to);
+  const themes = [
+    { v: 'system', icon: 'monitor', label: 'Systeem' },
+    { v: 'light', icon: 'sun', label: 'Licht' },
+    { v: 'dark', icon: 'moon', label: 'Donker' },
+  ];
+  return (
+    <nav className="sh-sidebar" aria-label="Hoofdnavigatie">
+      <div className="sh-brand">
+        <AppLogo size={24} />
+        <span className="sh-brand__name">Investeringen</span>
+        <IconButton icon="panel-left" label={collapsed ? 'Zijbalk uitklappen ([)' : 'Zijbalk inklappen ([)'} pressed={collapsed}
+          data-testid="sidebar-collapse" onClick={() => app.setPrefs({ sidebarCollapsed: !collapsed })} />
+      </div>
+      <div className="sh-nav">
+        <ShNavLink to="/overzicht" icon="layout-dashboard" label="Overzicht" current={r.name === 'overzicht'} testId="nav-overzicht" onNavigate={go} />
+        <ShNavLink to="/posities" icon="layers" label="Posities" current={r.name === 'posities'} count={counts.open} testId="nav-posities" onNavigate={go} />
+        <ShNavLink to="/transacties" icon="arrow-left-right" label="Transacties" current={r.name === 'transacties'} count={counts.tx} testId="nav-transacties" onNavigate={go} />
+        <ShNavLink to="/plan/verdeling" icon="target" label="Plan" current={r.name === 'plan' && collapsed} testId="nav-plan" onNavigate={go} />
+        <ShNavLink to="/plan/verdeling" label="Verdeling" sub current={r.name === 'plan' && r.params.tab === 'verdeling'} pip={driftWarn}
+          title={driftWarn ? 'Verdeling: categorie buiten bandbreedte' : 'Verdeling'} testId="nav-verdeling" onNavigate={go} />
+        <ShNavLink to="/plan/pensioen" label="Pensioen" sub current={r.name === 'plan' && r.params.tab === 'pensioen'} testId="nav-pensioen" onNavigate={go} />
+      </div>
+      <div className="sh-sep sh-ticker-sep" />
+      <ShTicker app={app} />
+      <div className="sh-side-foot">
+        <div className="sh-theme" role="group" aria-label="Thema">
+          {themes.map(t => (
+            <button key={t.v} type="button" aria-pressed={app.prefs.theme === t.v} aria-label={'Thema: ' + t.label.toLowerCase()} title={t.label}
+              data-testid={'theme-' + t.v} onClick={() => app.setPrefs({ theme: t.v })}>
+              <Icon name={t.icon} size={14} />
+            </button>
+          ))}
+        </div>
+        <ShNavLink to="/instellingen" icon="settings" label="Instellingen" kbd="," current={r.name === 'instellingen'} testId="nav-instellingen" onNavigate={go} />
+      </div>
+    </nav>
+  );
+}
+
+function ShSyncPanel({ app, onDone }) {
+  const info = shSyncInfo(app);
+  const s = app.syncStatus || {};
+  const done = () => { if (onDone) onDone(); };
+  if (!app.sbOk) {
+    return (
+      <div className="sh-syncpanel">
+        <div className="sh-syncpanel__status"><StatusDot status="off" />Niet gekoppeld</div>
+        <div className="sh-syncpanel__meta">Supabase is niet ingesteld. Je gegevens staan alleen in deze browser.</div>
+        <button type="button" className="sh-link" onClick={() => { done(); app.navigate('/instellingen/sync'); }}>Koppelen in Instellingen <Icon name="arrow-right" size={14} /></button>
+      </div>
+    );
+  }
+  return (
+    <div className="sh-syncpanel" aria-live="polite">
+      <div className="sh-syncpanel__status"><StatusDot status={info.status} />{info.label}{info.time ? ' ' + info.time : ''}</div>
+      {s.error && <div className="sh-syncpanel__err">⚠ {s.error}</div>}
+      <Button variant="primary" full icon="refresh-cw" disabled={!!s.loading} onClick={() => app.syncNow()}>Nu synchroniseren</Button>
+      <Button full icon="download" disabled={!!s.loading} onClick={() => app.pullNow()}>Alles opnieuw ophalen</Button>
+      <div className="sh-syncpanel__meta">Laatst gesynchroniseerd {s.syncedAt ? new Date(s.syncedAt).toLocaleTimeString('nl-NL') : '—'}</div>
+      <button type="button" className="sh-link" onClick={() => { done(); app.navigate('/instellingen/sync'); }}>Instellingen… <Icon name="arrow-right" size={14} /></button>
+    </div>
+  );
+}
+
+function ShTopbar({ app, title, syncOpen, setSyncOpen }) {
+  const anchor = React.useRef(null);
+  const info = shSyncInfo(app);
+  const privacy = !!app.prefs.privacy;
+  return (
+    <header className="sh-topbar">
+      <h1 className="sh-topbar__title">{title}</h1>
+      <div className="sh-topbar__right">
+        <button ref={anchor} type="button" className={'sh-sync' + (info.status === 'error' ? ' sh-sync--error' : '')} data-testid="sync-status"
+          aria-haspopup="dialog" aria-expanded={syncOpen}
+          title={app.syncStatus?.error || (app.syncStatus?.syncedAt ? 'Laatst gesynchroniseerd ' + new Date(app.syncStatus.syncedAt).toLocaleTimeString('nl-NL') : info.label)}
+          onClick={() => { if (!app.sbOk) app.navigate('/instellingen/sync'); else setSyncOpen(!syncOpen); }}>
+          {info.status === 'error' ? <Icon name="triangle-alert" size={14} /> : <StatusDot status={info.status} />}
+          <span>{info.label}</span>
+          {info.time && <time className="num">{info.time}</time>}
+        </button>
+        <Popover open={syncOpen} onClose={() => setSyncOpen(false)} anchorRef={anchor} align="end" ariaLabel="Synchronisatie">
+          <ShSyncPanel app={app} onDone={() => setSyncOpen(false)} />
+        </Popover>
+        <IconButton icon={privacy ? 'eye-off' : 'eye'} label={privacy ? 'Bedragen tonen (H)' : 'Bedragen verbergen (H)'} pressed={privacy}
+          data-testid="privacy-toggle" onClick={() => app.setPrefs({ privacy: !privacy })} />
+        <Button variant="primary" icon="plus" kbd="N" data-testid="add-tx" onClick={() => app.openTx()}>Transactie</Button>
+      </div>
+    </header>
+  );
+}
+
+function ShMobileHeader({ app }) {
+  const r = app.route;
+  const privacy = !!app.prefs.privacy;
+  const info = shSyncInfo(app);
+  let back = null;
+  let title = SH_TITLES[r.name] || 'Overzicht';
+  if (r.name === 'posities' && r.params.partyId) {
+    back = '/posities';
+    const p = app.model?.byId?.[r.params.partyId]?.party;
+    title = p ? p.name : 'Posities';
+  } else if (r.name === 'instellingen' && r.params.section) {
+    back = '/instellingen';
+    title = SH_SECTION_TITLES[r.params.section] || 'Instellingen';
+  }
+  let greet = null;
+  if (r.name === 'overzicht') {
+    const now = new Date();
+    const st = shSpotState(app.spotStatus);
+    const fetchedAt = app.spotStatus?.fetchedAt;
+    const dateTxt = `${SH_WEEKDAYS[now.getDay()]} ${now.getDate()} ${MONTHS_NL[now.getMonth()]}`;
+    let priceTxt;
+    if (st === 'stale') {
+      if (fetchedAt) {
+        const hrs = Math.max(2, Math.floor((Date.now() - Date.parse(fetchedAt)) / 3600000));
+        priceTxt = `koersen ${hrs} uur oud`;
+      } else priceTxt = 'koersen niet ververst';
+    } else if (st === 'busy' && !fetchedAt) priceTxt = 'koersen ophalen…';
+    else if (st === 'error') priceTxt = 'koersen ' + (fetchedAt ? fmtTime(fetchedAt) : '—') + ' ⚠';
+    else priceTxt = 'koersen ' + (fetchedAt ? fmtTime(fetchedAt) : '—');
+    greet = (
+      <div className="sh-mheader__greet">
+        <div className="sh-mheader__hello">{shGreeting(now.getHours())}</div>
+        <div className={'sh-mheader__sub' + (st === 'stale' || st === 'error' ? ' sh-mheader__sub--stale' : '')}
+          title={st === 'error' ? app.spotStatus.error : undefined}>
+          {st === 'stale' && <Icon name="clock" size={13} />}
+          <span className="num">{dateTxt} · {priceTxt}</span>
+        </div>
+      </div>
+    );
+  }
+  const syncCls = info.status === 'error' ? 'icon-btn--warn' : info.status === 'off' ? 'icon-btn--off' : '';
+  return (
+    <header className="sh-mheader">
+      <div className={'sh-mheader__in' + (back ? ' sh-mheader__in--back' : '')}>
+        {back && <IconButton icon="chevron-left" label="Terug" iconSize={22} onClick={() => app.navigate(back)} />}
+        {r.name === 'overzicht' && <AppLogo size={32} />}
+        {greet || <h1 className="sh-mheader__title">{title}</h1>}
+        <div className="sh-mheader__actions">
+          <IconButton icon={privacy ? 'eye-off' : 'eye'} label={privacy ? 'Bedragen tonen' : 'Bedragen verbergen'} pressed={privacy} iconSize={20}
+            data-testid="privacy-toggle" onClick={() => app.setPrefs({ privacy: !privacy })} />
+          <IconButton icon={info.icon} label={'Synchronisatie: ' + info.label} iconSize={20} className={syncCls}
+            badge={info.status === 'error' ? 'warn' : null} data-testid="sync-status" onClick={() => app.openSync()} />
+          <IconButton icon="settings" label="Instellingen" iconSize={20} data-testid="nav-instellingen"
+            onClick={() => app.navigate('/instellingen')} />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function ShTabBar({ app }) {
+  const r = app.route;
+  const tabs = [
+    { name: 'overzicht', to: '/overzicht', icon: 'layout-dashboard', label: 'Overzicht' },
+    { name: 'posities', to: '/posities', icon: 'layers', label: 'Posities' },
+    null,
+    { name: 'transacties', to: '/transacties', icon: 'arrow-left-right', label: 'Transacties' },
+    { name: 'plan', to: '/plan/verdeling', icon: 'target', label: 'Plan' },
+  ];
+  return (
+    <nav className="sh-tabbar" aria-label="Hoofdnavigatie">
+      {tabs.map((t, i) => {
+        if (!t) {
+          return (
+            <button key="add" type="button" className="sh-tab-add" aria-label="Transactie toevoegen" data-testid="add-tx"
+              onClick={() => app.openTx()}>
+              <Icon name="plus" size={24} strokeWidth={2.2} />
+            </button>
+          );
+        }
+        const active = r.name === t.name;
+        return (
+          <a key={t.name} href={'#' + t.to} className="sh-tab" aria-current={active ? 'page' : undefined} data-testid={'nav-' + t.name}
+            onClick={e => {
+              e.preventDefault();
+              const atRoot = active && (t.name !== 'posities' || !r.params.partyId);
+              if (atRoot) { try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (er) { window.scrollTo(0, 0); } }
+              else app.navigate(t.to);
+            }}>
+            <Icon name={t.icon} size={22} strokeWidth={active ? 2 : 1.75} />
+            <span>{t.label}</span>
+          </a>
+        );
+      })}
+    </nav>
+  );
+}
+
+function ShConfirmDialog({ confirmState, onSettle }) {
+  const opts = confirmState?.opts || {};
+  const [typed, setTyped] = React.useState('');
+  const [checked, setChecked] = React.useState(!!opts.checkbox?.defaultChecked);
+  const typedOk = !opts.typed || typed.trim().toLowerCase() === String(opts.typed).trim().toLowerCase();
+  const inputRef = React.useRef(null);
+  return (
+    <Dialog open={!!confirmState} onClose={() => onSettle(false, checked)} title={opts.title || 'Weet je het zeker?'} testId="confirm-dialog"
+      initialFocusRef={opts.typed ? inputRef : undefined}
+      actions={<>
+        <Button variant="secondary" onClick={() => onSettle(false, checked)}>{opts.cancelLabel || 'Annuleren'}</Button>
+        <Button variant={opts.danger === false ? 'primary' : 'danger'} disabled={!typedOk} data-testid="confirm-ok"
+          onClick={() => { if (typedOk) onSettle(true, checked); }}>{opts.confirmLabel || 'Verwijderen'}</Button>
+      </>}>
+      {opts.body != null && <div>{opts.body}</div>}
+      {opts.checkbox && (
+        <label className="sh-confirm__check">
+          <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} />
+          {opts.checkbox.label}
+        </label>
+      )}
+      {opts.typed && (
+        <div className="sh-confirm__typed">
+          <label htmlFor="sh-confirm-typed">Typ <b>{opts.typed}</b> om te bevestigen</label>
+          <input className="input" id="sh-confirm-typed" ref={inputRef} value={typed} autoComplete="off" autoCapitalize="off" spellCheck={false}
+            onChange={e => setTyped(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && typedOk) { e.preventDefault(); onSettle(true, checked); } }} />
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function ShScreen({ app }) {
+  const name = app.route.name;
+  const ph = label => <div className="sh-placeholder">{label} wordt geladen…</div>;
+  if (name === 'posities') return window.PositiesScreen ? <PositiesScreen app={app} /> : ph('Posities');
+  if (name === 'transacties') return window.TransactiesScreen ? <TransactiesScreen app={app} /> : ph('Transacties');
+  if (name === 'plan') return window.PlanScreen ? <PlanScreen app={app} /> : ph('Plan');
+  if (name === 'instellingen') return window.InstellingenScreen ? <InstellingenScreen app={app} /> : ph('Instellingen');
+  return window.OverzichtScreen ? <OverzichtScreen app={app} /> : ph('Overzicht');
+}
+
+class ShErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { console.error('[scherm]', error); }
+  componentDidUpdate(prev) { if (prev.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null }); }
+  render() {
+    if (this.state.error) {
+      return <div className="sh-placeholder">Dit scherm kon niet worden geladen: {String(this.state.error.message || this.state.error)}</div>;
+    }
+    return this.props.children;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 function App() {
   const [state, setState]           = React.useState(() => loadState());
-  // tweaks zit nu binnen state.tweaks (gesynchroniseerd via Supabase).
-  // Deze afgeleide variabele houdt bestaande UI-code werkend.
+  // tweaks zit binnen state.tweaks (gesynchroniseerd via Supabase).
   const tweaks = state.tweaks || {};
   const [liveSpot, setLiveSpot]     = React.useState({});
-  const [tweaksOpen, setTweaksOpen] = React.useState(false);
-  const [activeTab, setActiveTab]   = React.useState('dashboard');
   const [spotStatus, setSpotStatus] = React.useState({ loading: false, error: null, fetchedAt: null });
   const [t212Status, setT212Status] = React.useState({ loading: false, error: null, imported: 0, done: false });
   const [importMsg, setImportMsg]   = React.useState(null);
@@ -643,21 +1057,37 @@ function App() {
   const pendingSaveRef = React.useRef(false);
   const saveQueueRef   = React.useRef(Promise.resolve());
   const skipNextAutosaveRef = React.useRef(false);
-  const [isMobile, setIsMobile] = React.useState(() => window.matchMedia('(max-width: 767px)').matches);
-  const [mobileTab, setMobileTab] = React.useState('home');
-  const [mobilePartijenView, setMobilePartijenView] = React.useState('lijst');
-  const [mobileAddTrigger, setMobileAddTrigger] = React.useState(0);
-  const [mobileDetailPartyId, setMobileDetailPartyId] = React.useState(null);
-  const [mobileTxOpen, setMobileTxOpen] = React.useState(false);
-  const [mobileTxPreset, setMobileTxPreset] = React.useState(null);
-  const [mobileEditingTx, setMobileEditingTx] = React.useState(null);
+  const isMobile = useIsMobile();
 
-  React.useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    const h = e => setIsMobile(e.matches);
-    mq.addEventListener('change', h);
-    return () => mq.removeEventListener('change', h);
+  // ── UI prefs (per device) ──
+  const [prefs, setPrefsRaw] = React.useState(() => loadUiPrefs(state));
+  const setPrefs = React.useCallback(patch => {
+    setPrefsRaw(p => {
+      const delta = typeof patch === 'function' ? patch(p) : patch;
+      const next = { ...p, ...(delta || {}) };
+      saveUiPrefs(next);
+      return next;
+    });
   }, []);
+  React.useEffect(() => { saveUiPrefs(prefs); }, []); // eslint-disable-line -- legt migratie eenmalig vast
+
+  // ── Route ──
+  const [route, setRoute] = React.useState(() => shParseRoute(window.location.hash).route);
+  const routeRef = React.useRef(route);
+  routeRef.current = route;
+  const lastHashRef = React.useRef(null);
+
+  // ── Overlays / confirm / toasts ──
+  const [overlay, setOverlay] = React.useState(null);
+  const overlayRef = React.useRef(null);
+  const overlayPushedRef = React.useRef(false);
+  const pendingBackRef = React.useRef(false);
+  const queuedNavRef = React.useRef(null);
+  const [syncPopOpen, setSyncPopOpen] = React.useState(false);
+  const [confirmState, setConfirmState] = React.useState(null);
+  const [toasts, setToasts] = React.useState([]);
+  const toastSeqRef = React.useRef(0);
+  const canvasRef = React.useRef(null);
 
   // Persist state to localStorage
   React.useEffect(() => { saveState(state); }, [state]);
@@ -673,7 +1103,9 @@ function App() {
       transactionsLoadedRef.current = false;
       return;
     }
-    const { _transactionsLoaded, ...remote } = remoteData;
+    const remote = { ...remoteData };
+    const _transactionsLoaded = remote._transactionsLoaded;
+    delete remote._transactionsLoaded;
     transactionsLoadedRef.current = _transactionsLoaded !== false;
     setState(s => {
       const meesman = normalizeMeesmanHistory(
@@ -686,7 +1118,10 @@ function App() {
         .filter(t => !isDeletedByTombstone(t, mergedDeletedTransactionIds)))
         .sort((a, b) => a.date.localeCompare(b.date));
 
-      const mergedParties = normalizeParties(mergeByNewest(remote.parties, s.parties));
+      const mergedDeletedPartyIds = mergeDeletedIds(remote.deletedPartyIds, s.deletedPartyIds);
+      const hasPartyTombstones = Object.keys(mergedDeletedPartyIds).length > 0;
+      const mergedParties = normalizeParties(mergeByNewest(remote.parties, s.parties))
+        .filter(p => !isDeletedByTombstone(p, mergedDeletedPartyIds));
       const mergedTweaks = { ...(s.tweaks || {}), ...(remote.tweaks || {}) };
 
       return {
@@ -694,7 +1129,8 @@ function App() {
         ...remote,
         transactions:      mergedTxs,
         deletedTransactionIds: mergedDeletedTransactionIds,
-        parties:           mergedParties.length ? mergedParties : normalizeParties(s.parties || []),
+        deletedPartyIds:   mergedDeletedPartyIds,
+        parties:           (mergedParties.length || hasPartyTombstones) ? mergedParties : normalizeParties(s.parties || []),
         tweaks:            mergedTweaks,
         meesmanNavEur:     meesman.currentNav,
         meesmanNavHistory: meesman.history,
@@ -716,7 +1152,7 @@ function App() {
     didInitialLoad.current = true;
     const client = getSupabaseClient(supabaseConfig);
     if (!client) return;
-    setSyncStatus({ loading: true, error: null, syncedAt: null });
+    // Eerste load is geen gebruikersactie: geen "Synchroniseren…" tonen.
     supabaseLoadAll(client)
       .then(remoteData => {
         skipNextAutosaveRef.current = true;
@@ -805,11 +1241,12 @@ function App() {
       });
   }, [saveSnapshotToSupabase]);
 
-  const reloadSupabase = React.useCallback(() => {
+  // silent: achtergrond-pull (8 s timer, focus, prijs-refresh) → geen "Synchroniseren…" en fout niet wissen bij start.
+  const reloadSupabase = React.useCallback(({ silent = false } = {}) => {
     if (!supabaseConfig.url || !supabaseConfig.anonKey) return Promise.resolve(false);
     const client = getSupabaseClient(supabaseConfig);
     if (!client) return Promise.resolve(false);
-    setSyncStatus(s => ({ ...s, loading: true, error: null }));
+    if (!silent) setSyncStatus(s => ({ ...s, loading: true, error: null }));
     return supabaseLoadAll(client)
       .then(remoteData => {
         skipNextAutosaveRef.current = true;
@@ -829,7 +1266,7 @@ function App() {
     if (!supabaseConfig.url || !supabaseConfig.anonKey) return;
     const pullWhenVisible = () => {
       if (document.visibilityState === 'hidden') return;
-      reloadSupabase();
+      reloadSupabase({ silent: true });
     };
     const timer = setInterval(pullWhenVisible, SUPABASE_PULL_INTERVAL_MS);
     return () => clearInterval(timer);
@@ -864,7 +1301,7 @@ function App() {
     const onPageHide = () => flushSave();
     const onShow = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return;
-      flushSave().finally(() => reloadSupabase());
+      flushSave().finally(() => reloadSupabase({ silent: true }));
     };
     document.addEventListener('visibilitychange', onHide);
     document.addEventListener('visibilitychange', onShow);
@@ -884,30 +1321,18 @@ function App() {
     };
   }, [flushSave, reloadSupabase]);
 
-  // Apply theme class to <html>
+  // Thema toepassen op <html> (per apparaat, uit prefs)
   React.useEffect(() => {
     const el = document.documentElement;
-    if (window.__PREVIEW_VARIANT__) {
-      THEMES.forEach(t => el.classList.remove(t.className));
-      el.classList.add(`preview-${window.__PREVIEW_VARIANT__}`);
-      return;
-    }
-    THEMES.forEach(t => el.classList.remove(t.className));
-    const t = THEMES.find(t => t.key === tweaks.theme) || THEMES[0];
-    el.classList.add(t.className);
-  }, [tweaks.theme]);
-
-  // Tweaks host integration
-  React.useEffect(() => {
-    const onMessage = e => {
-      const d = e.data || {};
-      if (d.type === '__activate_edit_mode')   setTweaksOpen(true);
-      if (d.type === '__deactivate_edit_mode') setTweaksOpen(false);
-    };
-    window.addEventListener('message', onMessage);
-    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
+    [...el.classList].forEach(c => { if (c.startsWith('theme-') || c.startsWith('preview-')) el.classList.remove(c); });
+    if (prefs.theme === 'light' || prefs.theme === 'dark') el.setAttribute('data-theme', prefs.theme);
+    else el.removeAttribute('data-theme');
+    if (prefs.cvd) el.setAttribute('data-cvd', 'on'); else el.removeAttribute('data-cvd');
+    const ml = document.getElementById('meta-theme-light');
+    const md = document.getElementById('meta-theme-dark');
+    if (ml) ml.setAttribute('content', prefs.theme === 'dark' ? '#0a0b0e' : '#eff1f3');
+    if (md) md.setAttribute('content', prefs.theme === 'light' ? '#eff1f3' : '#0a0b0e');
+  }, [prefs.theme, prefs.cvd]);
 
   // Schrijft tweaks naar state.tweaks → wordt automatisch naar Supabase gesynchroniseerd
   const updateTweaks = React.useCallback(updater => {
@@ -930,7 +1355,7 @@ function App() {
     if (manual || autoServerRefresh) {
       try {
         const serverResult = await refreshPricesViaServer();
-        await reloadSupabase();
+        await reloadSupabase({ silent: true });
         if (manual) {
           const warnings = (serverResult.warnings || []).filter(Boolean);
           setSpotStatus({
@@ -1011,7 +1436,7 @@ function App() {
       if (client) {
         try {
           await supabaseUpsertAssetPriceRows(client, priceRows);
-          await reloadSupabase();
+          await reloadSupabase({ silent: true });
         } catch (e) {
           priceSaveError = `Koersopslag: ${e.message}`;
           setSyncStatus(s => ({ ...s, error: e.message }));
@@ -1045,7 +1470,7 @@ function App() {
         nav: +nav,
         source: 'handmatig',
       }])
-        .then(() => reloadSupabase())
+        .then(() => reloadSupabase({ silent: true }))
         .catch(e => setSyncStatus(s => ({ ...s, error: e.message })));
     }
   }, [setSyncedState, supabaseConfig, reloadSupabase]);
@@ -1077,6 +1502,25 @@ function App() {
   React.useEffect(() => {
     if ((state.meesmanNavHistory || []).length < 20) loadMeesmanHistory();
   }, []); // eslint-disable-line
+
+  // ── Toasts & confirm ──
+  const dismissToast = React.useCallback(id => setToasts(ts => ts.filter(t => t.id !== id)), []);
+  const toast = React.useCallback((text, { action, duration } = {}) => {
+    const id = ++toastSeqRef.current;
+    setToasts(ts => [...ts.slice(-2), { id, text, action }]);
+    setTimeout(() => dismissToast(id), duration || (action ? 6000 : 2200));
+    return id;
+  }, [dismissToast]);
+
+  const confirmFn = React.useCallback(opts => new Promise(resolve => {
+    setConfirmState({ opts: opts || {}, resolve, key: Date.now() });
+  }), []);
+  const settleConfirm = React.useCallback((ok, checked) => {
+    setConfirmState(c => {
+      if (c) setTimeout(() => c.resolve({ ok: !!ok, checked: !!checked }), 0);
+      return null;
+    });
+  }, []);
 
   const importT212 = React.useCallback(async () => {
     setT212Status({ loading: true, error: null, imported: 0, done: false });
@@ -1114,10 +1558,11 @@ function App() {
       }
       const note = partial ? ' (historie deels — draai nog eens voor de rest)' : '';
       setT212Status({ loading: false, error: null, imported: depTxs.length, done: true, note });
+      toast(`${depTxs.length} storting(en) geïmporteerd`);
     } catch (e) {
       setT212Status({ loading: false, error: e.message || 'Importfout', imported: 0, done: false });
     }
-  }, [supabaseConfig, tweaks.t212Mode, state.transactions, setSyncedState]);
+  }, [supabaseConfig, tweaks.t212Mode, state.transactions, setSyncedState, toast]);
 
   React.useEffect(() => {
     refreshSpot();
@@ -1125,16 +1570,28 @@ function App() {
     return () => clearInterval(t);
   }, [refreshSpot]);
 
-  const resetData = React.useCallback(() => {
-    if (!confirm('Alle transacties wissen en terug naar de seed data?')) return;
+  const resetData = React.useCallback(async () => {
+    const res = await confirmFn({
+      title: 'Terug naar begindata?',
+      body: 'Alle transacties wissen en terug naar de seed data?',
+      confirmLabel: 'Terugzetten',
+      typed: 'terugzetten',
+    });
+    if (!res.ok) return false;
     localStorage.removeItem('investeringen-v3');
     setState(loadState());
-  }, []);
+    return true;
+  }, [confirmFn]);
 
-  const deleteT212Txs = React.useCallback(() => {
-    const ids = state.transactions.filter(t => t.party === 'trading212').map(t => t.id);
+  const deleteT212Txs = React.useCallback(async () => {
+    const ids = stateRef.current.transactions.filter(t => t.party === 'trading212').map(t => t.id);
     const count = ids.length;
-    if (!confirm(`${count} Trading 212 transacties verwijderen?`)) return;
+    const res = await confirmFn({
+      title: 'Alle Trading 212-transacties verwijderen?',
+      body: `${count} Trading 212 transacties verwijderen?`,
+      confirmLabel: 'Verwijderen',
+    });
+    if (!res.ok) return false;
     setSyncedState(s => {
       const deletedAt = new Date().toISOString();
       const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
@@ -1142,7 +1599,9 @@ function App() {
       return { ...s, transactions: s.transactions.filter(t => t.party !== 'trading212'), deletedTransactionIds };
     });
     setT212Status({ loading: false, error: null, imported: 0, done: false });
-  }, [state.transactions, setSyncedState]);
+    toast(`${count} transacties verwijderd`);
+    return true;
+  }, [setSyncedState, confirmFn, toast]);
 
   const syncNow = React.useCallback(async () => {
     const client = getSupabaseClient(supabaseConfig);
@@ -1158,6 +1617,11 @@ function App() {
       setSyncStatus({ loading: false, error: e.message, syncedAt: null });
     }
   }, [supabaseConfig, state]);
+
+  const pullNow = React.useCallback(
+    () => flushSave().finally(() => reloadSupabase({ silent: false })),
+    [flushSave, reloadSupabase]
+  );
 
   const exportData = React.useCallback(() => {
     const json = JSON.stringify(state, null, 2);
@@ -1176,7 +1640,8 @@ function App() {
       try {
         const data = JSON.parse(e.target.result);
         if (!data.transactions || !Array.isArray(data.transactions)) {
-          setImportMsg({ ok: false, text: 'Ongeldig bestand — geen transacties gevonden' }); return;
+          const text = 'Ongeldig bestand — geen transacties gevonden';
+          setImportMsg({ ok: false, text }); toast(text); return;
         }
         if (!data.widgets)       data.widgets       = DEFAULT_WIDGETS.map(w => ({ ...w }));
         if (!data.parties || !data.parties.length) {
@@ -1192,15 +1657,32 @@ function App() {
         if (!data.hiddenParties) data.hiddenParties = [];
         if (!data.tileMetrics)   data.tileMetrics   = {};
         if (!data.deletedTransactionIds) data.deletedTransactionIds = {};
+        if (!data.deletedPartyIds) data.deletedPartyIds = {};
         if (!data.tweaks)        data.tweaks        = { ...(window.TWEAKS || {}) };
         setSyncedState(data);
-        setImportMsg({ ok: true, text: `${data.transactions.length} transacties geladen` });
-      } catch { setImportMsg({ ok: false, text: 'Kon bestand niet lezen — geldig JSON?' }); }
+        const text = `${data.transactions.length} transacties geladen`;
+        setImportMsg({ ok: true, text }); toast(text);
+      } catch {
+        const text = 'Kon bestand niet lezen — geldig JSON?';
+        setImportMsg({ ok: false, text }); toast(text);
+      }
     };
     reader.readAsText(file);
-  }, [setSyncedState]);
+  }, [setSyncedState, toast]);
 
-  // spots: live prijzen + historische reeksen uit state/Supabase
+  // spots: live prijzen + historische reeksen uit state/Supabase.
+  // Gekeyed op een goedkope signatuur zodat 8-s pulls met identieke arrays niet herberekenen.
+  const histSig = h => (h && h.length ? h.length + ':' + h[h.length - 1].date : '0');
+  const meesmanNavResolved = state.meesmanNavEur ?? displayTweaks.meesmanNavEur ?? 100.4;
+  const meesmanHistResolved = (state.meesmanNavHistory?.length ? state.meesmanNavHistory : null)
+    ?? displayTweaks.meesmanNavHistory ?? [];
+  const spotsKey = [
+    displayTweaks.goldSpotEurPerGram, displayTweaks.silverSpotEurPerOunce,
+    displayTweaks.btcSpotEur, displayTweaks.ethSpotEur, displayTweaks.paxgSpotEur,
+    meesmanNavResolved, histSig(meesmanHistResolved),
+    histSig(state.goldHistory), histSig(state.silverHistory),
+    histSig(state.btcHistory), histSig(state.ethHistory), histSig(state.paxgHistory),
+  ].join('|');
   const spots = React.useMemo(() => ({
     goldSpotEurPerGram:    displayTweaks.goldSpotEurPerGram,
     silverSpotEurPerOunce: displayTweaks.silverSpotEurPerOunce,
@@ -1208,901 +1690,339 @@ function App() {
     ethSpotEur:            displayTweaks.ethSpotEur,
     paxgSpotEur:           displayTweaks.paxgSpotEur,
     // Meesman: uit state, tweaks als fallback
-    meesmanNavEur:         state.meesmanNavEur     ?? displayTweaks.meesmanNavEur     ?? 100.4,
-    meesmanNavHistory:     (state.meesmanNavHistory?.length ? state.meesmanNavHistory : null)
-                           ?? displayTweaks.meesmanNavHistory ?? [],
+    meesmanNavEur:         meesmanNavResolved,
+    meesmanNavHistory:     meesmanHistResolved,
     goldHistory:           state.goldHistory   || [],
     silverHistory:         state.silverHistory || [],
     btcHistory:            state.btcHistory    || [],
     ethHistory:            state.ethHistory    || [],
     paxgHistory:           state.paxgHistory   || [],
-  }), [displayTweaks.goldSpotEurPerGram, displayTweaks.silverSpotEurPerOunce,
-       displayTweaks.btcSpotEur, displayTweaks.ethSpotEur, displayTweaks.paxgSpotEur,
-       displayTweaks.meesmanNavEur, displayTweaks.meesmanNavHistory,
-       state.meesmanNavEur, state.meesmanNavHistory,
-       state.goldHistory, state.silverHistory,
-       state.btcHistory, state.ethHistory, state.paxgHistory]);
+  }), [spotsKey]); // eslint-disable-line
 
-  // state.parties is dé bron van waarheid (gesynced via Supabase).
-  // Bij allereerste run vóór migratie van loadState: fallback op de seed PARTIES.
-  const allParties = React.useMemo(
-    () => (state.parties && state.parties.length) ? state.parties : PARTIES,
-    [state.parties]
+  // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
+  // alleen zolang er nog nooit partijen (of tombstones) waren.
+  const allParties = React.useMemo(() => {
+    const list = state.parties; const tomb = state.deletedPartyIds || {};
+    return (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? list : PARTIES;
+  }, [state.parties, state.deletedPartyIds]);
+  const allPartiesRef = React.useRef(allParties);
+  allPartiesRef.current = allParties;
+  const summaries   = React.useMemo(() => allParties.map(p => summarizeParty(p, state.transactions, spots)), [state.transactions, allParties, spots]);
+  const flows       = React.useMemo(() => buildFlowSeries(state.transactions, allParties), [state.transactions, allParties]);
+  const valueSeries = React.useMemo(() => buildPartyTimeSeries(state.transactions, allParties, spots), [state.transactions, allParties, spots]);
+  const model       = React.useMemo(
+    () => buildPortfolioModel({ parties: allParties, transactions: state.transactions, summaries, flows, valueSeries, spots }),
+    [allParties, state.transactions, summaries, flows, valueSeries, spots]
   );
-  const summaries = React.useMemo(
-    () => allParties.map(p => summarizeParty(p, state.transactions, spots)),
-    [state.transactions, spots, allParties]
-  );
-  const mobileDetailParty = mobileDetailPartyId ? allParties.find(p => p.id === mobileDetailPartyId) : null;
-  const mobileDetailSummary = mobileDetailParty ? summaries.find(s => s.party.id === mobileDetailParty.id) : null;
-  const saveMobileTx = React.useCallback(tx => {
+
+  const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
+
+  // ── Navigation ──
+  const doNavigate = React.useCallback((path, { replace = false } = {}) => {
+    const norm = shNormalizePath(path);
+    const parsed = shParseRoute(norm);
+    const target = parsed.redirect || norm;
+    const nextRoute = parsed.redirect ? shParseRoute(target).route : parsed.route;
+    if (replace) {
+      try { window.history.replaceState(window.history.state, '', '#' + target); } catch (e) { /* ignore */ }
+    } else if (window.location.hash !== '#' + target) {
+      window.location.hash = target;
+    }
+    lastHashRef.current = '#' + target;
+    setRoute(nextRoute);
+  }, []);
+
+  const runQueuedNav = React.useCallback(() => {
+    const q = queuedNavRef.current;
+    queuedNavRef.current = null;
+    if (q) doNavigate(q.path, q.opts);
+  }, [doNavigate]);
+
+  const closeOverlay = React.useCallback(() => {
+    if (overlayPushedRef.current) {
+      overlayPushedRef.current = false;
+      pendingBackRef.current = true;
+      setTimeout(() => {
+        if (pendingBackRef.current) { pendingBackRef.current = false; runQueuedNav(); }
+      }, 500);
+      try { window.history.back(); } catch (e) { pendingBackRef.current = false; }
+    }
+    overlayRef.current = null;
+    setOverlay(null);
+  }, [runQueuedNav]);
+
+  const navigate = React.useCallback((path, opts = {}) => {
+    setSyncPopOpen(false);
+    if (overlayRef.current || overlayPushedRef.current) closeOverlay();
+    if (pendingBackRef.current) { queuedNavRef.current = { path, opts }; return; }
+    doNavigate(path, opts);
+  }, [closeOverlay, doNavigate]);
+
+  const openOverlay = React.useCallback(o => {
+    if (!overlayRef.current && !overlayPushedRef.current && !pendingBackRef.current) {
+      try { window.history.pushState({ ovl: 1 }, '', window.location.href); overlayPushedRef.current = true; } catch (e) { /* ignore */ }
+    }
+    overlayRef.current = o;
+    setOverlay(o);
+    setSyncPopOpen(false);
+  }, []);
+
+  // Hash- en history-luisteraars
+  React.useEffect(() => {
+    const init = shParseRoute(window.location.hash);
+    if (init.redirect) {
+      try { window.history.replaceState(window.history.state, '', '#' + init.redirect); } catch (e) { /* ignore */ }
+      setRoute(shParseRoute(init.redirect).route);
+    }
+    lastHashRef.current = window.location.hash;
+    const onHash = () => {
+      const parsed = shParseRoute(window.location.hash);
+      if (parsed.redirect) {
+        try { window.history.replaceState(window.history.state, '', '#' + parsed.redirect); } catch (e) { /* ignore */ }
+      }
+      if (window.location.hash === lastHashRef.current) return;
+      lastHashRef.current = window.location.hash;
+      setRoute(parsed.redirect ? shParseRoute(parsed.redirect).route : parsed.route);
+      if (overlayRef.current) { overlayRef.current = null; overlayPushedRef.current = false; setOverlay(null); }
+    };
+    const onPop = () => {
+      if (pendingBackRef.current) {
+        pendingBackRef.current = false;
+        // Tussendoor een nieuwe overlay geopend? Dan alsnog een history-entry voor Back.
+        if (overlayRef.current && !overlayPushedRef.current) {
+          try { window.history.pushState({ ovl: 1 }, '', window.location.href); overlayPushedRef.current = true; } catch (e) { /* ignore */ }
+        }
+        runQueuedNav();
+        return;
+      }
+      if (overlayRef.current) {
+        overlayRef.current = null;
+        overlayPushedRef.current = false;
+        setOverlay(null);
+      }
+    };
+    window.addEventListener('hashchange', onHash);
+    window.addEventListener('popstate', onPop);
+    return () => { window.removeEventListener('hashchange', onHash); window.removeEventListener('popstate', onPop); };
+  }, [runQueuedNav]);
+
+  // Scroll naar boven bij wisselen van pagina
+  const scrollKey = route.name + '|' + (route.params.partyId || '') + '|' + (route.params.section || '') + '|' + (route.params.tab || '');
+  React.useEffect(() => {
+    if (isMobile) { try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }
+    else if (canvasRef.current) canvasRef.current.scrollTop = 0;
+  }, [isMobile ? scrollKey : route.name]); // eslint-disable-line
+
+  // Tweaks host integration (edit-mode berichten)
+  React.useEffect(() => {
+    const onMessage = e => {
+      const d = e.data || {};
+      if (d.type === '__activate_edit_mode') navigate('/instellingen');
+      if (d.type === '__deactivate_edit_mode' && routeRef.current.name === 'instellingen') navigate('/overzicht');
+    };
+    window.addEventListener('message', onMessage);
+    try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch (e) { /* ignore */ }
+    return () => window.removeEventListener('message', onMessage);
+  }, [navigate]);
+
+  // ── Actions ──
+  const deleteTxRef = React.useRef(null);
+
+  const saveTx = React.useCallback(tx => {
+    if (!tx || !tx.id) return;
     const updatedAt = new Date().toISOString();
     const stampedTx = { ...tx, updatedAt };
+    const isNew = !(stateRef.current.transactions || []).some(t => t.id === tx.id);
     setSyncedState(s => {
       const exists = s.transactions.some(t => t.id === tx.id);
-      const { [tx.id]: _deleted, ...deletedTransactionIds } = s.deletedTransactionIds || {};
+      const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
+      delete deletedTransactionIds[tx.id];
       return { ...s, transactions: exists
         ? s.transactions.map(t => t.id === tx.id ? stampedTx : t)
         : [...s.transactions, stampedTx],
         deletedTransactionIds };
     });
-  }, [setSyncedState]);
-  const deleteMobileTx = React.useCallback(id => {
-    if (!confirm('Transactie verwijderen?')) return;
+    if (tx.party) {
+      setPrefs(p => ({ recentParties: [tx.party, ...(p.recentParties || []).filter(id => id !== tx.party)].slice(0, 5) }));
+    }
+    if (isNew) {
+      toast('Transactie toegevoegd', { action: { label: 'Ongedaan maken', onClick: () => deleteTxRef.current && deleteTxRef.current(tx.id, { confirm: false, toast: false }) } });
+    } else {
+      toast('Transactie opgeslagen');
+    }
+  }, [setSyncedState, setPrefs, toast]);
+
+  const deleteTx = React.useCallback(async (id, { confirm = true, toast: showToast = true } = {}) => {
+    const tx = (stateRef.current.transactions || []).find(t => t.id === id);
+    if (!tx) return false;
+    if (confirm) {
+      const party = allPartiesRef.current.find(p => p.id === tx.party);
+      let amount = '';
+      try { amount = txAmountInfo(tx, party).text; } catch (e) { amount = ''; }
+      const body = [TX_LABELS[tx.type] || tx.type, party ? party.name : (tx.party || 'Zonder partij'), fmtDateLong(tx.date), amount]
+        .filter(Boolean).join(' · ');
+      const res = await confirmFn({ title: 'Transactie verwijderen?', body, confirmLabel: 'Verwijderen' });
+      if (!res.ok) return false;
+    }
+    const deletedAt = new Date().toISOString();
     setSyncedState(s => ({
       ...s,
       transactions: s.transactions.filter(t => t.id !== id),
-      deletedTransactionIds: { ...(s.deletedTransactionIds || {}), [id]: new Date().toISOString() },
+      deletedTransactionIds: { ...(s.deletedTransactionIds || {}), [id]: deletedAt },
     }));
+    if (showToast) {
+      toast('Transactie verwijderd', { action: { label: 'Ongedaan maken', onClick: () => {
+        const restored = { ...tx, updatedAt: new Date().toISOString() };
+        setSyncedState(s => {
+          const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
+          delete deletedTransactionIds[id];
+          const transactions = s.transactions.some(t => t.id === id)
+            ? s.transactions
+            : [...s.transactions, restored].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+          return { ...s, transactions, deletedTransactionIds };
+        });
+      } } });
+    }
+    return true;
+  }, [setSyncedState, confirmFn, toast]);
+  deleteTxRef.current = deleteTx;
+
+  const saveParty = React.useCallback(p => {
+    if (!p || !p.id) return;
+    setSyncedState(s => {
+      const stampedParty = { ...p, updatedAt: new Date().toISOString() };
+      const tomb = s.deletedPartyIds || {};
+      const list = (Array.isArray(s.parties) && (s.parties.length || Object.keys(tomb).length)) ? s.parties : [...PARTIES];
+      const exists = list.some(x => x.id === p.id);
+      const deletedPartyIds = { ...tomb };
+      delete deletedPartyIds[p.id];
+      return { ...s, parties: exists
+        ? list.map(x => x.id === p.id ? { ...x, ...stampedParty } : x)
+        : [...list, stampedParty],
+        deletedPartyIds };
+    });
+    toast('Partij opgeslagen');
+  }, [setSyncedState, toast]);
+
+  const deleteParty = React.useCallback((id, { deleteTransactions = false } = {}) => {
+    setSyncedState(s => {
+      const stamp = new Date().toISOString();
+      const tomb = s.deletedPartyIds || {};
+      const list = (Array.isArray(s.parties) && (s.parties.length || Object.keys(tomb).length)) ? s.parties : [...PARTIES];
+      const next = { ...s, parties: list.filter(p => p.id !== id), deletedPartyIds: { ...tomb, [id]: stamp } };
+      if (deleteTransactions) {
+        const prevDeleted = s.deletedTransactionIds || {};
+        const tombstones = { ...prevDeleted };
+        for (const t of (s.transactions || [])) if (t.party === id) tombstones[t.id] = stamp;
+        next.transactions = (s.transactions || []).filter(t => t.party !== id);
+        next.deletedTransactionIds = tombstones;
+      }
+      return next;
+    });
+    if (routeRef.current.params.partyId === id) navigate('/posities', { replace: true });
+    toast('Partij verwijderd');
+  }, [setSyncedState, navigate, toast]);
+
+  const setWidgetEnabled = React.useCallback((id, enabled) => {
+    setSyncedState(s => ({ ...s, widgets: mergeWidgets(s.widgets).map(w => w.id === id ? { ...w, enabled } : w) }));
   }, [setSyncedState]);
-  const openMobileTx = React.useCallback((preset = null) => {
-    setMobileEditingTx(null);
-    setMobileTxPreset(preset);
-    setMobileTxOpen(true);
-  }, []);
-  const editMobileTx = React.useCallback(tx => {
-    setMobileEditingTx(tx);
-    setMobileTxPreset(null);
-    setMobileTxOpen(true);
-  }, []);
+  const setHiddenGroups = React.useCallback(keys => {
+    setSyncedState(s => ({ ...s, hiddenParties: keys }));
+  }, [setSyncedState]);
 
-  const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
+  const openTx = React.useCallback((preset = null) => openOverlay({ kind: 'tx', preset: preset || null, initial: null }), [openOverlay]);
+  const editTx = React.useCallback(tx => openOverlay({ kind: 'tx', preset: null, initial: tx }), [openOverlay]);
+  const openTxDetail = React.useCallback(txId => openOverlay({ kind: 'txDetail', txId }), [openOverlay]);
+  const openPartyForm = React.useCallback((party = null, { startInDelete = false } = {}) => openOverlay({ kind: 'partyForm', party, startInDelete }), [openOverlay]);
+  const openPrices = React.useCallback(() => openOverlay({ kind: 'prices' }), [openOverlay]);
+  const openSync = React.useCallback(() => {
+    if (isMobile) openOverlay({ kind: 'sync' });
+    else setSyncPopOpen(true);
+  }, [isMobile, openOverlay]);
 
-  const previewVariant = window.__PREVIEW_VARIANT__;
-  const PreviewShell = previewVariant && window.PREVIEW_SHELLS?.[previewVariant];
-  const PreviewDashboard = previewVariant && window.PREVIEW_DASHBOARDS?.[previewVariant];
-  const usePreview = !!(previewVariant && PreviewShell && PreviewDashboard);
-
-  const previewTotals = React.useMemo(() => {
-    if (!usePreview) return null;
-    const included = summaries.filter(s => s.party.includeInPortfolio !== false);
-    const total = included.reduce((s, x) => s + x.currentValueEur, 0);
-    const invested = included.reduce((s, x) => s + x.invested, 0);
-    const pnl = included.reduce((s, x) => s + x.pnl, 0);
-    return {
-      total, invested, pnl,
-      pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
-      spots: displayTweaks,
+  // Sneltoetsen (desktop)
+  React.useEffect(() => {
+    if (isMobile) return undefined;
+    const onKey = e => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (shIsTyping(e.target)) return;
+      if (document.querySelector('.dialog-wrap')) return;
+      const k = e.key;
+      if (k === 'h' || k === 'H') { e.preventDefault(); setPrefs(p => ({ privacy: !p.privacy })); return; }
+      if (overlayRef.current) return;
+      if (k === 'n' || k === 'N') { e.preventDefault(); openTx(); }
+      else if (k === '[') { e.preventDefault(); setPrefs(p => ({ sidebarCollapsed: !p.sidebarCollapsed })); }
+      else if (k === ',') { e.preventDefault(); navigate('/instellingen'); }
     };
-  }, [usePreview, summaries, displayTweaks]);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isMobile, setPrefs, openTx, navigate]);
 
-  if (usePreview) {
-    const shellProps = {
-      variant: previewVariant,
-      activeTab, setActiveTab,
-      totals: previewTotals,
-      onSettings: () => setTweaksOpen(o => !o),
-      onRefresh: refreshSpot,
-      spotStatus, syncStatus, sbOk, tweaksOpen,
-    };
-    return (
-      <>
-        <PreviewShell {...shellProps}>
-          {activeTab === 'dashboard' && (
-            <PreviewDashboard state={state} setState={setSyncedState}
-              tweaks={displayTweaks} setTweaks={updateTweaks}
-              spotStatus={spotStatus} onRefreshSpot={refreshSpot}
-              onUpdateMeesman={updateMeesmanNav} />
-          )}
-          {activeTab === 'transacties' && (
-            <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
-          )}
-          {activeTab === 'verdeling' && (
-            <AllocationTab state={state} setState={setSyncedState} summaries={summaries} />
-          )}
-          {activeTab === 'pensioen' && (
-            <PensionTab summaries={summaries} />
-          )}
-        </PreviewShell>
-        {tweaksOpen && (
-          <TweaksPanel
-            tweaks={displayTweaks} setTweaks={updateTweaks}
-            onReset={resetData}
-            onExport={exportData} onImport={importData} importMsg={importMsg}
-            spotStatus={spotStatus} onRefreshSpot={refreshSpot}
-            t212Status={t212Status} onImportT212={importT212} onDeleteT212={deleteT212Txs}
-            supabaseConfig={supabaseConfig} setSupabaseConfig={setSupabaseConfig}
-            syncStatus={syncStatus} onSyncNow={syncNow}
-            onClose={() => setTweaksOpen(false)}
-            meesmanNav={state.meesmanNavEur} meesmanHistory={state.meesmanNavHistory}
-            onUpdateMeesman={updateMeesmanNav}
-            histStatus={meesmanHistStatus} onLoadHistory={loadMeesmanHistory}
-          />
-        )}
-      </>
-    );
-  }
+  const app = React.useMemo(() => ({
+    state, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
+    spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
+    setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
+    syncNow, pullNow, exportData, importData, resetData,
+    saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
+    openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
+    overlayOpen: overlay !== null, confirm: confirmFn, toast,
+  }), [state, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
+    spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
+    setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
+    syncNow, pullNow, exportData, importData, resetData,
+    saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
+    openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
 
-  return (
+  // Sidebar-tellers
+  const driftWarn = React.useMemo(() => {
+    try { return driftRows(model.summaries, state.targetAllocation).rows.some(r => r.outside); } catch (e) { return false; }
+  }, [model, state.targetAllocation]);
+  const counts = { open: model.totals?.openCount ?? (model.open || []).length, tx: (state.transactions || []).length };
+
+  const ov = overlay || {};
+  const screen = (
+    <ShErrorBoundary resetKey={route.name}>
+      <ShScreen app={app} />
+    </ShErrorBoundary>
+  );
+  const overlays = (
     <>
-      {/* Global nav */}
-      <nav style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div className="nav-inner" style={{ maxWidth: 1360, margin: '0 auto', padding: '0 28px', display: 'flex', alignItems: 'center', gap: 0 }}>
-          <div className="nav-mobile-brand" style={{ display: 'none', alignItems: 'center', gap: 10, marginRight: 8 }}>
-            <AppLogo size={26} />
-            <span>Investeringen</span>
-          </div>
-          <div className="nav-tab-btns" style={{ display: 'flex' }}>
-            {TABS.map(tab => (
-              <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                style={{
-                  padding: '14px 18px', fontFamily: 'inherit', fontSize: 14,
-                  fontWeight: activeTab === tab.key ? 600 : 400,
-                  color: activeTab === tab.key ? 'var(--fg)' : 'var(--fg-muted)',
-                  background: 'transparent', border: 'none',
-                  borderBottom: activeTab === tab.key ? '2px solid var(--fg)' : '2px solid transparent',
-                  cursor: 'pointer', letterSpacing: '-0.01em',
-                  transition: 'color .15s, border-color .15s', marginBottom: -1,
-                }}>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {isMobile && (
-              <>
-                <button onClick={() => flushSave().finally(() => reloadSupabase())} disabled={syncStatus?.loading}
-                  title="Alles opnieuw ophalen uit Supabase"
-                  style={{
-                    padding: '5px 10px', fontFamily: 'inherit', fontSize: 13,
-                    background: 'transparent',
-                    color: syncStatus?.loading ? 'var(--fg-dim)' : 'var(--fg-muted)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)', cursor: syncStatus?.loading ? 'default' : 'pointer',
-                    lineHeight: 1, transition: 'all .15s',
-                  }}>
-                  {syncStatus?.loading ? '…' : '⇄'}
-                </button>
-                <button onClick={refreshSpot} disabled={spotStatus?.loading} title="Live koersen verversen"
-                  style={{
-                    padding: '5px 10px', fontFamily: 'inherit', fontSize: 13,
-                    background: 'transparent',
-                    color: spotStatus?.loading ? 'var(--fg-dim)' : 'var(--fg-muted)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)', cursor: spotStatus?.loading ? 'default' : 'pointer',
-                    lineHeight: 1, transition: 'all .15s',
-                  }}>
-                  {spotStatus?.loading ? '…' : '↻'}
-                </button>
-              </>
-            )}
-            <span className="nav-theme-label" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--fg-dim)', fontFamily: 'var(--ff-mono)', marginRight: 4 }}>Thema</span>
-            <select className="nav-theme-select" value={tweaks.theme} title="Thema kiezen"
-              onChange={e => updateTweaks(tw => ({ ...tw, theme: e.target.value }))}>
-              {THEMES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </select>
-            {/* Sync indicator */}
-            {sbOk && (
-              <span title={syncStatus.error ? syncStatus.error : syncStatus.syncedAt ? 'Supabase: gesynchroniseerd' : 'Supabase: sync actief'}
-                style={{ fontSize: 14, color: syncStatus.error ? 'var(--negative)' : syncStatus.loading ? 'var(--fg-dim)' : 'var(--positive)', lineHeight: 1 }}>
-                {syncStatus.loading ? '↻' : syncStatus.error ? '⚠' : '●'}
-              </span>
-            )}
-            <button onClick={() => setTweaksOpen(o => !o)} title="Instellingen"
-              style={{
-                marginLeft: 4, padding: '5px 10px', fontFamily: 'inherit', fontSize: 15,
-                background: tweaksOpen ? 'var(--fg)' : 'transparent',
-                color: tweaksOpen ? 'var(--bg)' : 'var(--fg-muted)',
-                border: '1px solid ' + (tweaksOpen ? 'var(--fg)' : 'var(--border)'),
-                borderRadius: 'var(--radius)', cursor: 'pointer', lineHeight: 1, transition: 'all .15s',
-              }}>
-              ⚙
-            </button>
-            <a href="./preview/index.html" title="UI Preview — 3 nieuwe designs"
-              style={{
-                marginLeft: 4, padding: '5px 10px', fontFamily: 'inherit', fontSize: 11,
-                color: 'var(--fg-dim)', textDecoration: 'none',
-                border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-                lineHeight: 1, transition: 'all .15s', whiteSpace: 'nowrap',
-              }}>
-              Preview
-            </a>
-          </div>
-        </div>
-      </nav>
-
-      {isMobile ? (
-        <>
-          {mobileTab === 'home' && (
-            <Dashboard state={state} setState={setSyncedState}
-              tweaks={displayTweaks} setTweaks={updateTweaks}
-              spotStatus={spotStatus} onRefreshSpot={refreshSpot}
-              addTrigger={mobileAddTrigger} isMobile={true}
-              onOpenParty={partyId => setMobileDetailPartyId(partyId)}
-              onUpdateMeesman={updateMeesmanNav} />
-          )}
-          {mobileTab === 'partijen' && (
-            <>
-              <div style={{ display: 'flex', gap: 6, padding: '14px 14px 0' }}>
-                <FilterChip active={mobilePartijenView === 'lijst'} onClick={() => setMobilePartijenView('lijst')}>Partijen</FilterChip>
-                <FilterChip active={mobilePartijenView === 'verdeling'} onClick={() => setMobilePartijenView('verdeling')}>Verdeling</FilterChip>
-              </div>
-              {mobilePartijenView === 'verdeling' ? (
-                <AllocationTab state={state} setState={setSyncedState} summaries={summaries} isMobile />
-              ) : (
-                <MobilePartijenView summaries={summaries}
-                  onOpenParty={partyId => setMobileDetailPartyId(partyId)}
-                  onQuickAdd={() => { setMobileTab('home'); setMobileAddTrigger(t => t + 1); }}
-                />
-              )}
-            </>
-          )}
-          {mobileTab === 'transacties' && (
-            <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
-          )}
-        </>
-      ) : (
-        <>
-          {activeTab === 'dashboard' && (
-            <Dashboard state={state} setState={setSyncedState}
-              tweaks={displayTweaks} setTweaks={updateTweaks}
-              spotStatus={spotStatus} onRefreshSpot={refreshSpot}
-              onUpdateMeesman={updateMeesmanNav} />
-          )}
-          {activeTab === 'transacties' && (
-            <TransactionsTab state={state} setState={setSyncedState} spots={spots} />
-          )}
-          {activeTab === 'verdeling' && (
-            <AllocationTab state={state} setState={setSyncedState} summaries={summaries} />
-          )}
-          {activeTab === 'pensioen' && (
-            <PensionTab summaries={summaries} />
-          )}
-        </>
-      )}
-
-      {isMobile && (
-        <MobileNav
-          tab={mobileTab}
-          onTab={setMobileTab}
-          onAdd={() => { setMobileTab('home'); setMobileAddTrigger(t => t + 1); }}
-          onSettings={() => setTweaksOpen(o => !o)}
-          tweaksOpen={tweaksOpen}
-        />
-      )}
-
-      {isMobile && (
-        <>
-          <PartyDetail
-            open={!!mobileDetailPartyId}
-            onClose={() => setMobileDetailPartyId(null)}
-            party={mobileDetailParty}
-            summary={mobileDetailSummary}
-            spots={spots}
-            onAddTx={preset => { setMobileDetailPartyId(null); openMobileTx(preset); }}
-            onDeleteTx={deleteMobileTx}
-            onEditTx={tx => { setMobileDetailPartyId(null); editMobileTx(tx); }}
-          />
-          <TransactionModal
-            open={mobileTxOpen}
-            onClose={() => { setMobileTxOpen(false); setMobileEditingTx(null); }}
-            onSave={saveMobileTx}
-            parties={allParties}
-            preset={mobileTxPreset}
-            initial={mobileEditingTx}
-            transactions={state.transactions}
-          />
-        </>
-      )}
-
-      {tweaksOpen && (
-        <TweaksPanel
-          tweaks={displayTweaks} setTweaks={updateTweaks}
-          onReset={resetData}
-          onExport={exportData} onImport={importData} importMsg={importMsg}
-          spotStatus={spotStatus} onRefreshSpot={refreshSpot}
-          t212Status={t212Status} onImportT212={importT212} onDeleteT212={deleteT212Txs}
-          supabaseConfig={supabaseConfig} setSupabaseConfig={setSupabaseConfig}
-          syncStatus={syncStatus} onSyncNow={syncNow}
-          onClose={() => setTweaksOpen(false)}
-          meesmanNav={state.meesmanNavEur} meesmanHistory={state.meesmanNavHistory}
-          onUpdateMeesman={updateMeesmanNav}
-          histStatus={meesmanHistStatus} onLoadHistory={loadMeesmanHistory}
-        />
-      )}
+      {window.TransactionSheet ? <TransactionSheet app={app} open={ov.kind === 'tx'} preset={ov.kind === 'tx' ? ov.preset : null}
+        initial={ov.kind === 'tx' ? ov.initial : null} onClose={closeOverlay} /> : null}
+      {window.TxDetailSheet ? <TxDetailSheet app={app} open={ov.kind === 'txDetail'} txId={ov.kind === 'txDetail' ? ov.txId : null}
+        onClose={closeOverlay} /> : null}
+      {window.PartyForm ? <PartyForm app={app} open={ov.kind === 'partyForm'} party={ov.kind === 'partyForm' ? ov.party : null}
+        startInDelete={ov.kind === 'partyForm' ? !!ov.startInDelete : false} onClose={closeOverlay} /> : null}
+      <Sheet open={ov.kind === 'prices'} onClose={closeOverlay} title="Koersen" size="medium" testId="prices-sheet">
+        {window.PriceRows ? <PriceRows app={app} variant="sheet" /> : null}
+      </Sheet>
+      <Sheet open={ov.kind === 'sync'} onClose={closeOverlay} title="Synchronisatie" size="medium" className="sh-sheet" testId="sync-sheet">
+        <ShSyncPanel app={app} onDone={closeOverlay} />
+      </Sheet>
+      <ShConfirmDialog key={confirmState ? confirmState.key : 'none'} confirmState={confirmState} onSettle={settleConfirm} />
+      <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </>
   );
-}
-
-function MeesmanTweakRow({ meesmanNav, meesmanHistory, onUpdateMeesman, histStatus, onLoadHistory }) {
-  const [inp, setInp] = React.useState('');
-  const lastEntry = (meesmanHistory || []).slice(-1)[0];
-  const save = () => {
-    const v = parseFloat((inp || '').replace(',', '.'));
-    if (v > 0) { onUpdateMeesman(v); setInp(''); }
-  };
-  return (
-    <div style={{ display:'grid', gap:6 }}>
-      <label style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, fontSize:12 }}>
-        <span style={{ color:'var(--fg-muted)', flexShrink:0 }}>
-          Meesman (€/aandeel)
-          {lastEntry && <span style={{ color:'var(--fg-dim)', fontSize:10, display:'block' }}>{lastEntry.date} · {(meesmanHistory||[]).length} punten</span>}
-        </span>
-        <input type="number" step="0.01" value={inp}
-          onChange={e => setInp(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && save()}
-          placeholder={(meesmanNav || 100.4).toFixed(2)}
-          style={{ ...inputStyle, width:108, padding:'5px 8px', fontFamily:'var(--ff-mono)', fontSize:12 }} />
-      </label>
-      {inp.length > 0 && (
-        <button onClick={save}
-          style={{ padding:'5px 10px', fontSize:11, background:'var(--accent)', color:'#fff', border:'none',
-            borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
-          Opslaan €{parseFloat((inp||'').replace(',','.'))||0}
-        </button>
-      )}
-      <button onClick={onLoadHistory} disabled={histStatus?.loading}
-        style={{ padding:'5px 10px', fontSize:11, background:'var(--surface-2)',
-          border:'1px solid var(--border)', borderRadius:'var(--radius)',
-          cursor:'pointer', fontFamily:'inherit', opacity: histStatus?.loading ? 0.6 : 1,
-          color: histStatus?.done ? 'var(--positive)' : 'var(--fg)' }}>
-        {histStatus?.loading ? '↻ Laden…' : histStatus?.done ? '✓ 2j history geladen' : '↓ Laad 2j history (Yahoo Finance)'}
-      </button>
-      {histStatus?.error && <div style={{ fontSize:10, color:'var(--negative)', fontFamily:'var(--ff-mono)' }}>⚠ {histStatus.error}</div>}
-    </div>
-  );
-}
-
-function TweaksPanel({ tweaks, setTweaks, onReset, onClose,
-                       spotStatus, onRefreshSpot,
-                       t212Status, onImportT212, onDeleteT212,
-                       onExport, onImport, importMsg,
-                       supabaseConfig, setSupabaseConfig, syncStatus, onSyncNow,
-                       meesmanNav, meesmanHistory, onUpdateMeesman,
-                       histStatus, onLoadHistory }) {
-
-  const fileRef = React.useRef(null);
-
-  const priceRow = (label, key, step = '0.01') => (
-    <label key={key} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, fontSize:12 }}>
-      <span style={{ color:'var(--fg-muted)', flexShrink:0 }}>{label}</span>
-      <input type="number" step={step} value={tweaks[key] ?? ''}
-        onChange={e => setTweaks(tw => ({...tw, [key]: +e.target.value}))}
-        style={{ ...inputStyle, width:108, padding:'5px 8px', fontFamily:'var(--ff-mono)', fontSize:12 }} />
-    </label>
-  );
-
-  const sbReady     = !!(supabaseConfig?.url && supabaseConfig?.anonKey);
 
   return (
-    <div className="tweaks-panel" style={{ position:'fixed', bottom:20, right:20, width:320,
-      background:'var(--surface)', border:'1px solid var(--border-strong)',
-      borderRadius:'var(--radius-lg)', boxShadow:'0 20px 40px rgba(0,0,0,0.25)', zIndex:90, overflow:'hidden' }}>
-
-      <div style={{ padding:'13px 16px', borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <div style={{ fontFamily:'var(--ff-display)', fontSize:17, fontWeight:500 }}>Instellingen</div>
-        <button onClick={onClose} style={{ background:'transparent', border:'none', color:'var(--fg-muted)', fontSize:18, cursor:'pointer', lineHeight:1 }}>×</button>
-      </div>
-
-      <div style={{ padding:'14px 16px', display:'grid', gap:16, maxHeight:'80vh', overflowY:'auto' }}>
-
-        {/* ── Supabase sync ── */}
-        <div>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-            <SectionLabel>☁ Supabase sync</SectionLabel>
-            {sbReady && (
-              <button onClick={onSyncNow} disabled={syncStatus?.loading}
-                style={{ background:'transparent', border:'1px solid var(--border)', color:'var(--fg-muted)',
-                  padding:'3px 8px', borderRadius:'var(--radius)', fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
-                {syncStatus?.loading ? '…' : '↑↓ Nu syncen'}
-              </button>
-            )}
-          </div>
-          <div style={{ display:'grid', gap:8 }}>
-            <label style={{ fontSize:12 }}>
-              <div style={{ color:'var(--fg-muted)', marginBottom:4 }}>
-                Project URL <span style={{ color:'var(--fg-dim)' }}>(https://xxxx.supabase.co)</span>
-              </div>
-              <input value={supabaseConfig?.url || ''}
-                onChange={e => setSupabaseConfig(c => ({...c, url: e.target.value}))}
-                placeholder="https://abcdefgh.supabase.co"
-                style={{ ...inputStyle, width:'100%', padding:'7px 10px', fontSize:12, fontFamily:'var(--ff-mono)' }} />
-            </label>
-            <label style={{ fontSize:12 }}>
-              <div style={{ color:'var(--fg-muted)', marginBottom:4 }}>
-                Anon key <span style={{ color:'var(--fg-dim)' }}>(opgeslagen lokaal)</span>
-              </div>
-              <input type="password" value={supabaseConfig?.anonKey || ''}
-                onChange={e => setSupabaseConfig(c => ({...c, anonKey: e.target.value}))}
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5c..."
-                style={{ ...inputStyle, width:'100%', padding:'7px 10px', fontSize:12, fontFamily:'var(--ff-mono)' }} />
-            </label>
-            {syncStatus?.error && (
-              <div style={{ fontSize:10, fontFamily:'var(--ff-mono)', color:'var(--negative)' }}>
-                ⚠ {syncStatus.error}
-              </div>
-            )}
-            {syncStatus?.syncedAt && !syncStatus.error && (
-              <div style={{ fontSize:10, fontFamily:'var(--ff-mono)', color:'var(--positive)' }}>
-                ✓ Gesynchroniseerd {new Date(syncStatus.syncedAt).toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit'})}
-              </div>
-            )}
-            {!sbReady && (
-              <div style={{ fontSize:10, color:'var(--fg-dim)', lineHeight:1.6, padding:'8px', background:'var(--surface-2)', borderRadius:'var(--radius)', border:'1px solid var(--border)' }}>
-                <b>Setup:</b> Maak een gratis project aan op <b>supabase.com</b>. Voer de volgende SQL uit in de <b>SQL Editor</b> van je project:<br/><br/>
-                <code style={{ fontFamily:'var(--ff-mono)', display:'block', whiteSpace:'pre-wrap', fontSize:10, color:'var(--fg-muted)' }}>
-                  {`create table if not exists portfolio (\n  id text primary key,\n  data jsonb not null default '{}',\n  updated_at timestamptz default now()\n);\nalter table portfolio enable row level security;\ndrop policy if exists "allow all" on portfolio;\ncreate policy "allow all" on portfolio\n  for all using (true) with check (true);`}
-                </code><br/>
-                Kopieer dan je <b>Project URL</b> en <b>anon public key</b> uit <b>Project Settings → API</b>.
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Live prijzen ── */}
-        <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-            <SectionLabel>Live prijzen</SectionLabel>
-            <button onClick={onRefreshSpot} disabled={spotStatus?.loading}
-              style={{ background:'transparent', border:'1px solid var(--border)', color:'var(--fg-muted)',
-                padding:'3px 8px', borderRadius:'var(--radius)', fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
-              {spotStatus?.loading ? '…' : '↻ Verversen'}
-            </button>
-          </div>
-          <div style={{ display:'grid', gap:7 }}>
-            {priceRow('Goud (€/g)',          'goldSpotEurPerGram')}
-            {priceRow('Zilver (€/oz)',        'silverSpotEurPerOunce')}
-            {priceRow('Bitcoin (€/BTC)',      'btcSpotEur', '1')}
-            {priceRow('Ethereum (€/ETH)',     'ethSpotEur', '0.01')}
-            {priceRow('Pax Gold (€/PAXG)',   'paxgSpotEur', '0.01')}
-            {/* Meesman NAV — apart bijwerken zodat history correct blijft */}
-            <MeesmanTweakRow
-              meesmanNav={meesmanNav} meesmanHistory={meesmanHistory}
-              onUpdateMeesman={onUpdateMeesman}
-              histStatus={histStatus} onLoadHistory={onLoadHistory} />
-          </div>
-          <div style={{ fontSize:10, marginTop:7, fontFamily:'var(--ff-mono)',
-            color: spotStatus?.error ? 'var(--negative)' : 'var(--fg-dim)' }}>
-            {spotStatus?.error ? '⚠ ' + spotStatus.error
-              : spotStatus?.fetchedAt ? 'Bijgewerkt ' + new Date(spotStatus.fetchedAt).toLocaleTimeString('nl-NL')
-              : spotStatus?.loading ? 'ophalen…' : 'handmatig'}
-          </div>
-        </div>
-
-        {/* ── Trading 212 ── */}
-        <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
-          <SectionLabel style={{ marginBottom:10 }}>Trading 212 import</SectionLabel>
-          <div style={{ display:'grid', gap:8 }}>
-            <div style={{ display:'flex', gap:6 }}>
-              {['live','demo'].map(m => (
-                <button key={m} onClick={() => setTweaks(tw => ({...tw, t212Mode: m}))} type="button"
-                  style={{ flex:1, padding:'7px', fontSize:12,
-                    background: (tweaks.t212Mode||'live')===m ? 'var(--fg)' : 'var(--surface-2)',
-                    color:      (tweaks.t212Mode||'live')===m ? 'var(--bg)' : 'var(--fg)',
-                    border:'1px solid '+((tweaks.t212Mode||'live')===m ? 'var(--fg)' : 'var(--border)'),
-                    borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontWeight:500 }}>
-                  {m === 'live' ? '🟢 Live' : '🧪 Paper'}
-                </button>
-              ))}
-            </div>
-            <button onClick={onImportT212} disabled={!sbReady || t212Status?.loading}
-              style={{ padding:'8px 12px', fontSize:12, background:'var(--surface-2)',
-                border:'1px solid var(--border)', borderRadius:'var(--radius)',
-                cursor: sbReady ? 'pointer' : 'default',
-                color: sbReady ? 'var(--fg)' : 'var(--fg-dim)',
-                fontFamily:'inherit', opacity: sbReady ? 1 : 0.5 }}>
-              {t212Status?.loading ? '…bezig (kan even duren)' : '↓ Importeer stortingen + waarde'}
-            </button>
-            {(t212Status?.error || t212Status?.done) && (
-              <div style={{ fontSize:10, fontFamily:'var(--ff-mono)',
-                color: t212Status.error ? 'var(--negative)' : 'var(--positive)' }}>
-                {t212Status.error ? '⚠ ' + t212Status.error
-                  : `✓ ${t212Status.imported} nieuwe storting(en) + waarde bijgewerkt${t212Status.note || ''}`}
-              </div>
-            )}
-            <div style={{ fontSize:10, color:'var(--fg-dim)', lineHeight:1.5 }}>
-              Importeert je stortingen, opnames en huidige accountwaarde via de beveiligde
-              Supabase-proxy. Je API-key staat veilig als secret in Supabase (niet hier).
-              Duplicaten worden overgeslagen.
-            </div>
-            <button onClick={onDeleteT212}
-              style={{ padding:'7px 12px', fontSize:11, background:'transparent',
-                border:'1px solid var(--border)', borderRadius:'var(--radius)',
-                color:'var(--negative)', cursor:'pointer', fontFamily:'inherit', textAlign:'left' }}>
-              ✕ Verwijder alle T212 transacties
-            </button>
-          </div>
-        </div>
-
-        {/* ── Data opslaan ── */}
-        <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
-          <SectionLabel style={{ marginBottom:10 }}>Data opslaan</SectionLabel>
-          <div style={{ display:'grid', gap:8 }}>
-            <button onClick={onExport}
-              style={{ padding:'8px 12px', fontSize:12, background:'var(--surface-2)',
-                border:'1px solid var(--border)', borderRadius:'var(--radius)',
-                cursor:'pointer', color:'var(--fg)', fontFamily:'inherit', textAlign:'left' }}>
-              ↓ Exporteer data als JSON
-            </button>
-            <input ref={fileRef} type="file" accept=".json" style={{ display:'none' }}
-              onChange={e => { onImport(e.target.files?.[0]); e.target.value = ''; }} />
-            <button onClick={() => fileRef.current?.click()}
-              style={{ padding:'8px 12px', fontSize:12, background:'var(--surface-2)',
-                border:'1px solid var(--border)', borderRadius:'var(--radius)',
-                cursor:'pointer', color:'var(--fg)', fontFamily:'inherit', textAlign:'left' }}>
-              ↑ Importeer data uit JSON
-            </button>
-            {importMsg && (
-              <div style={{ fontSize:10, fontFamily:'var(--ff-mono)',
-                color: importMsg.ok ? 'var(--positive)' : 'var(--negative)' }}>
-                {importMsg.ok ? '✓ ' : '⚠ '}{importMsg.text}
-              </div>
-            )}
-            <div style={{ fontSize:10, color:'var(--fg-dim)', lineHeight:1.5 }}>
-              Data wordt automatisch opgeslagen in je browser. Exporteer als backup of voor overdracht naar ander apparaat.
-            </div>
-          </div>
-        </div>
-
-        {/* ── Visuele stijl ── */}
-        <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
-          <SectionLabel style={{ marginBottom:10 }}>Visuele stijl</SectionLabel>
-          <div style={{ display:'grid', gap:6 }}>
-            {THEMES.map(t => (
-              <button key={t.key} onClick={() => setTweaks(tw => ({...tw, theme:t.key}))}
-                style={{ textAlign:'left', padding:'8px 12px',
-                  background: tweaks.theme===t.key ? 'var(--fg)' : 'var(--surface-2)',
-                  color:      tweaks.theme===t.key ? 'var(--bg)' : 'var(--fg)',
-                  border:'1px solid '+(tweaks.theme===t.key ? 'var(--fg)' : 'var(--border)'),
-                  borderRadius:'var(--radius)', cursor:'pointer', fontFamily:'inherit', fontSize:13, fontWeight:500,
-                  display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                <span>{t.label}</span>
-                {tweaks.theme===t.key && <span style={{ fontSize:11 }}>✓</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Reset ── */}
-        <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
-          <button onClick={onReset}
-            style={{ width:'100%', padding:'8px 12px', fontSize:12, background:'transparent',
-              border:'1px solid var(--border)', borderRadius:'var(--radius)', color:'var(--negative)',
-              cursor:'pointer', fontFamily:'inherit' }}>
-            ↺ Reset naar begindata
-          </button>
-        </div>
-
-      </div>
-    </div>
-  );
-}
-
-function SectionLabel({ children, style }) {
-  return (
-    <div style={{ fontSize:10, fontWeight:600, color:'var(--fg-muted)', textTransform:'uppercase',
-      letterSpacing:'0.08em', ...style }}>
-      {children}
-    </div>
-  );
-}
-
-function MobileNav({ tab, onTab, onAdd, onSettings, tweaksOpen }) {
-  const active = key => tab === key;
-
-  const HomeIcon = () => (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12L12 3l9 9"/><path d="M5 10v9a1 1 0 001 1h4v-5h4v5h4a1 1 0 001-1v-9"/>
-    </svg>
-  );
-  const GridIcon = () => (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-      <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-    </svg>
-  );
-  const GearIcon = () => (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-    </svg>
-  );
-  const ListIcon = () => (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/>
-      <circle cx="3.5" cy="6" r="1" fill="currentColor" stroke="none"/>
-      <circle cx="3.5" cy="12" r="1" fill="currentColor" stroke="none"/>
-      <circle cx="3.5" cy="18" r="1" fill="currentColor" stroke="none"/>
-    </svg>
-  );
-
-  return (
-    <div className="mob-nav">
-      <button className={`mob-nav-btn${active('home') ? ' mob-active' : ''}`} onClick={() => onTab('home')}>
-        <HomeIcon /><span>Home</span>
-      </button>
-      <button className={`mob-nav-btn${active('partijen') ? ' mob-active' : ''}`} onClick={() => onTab('partijen')}>
-        <GridIcon /><span>Partijen</span>
-      </button>
-      <div className="mob-nav-plus-wrap">
-        <button className="mob-nav-plus" onClick={onAdd}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </button>
-      </div>
-      <button className={`mob-nav-btn${tweaksOpen ? ' mob-active' : ''}`} onClick={onSettings}>
-        <GearIcon /><span>Instellingen</span>
-      </button>
-      <button className={`mob-nav-btn${active('transacties') ? ' mob-active' : ''}`} onClick={() => onTab('transacties')}>
-        <ListIcon /><span>Transacties</span>
-      </button>
-    </div>
-  );
-}
-
-function MeesmanPriceBanner({ state, onUpdate, histStatus, onLoadHistory }) {
-  const [input, setInput]         = React.useState('');
-  const [dismissed, setDismissed] = React.useState(false);
-
-  const history   = state.meesmanNavHistory || [];
-  const lastEntry = history.length ? history[history.length - 1] : null;
-  const lastDate  = lastEntry?.date || null;
-  const daysSince = lastDate
-    ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000)
-    : 999;
-
-  // Verberg banner als recent bijgewerkt en history heeft genoeg punten
-  if (dismissed || (daysSince < 7 && history.length >= 20)) return null;
-
-  const handleSave = () => {
-    const v = parseFloat((input || '').replace(',', '.'));
-    if (v > 0) { onUpdate(v); setDismissed(true); }
-  };
-
-  const needsHistory = history.length < 20;
-
-  return (
-    <div style={{ background: 'var(--surface)', borderBottom: '2px solid oklch(72% 0.16 75)',
-      padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-      zIndex: 40, position: 'relative' }}>
-      <span style={{ fontSize: 15 }}>📈</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>Meesman</span>
-      {lastEntry ? (
-        <span style={{ fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'var(--ff-mono)' }}>
-          €{lastEntry.nav.toFixed(2)} · {daysSince > 0 ? `${daysSince}d geleden` : 'vandaag'}
-          {history.length > 1 && ` · ${history.length} punten`}
-        </span>
-      ) : (
-        <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Geen history</span>
-      )}
-
-      {/* Historische data ophalen van Yahoo Finance */}
-      {needsHistory && (
-        <button onClick={onLoadHistory} disabled={histStatus?.loading}
-          style={{ padding: '4px 10px', fontSize: 11, fontFamily: 'inherit', cursor: 'pointer',
-            borderRadius: 'var(--radius)', border: '1px solid var(--border)',
-            background: histStatus?.done ? 'var(--positive)' : 'var(--surface-2)',
-            color: histStatus?.done ? '#fff' : 'var(--fg)', opacity: histStatus?.loading ? 0.6 : 1 }}>
-          {histStatus?.loading ? '↻ Laden…' : histStatus?.done ? '✓ Geladen' : '↓ Laad 2j history'}
-        </button>
-      )}
-      {histStatus?.error && (
-        <span style={{ fontSize: 10, color: 'var(--negative)', fontFamily: 'var(--ff-mono)' }}>
-          ⚠ {histStatus.error}
-        </span>
-      )}
-
-      {/* Handmatige weekelijkse prijs-update */}
-      {daysSince >= 7 && (
+    <UiPrefsContext.Provider value={{ prefs, setPrefs }}>
+      {isMobile ? (
         <>
-          <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>· Nieuwe koers:</span>
-          <input
-            type="number" step="0.01" value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSave()}
-            placeholder={lastEntry ? lastEntry.nav.toFixed(2) : '100.40'}
-            style={{ width: 80, padding: '4px 7px', fontSize: 13, fontFamily: 'var(--ff-mono)',
-              background: 'var(--surface-2)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', color: 'var(--fg)', outline: 'none' }}
-          />
-          <button onClick={handleSave}
-            style={{ padding: '4px 12px', background: 'var(--accent)', color: '#fff', border: 'none',
-              borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit', fontWeight: 600 }}>
-            Opslaan
-          </button>
+          <ShMobileHeader app={app} />
+          <main className="sh-mcontent">{screen}</main>
+          <ShTabBar app={app} />
         </>
+      ) : (
+        <div className={'sh-app' + (prefs.sidebarCollapsed ? ' is-collapsed' : '')}>
+          <ShSidebar app={app} collapsed={!!prefs.sidebarCollapsed} counts={counts} driftWarn={driftWarn} />
+          <main className="sh-canvas" ref={canvasRef}>
+            <ShTopbar app={app} title={SH_TITLES[route.name] || 'Overzicht'} syncOpen={syncPopOpen} setSyncOpen={setSyncPopOpen} />
+            <div className="sh-content">{screen}</div>
+          </main>
+        </div>
       )}
-
-      <button onClick={() => setDismissed(true)}
-        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--fg-dim)',
-          fontSize: 18, lineHeight: 1, marginLeft: 'auto', padding: '0 2px' }}>
-        ×
-      </button>
-    </div>
-  );
-}
-
-function formatMobileHolding(summary) {
-  const p = summary.party;
-  if (p.isMixed) {
-    return `Au ${fmtQty(summary.goldQty || 0, 'g')} · Ag ${fmtQty((summary.silverQty || 0) * OZ_TO_GRAM, 'g')}`;
-  }
-  if (p.unit === 'crypto') return fmtQty(summary.quantity || 0, p.unitLabel || p.unit, { decimals: 8 });
-  if (p.unit === 'part') return fmtQty(summary.quantity || 0, p.unitLabel || 'part.');
-  if (p.unit === 'bundle') return fmtEur(summary.quantity || 0, { decimals: 2 });
-  if (p.unit === 'eur') return fmtEur(summary.currentValueEur || 0, { decimals: 2 });
-  return fmtQty(summary.quantity || 0, p.unitLabel || p.unit);
-}
-
-function mobilePartyDisplay(summary, mode) {
-  if (mode === 'holding') return { text: formatMobileHolding(summary), tone: 'muted', label: 'Hoeveelheid' };
-  if (mode === 'value') return { text: fmtEur(summary.currentValueEur), tone: 'neutral', label: 'Waarde' };
-  if (mode === 'invested') return { text: fmtEur(summary.invested), tone: 'neutral', label: 'Ingelegd' };
-  if (mode === 'pnl_eur') {
-    const value = summary.pnl || 0;
-    return { text: `${value >= 0 ? '+' : '−'}${fmtEur(Math.abs(value))}`, tone: value > 0 ? 'positive' : value < 0 ? 'negative' : 'muted', label: 'Winst' };
-  }
-  if (mode === 'pnl_pct') {
-    const value = summary.pnlPct || 0;
-    return { text: `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`, tone: value > 0 ? 'positive' : value < 0 ? 'negative' : 'muted', label: 'Winst' };
-  }
-  if (mode === 'yr_pct') {
-    const value = summary.cagr || 0;
-    return { text: `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`, tone: value > 0 ? 'positive' : value < 0 ? 'negative' : 'muted', label: 'Per jaar', sub: `CAGR ${summary.years.toFixed(1)}j` };
-  }
-  return { text: fmtEur(summary.currentValueEur), tone: 'neutral', label: 'Waarde' };
-}
-
-function MobilePartijenView({ summaries, onOpenParty, onQuickAdd }) {
-  const DISPLAY_OPTIONS = [
-    { key: 'holding', label: 'Hoeveelheid' },
-    { key: 'value',   label: 'Waarde' },
-    { key: 'pnl_eur', label: 'Winst €' },
-    { key: 'pnl_pct', label: 'Winst %' },
-    { key: 'invested', label: 'Ingelegd' },
-    { key: 'yr_pct',  label: 'Per jaar' },
-  ];
-  const [displayMode, setDisplayMode] = React.useState('pnl_eur');
-
-  const enriched = summaries
-    .map(s => {
-      const dates = (s.transactions || []).map(t => t.date).sort();
-      const firstDate = dates[0];
-      const years = firstDate
-        ? Math.max((Date.now() - new Date(firstDate).getTime()) / (365.25 * 86400000), 1/12)
-        : 1;
-      const yearlyEur = s.pnl / years;
-      // CAGR: alleen berekenen als invested > 0 en years >= 1 maand
-      const cagr = (s.invested > 0 && s.currentValueEur > 0 && years > 0.08)
-        ? (Math.pow(s.currentValueEur / s.invested, 1 / years) - 1) * 100
-        : 0;
-      return { ...s, years, yearlyEur, cagr };
-    })
-    .sort((a, b) => (b.currentValueEur || 0) - (a.currentValueEur || 0));
-  const includedEnriched = enriched.filter(
-    s => (s.party.includeInTotal ?? s.party.includeInPortfolio) !== false
-  );
-
-  return (
-    <div style={{ padding: '16px 14px 100px' }}>
-      {/* Display toggle */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {DISPLAY_OPTIONS.map(m => (
-          <button key={m.key} onClick={() => setDisplayMode(m.key)}
-            style={{ padding: '6px 12px', fontSize: 12, fontFamily: 'inherit', cursor: 'pointer',
-              borderRadius: 999,
-              border: '1px solid ' + (displayMode === m.key ? 'var(--fg)' : 'var(--border)'),
-              background: displayMode === m.key ? 'var(--fg)' : 'transparent',
-              color: displayMode === m.key ? 'var(--bg)' : 'var(--fg-muted)' }}>
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Totaalregel */}
-      {(() => {
-        const totalVal  = includedEnriched.reduce((s, x) => s + x.currentValueEur, 0);
-        const totalPnl  = includedEnriched.reduce((s, x) => s + x.pnl, 0);
-        const totalInv  = includedEnriched.reduce((s, x) => s + x.invested, 0);
-        const totalPct  = totalInv > 0 ? (totalPnl / totalInv) * 100 : 0;
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px',
-            background: 'linear-gradient(180deg, var(--surface), var(--surface-2))',
-            borderRadius: 'var(--radius-lg)', marginBottom: 10,
-            border: '1px solid var(--border)', boxShadow: '0 8px 20px rgba(0,0,0,0.05)' }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--ff-mono)' }}>Totaal</div>
-              <div style={{ fontFamily: 'var(--ff-mono)', fontSize: 15, fontWeight: 600 }}>
-                {fmtEur(totalVal)}
-              </div>
-              <div style={{ fontSize: 10, color: 'var(--fg-dim)', fontFamily: 'var(--ff-mono)', marginTop: 2 }}>
-                {includedEnriched.length} partijen in totaal
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', fontFamily: 'var(--ff-mono)', fontSize: 13,
-              color: totalPnl >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 600 }}>
-              {totalPnl >= 0 ? '+' : ''}{fmtEur(totalPnl)}<br/>
-              <span style={{ fontSize: 11 }}>{totalPct >= 0 ? '+' : ''}{totalPct.toFixed(1)}%</span>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Party list */}
-      <div style={{ display: 'grid', gap: 8 }}>
-        {enriched.map(s => {
-          const shown = mobilePartyDisplay(s, displayMode);
-          const color = shown.tone === 'positive' ? 'var(--positive)'
-            : shown.tone === 'negative' ? 'var(--negative)'
-            : shown.tone === 'muted' ? 'var(--fg-muted)'
-            : 'var(--fg)';
-
-          return (
-            <button key={s.party.id} onClick={() => onOpenParty && onOpenParty(s.party.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left',
-              padding: '12px 13px', background: 'var(--surface)', borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--border)', boxShadow: '0 6px 16px rgba(0,0,0,0.04)',
-              cursor: 'pointer', fontFamily: 'inherit', color: 'inherit' }}>
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: s.party.color,
-                flexShrink: 0, display:'grid', placeItems:'center', boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.35)' }}>
-                <span style={{ width: 8, height: 8, borderRadius:'50%', background:'#fff', opacity:0.85 }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {s.party.name}
-                </div>
-                <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:3, minWidth:0 }}>
-                  <span style={{ fontSize: 10, color: 'var(--fg-muted)', fontFamily: 'var(--ff-mono)',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {s.party.category || 'Partij'}
-                  </span>
-                  {(s.party.includeInTotal ?? s.party.includeInPortfolio) === false && (
-                    <>
-                      <span style={{ width:3, height:3, borderRadius:'50%', background:'var(--fg-dim)', flexShrink:0 }} />
-                      <span style={{ fontSize: 10, color: 'var(--fg-dim)', fontFamily: 'var(--ff-mono)', whiteSpace:'nowrap' }}>
-                        niet in totaal
-                      </span>
-                    </>
-                  )}
-                  {(s.party.includeInTimeChart ?? s.party.includeInPortfolio) === false && (
-                    <>
-                      <span style={{ width:3, height:3, borderRadius:'50%', background:'var(--fg-dim)', flexShrink:0 }} />
-                      <span style={{ fontSize: 10, color: 'var(--fg-dim)', fontFamily: 'var(--ff-mono)', whiteSpace:'nowrap' }}>
-                        niet in grafiek
-                      </span>
-                    </>
-                  )}
-                  <span style={{ width:3, height:3, borderRadius:'50%', background:'var(--fg-dim)', flexShrink:0 }} />
-                  <span style={{ fontSize: 10, color: 'var(--fg-dim)', fontFamily: 'var(--ff-mono)' }}>
-                    {fmtEur(s.currentValueEur, { decimals: 0 })}
-                  </span>
-                </div>
-              </div>
-              <div style={{ textAlign: 'right', fontFamily: 'var(--ff-mono)', fontSize: 14, fontWeight: 650,
-                color, flexShrink: 0, maxWidth: 155 }}>
-                <div style={{ fontSize: 9, color:'var(--fg-dim)', fontWeight: 500, marginBottom: 2 }}>
-                  {shown.label}
-                </div>
-                <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{shown.text}</div>
-                {shown.sub && <div style={{ fontSize: 9, color: 'var(--fg-dim)', fontWeight: 400 }}>{shown.sub}</div>}
-              </div>
-              <div aria-hidden="true" style={{ color:'var(--fg-dim)', fontSize:18, lineHeight:1, marginLeft:-3 }}>›</div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+      {overlays}
+    </UiPrefsContext.Provider>
   );
 }
 

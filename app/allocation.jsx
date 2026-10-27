@@ -1,4 +1,4 @@
-// AllocationTab: huidige vs. gewenste verdeling + hoeveel bijstorten om die te halen
+// Plan (S5): PlanScreen + Verdeling. Engines (ALLOC_GROUPINGS, allocationGroups, computeAllocation) unchanged.
 
 const ALLOC_GROUPINGS = [
   { key: 'category', label: 'Per categorie' },
@@ -70,269 +70,361 @@ function computeAllocation(groups, targets, extra) {
   return { total, needed, neededTotal, blocked, rows, amount };
 }
 
-function AllocationTab({ state, setState, summaries, isMobile }) {
-  const saved = state.targetAllocation || {};
-  const [grouping, setGrouping] = React.useState(saved.grouping || 'category');
-  const [extra, setExtra] = React.useState('');
+// ===== UI (redesign) =====
+injectStyles('allocation', `
+.al-page { display: grid; gap: 16px; min-width: 0; padding: 12px 24px 48px; }
+.al-head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.al-tabs { flex: 1; min-width: 200px; }
+.al-view { display: grid; gap: 16px; min-width: 0; }
+.al-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.al-top h2 { margin: 0; font: 650 17px/24px var(--font); }
+.al-top__meta { color: var(--fg-muted); font-size: 13px; }
+.al-top__spacer { flex: 1; }
+.al-bars { display: grid; gap: 10px; }
+.al-bar { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 12px; }
+.al-bar__label { font-size: 12.5px; color: var(--fg-muted); }
+.al-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 4px; font-size: 12.5px; color: var(--fg-muted); }
+.al-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.al-calc { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.al-kicker { font-size: 12.5px; color: var(--fg-muted); margin-bottom: 6px; font-weight: 500; }
+.al-big { font: 650 28px/34px var(--font); letter-spacing: -0.02em; }
+.al-big.is-off { color: var(--fg-subtle); }
+.al-msg { font-size: 13px; color: var(--fg-muted); margin-top: 6px; line-height: 1.5; }
+.al-warn { display: flex; gap: 6px; align-items: flex-start; margin-top: 10px; font-size: 13px; color: var(--warn); background: var(--warn-soft); border-radius: var(--r-2); padding: 8px 10px; }
+.al-storten { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.al-storten > div:first-child { flex: 1 1 160px; }
+.al-table td, .al-table th { white-space: nowrap; }
+.al-table tbody tr:hover { background: none; }
+.al-label { display: inline-flex; align-items: center; gap: 8px; }
+.al-tin { display: inline-flex; align-items: center; gap: 4px; }
+.al-tin .input { width: 68px; text-align: right; height: 30px; padding: 0 8px; }
+.al-drift { display: grid; grid-template-columns: 1fr 64px; align-items: center; gap: 10px; min-width: 170px; }
+.al-drift__pt { text-align: right; font-size: 12.5px; color: var(--fg-muted); }
+.al-drift__pt.is-out { color: var(--warn); font-weight: 600; }
+.al-foot { font-size: 12.5px; color: var(--fg-subtle); line-height: 1.6; }
+.al-foot b { color: var(--fg-muted); font-weight: 600; }
+.al-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-radius: var(--r-2); background: var(--surface-2); margin-bottom: 12px; font-size: 13.5px; }
+.al-empty__text { flex: 1 1 220px; color: var(--fg-muted); }
+.al-mcards { display: grid; gap: 10px; }
+.al-mcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 14px 16px; display: grid; gap: 10px; }
+.al-mcard__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.al-mcard__label { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; min-width: 0; }
+.al-mcard__meta { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--fg-muted); }
+.al-mcard__meta b { color: var(--fg); font-weight: 600; }
+.al-stepper { display: inline-flex; align-items: center; gap: 4px; }
+.al-stepper .input { width: 64px; text-align: center; height: 44px; }
+@media (max-width: 767.98px) {
+  .al-page { padding: 12px 16px 24px; }
+  .al-bar { grid-template-columns: 76px 1fr; }
+  .al-big { font-size: 30px; line-height: 36px; }
+}
+`);
 
-  const groups  = React.useMemo(() => allocationGroups(summaries, grouping), [summaries, grouping]);
-  const targets = (saved[grouping] || {});
-  const targetSum = groups.reduce((s, g) => s + (Math.max(0, +targets[g.key] || 0)), 0);
-  const sumOk = Math.abs(targetSum - 100) < 0.05;
+function alNum(v) {
+  if (v === '' || v == null || !Number.isFinite(+v)) return '';
+  return new Intl.NumberFormat('nl-NL', { useGrouping: false, maximumFractionDigits: 2 }).format(+v);
+}
+function alPct(n) { return fmtPct(n, { decimals: 1, sign: false }); }
+function alClamp(n) { return Math.max(0, Math.min(100, n)); }
 
-  const calc = React.useMemo(
-    () => computeAllocation(groups, targets, extra),
-    [groups, targets, extra]
+function AlTargetInput({ value, onChange, testId, inputRef, label }) {
+  const [text, setText] = useState(null);
+  const shown = text != null ? text : alNum(value);
+  return (
+    <span className="al-tin">
+      <input ref={inputRef} className="input num" type="text" inputMode="decimal" aria-label={label} data-testid={testId}
+        value={shown} placeholder="0"
+        onFocus={() => setText(alNum(value))}
+        onBlur={() => setText(null)}
+        onChange={e => {
+          const t = e.target.value;
+          setText(t);
+          if (t.trim() === '') { onChange(''); return; }
+          const n = parseNlNumber(t);
+          if (n != null) onChange(alClamp(n));
+        }} />
+      <span className="al-drift__pt" aria-hidden="true">%</span>
+    </span>
   );
+}
 
-  const saveTargets = next => setState(s => ({
-    ...s,
-    targetAllocation: {
-      ...(s.targetAllocation || {}),
-      grouping,
-      [grouping]: next,
-      updatedAt: new Date().toISOString(),
-    },
-  }));
-  const setTarget = (key, val) => {
-    const clean = val === '' ? '' : Math.max(0, Math.min(100, +val));
-    saveTargets({ ...targets, [key]: clean });
+function AlStepper({ value, onChange, testId, inputRef, label }) {
+  const cur = +value || 0;
+  return (
+    <span className="al-stepper">
+      <IconButton icon="minus" label={`${label} verlagen`} onClick={() => onChange(alClamp(+(cur - 0.5).toFixed(2)))} />
+      <AlTargetInput value={value} onChange={onChange} testId={testId} inputRef={inputRef} label={label} />
+      <IconButton icon="plus" label={`${label} verhogen`} onClick={() => onChange(alClamp(+(cur + 0.5).toFixed(2)))} />
+    </span>
+  );
+}
+
+function AlVerdelingView({ app }) {
+  const state = app.state || {};
+  const saved = state.targetAllocation || {};
+  const isMobile = app.isMobile;
+  const privacy = usePrivacy();
+  const money = (v, o) => (privacy ? '€ •••••' : fmtMoney(v, o));
+  const [grouping, setGrouping] = useState(saved.grouping || 'category');
+  useEffect(() => { if (saved.grouping && saved.grouping !== grouping) setGrouping(saved.grouping); }, [saved.grouping]); // eslint-disable-line
+
+  const savedTargets = saved[grouping] || {};
+  const savedKey = JSON.stringify(savedTargets);
+  const [draft, setDraft] = useState(savedTargets);
+  const pending = useRef(false);
+  useEffect(() => { if (!pending.current) setDraft(savedTargets); }, [grouping, savedKey]); // eslint-disable-line
+
+  const write = useDebouncedCallback((g, next) => {
+    pending.current = false;
+    app.setSyncedState(s => ({
+      ...s,
+      targetAllocation: { ...(s.targetAllocation || {}), [g]: next, grouping: g, updatedAt: new Date().toISOString() },
+    }));
+  }, 300);
+  const saveTargets = next => { pending.current = true; setDraft(next); write(grouping, next); };
+  const setTarget = (key, v) => saveTargets({ ...draft, [key]: v });
+
+  const changeGrouping = g => {
+    if (g === grouping) return;
+    pending.current = false;
+    setGrouping(g);
+    setDraft(saved[g] || {});
+    app.setSyncedState(s => ({ ...s, targetAllocation: { ...(s.targetAllocation || {}), grouping: g } }));
   };
-  const changeGrouping = key => {
-    setGrouping(key);
-    setState(s => ({ ...s, targetAllocation: { ...(s.targetAllocation || {}), grouping: key } }));
-  };
-  const fillFromCurrent = () => saveTargets(Object.fromEntries(
-    groups.map(g => [g.key, +(calc.total > 0 ? g.value / calc.total * 100 : 0).toFixed(1)])
-  ));
+
+  const [extra, setExtra] = useState('');
+  const extraNum = Math.max(0, parseNlNumber(extra) || 0);
+
+  const summaries = (app.model && app.model.summaries) || [];
+  const groups = React.useMemo(() => {
+    const byParty = Object.fromEntries(summaries.map(s => [s.party.id, s.party]));
+    return allocationGroups(summaries, grouping).map(g => ({
+      ...g,
+      color: grouping === 'party'
+        ? partyColorOf(byParty[g.key] || {})
+        : ASSET_CLASS_BY_KEY[assetClassOf({ category: g.key })].color,
+    }));
+  }, [summaries, grouping]);
+  const targets = draft || {};
+  const targetSum = groups.reduce((s, g) => s + Math.max(0, +targets[g.key] || 0), 0);
+  const sumOk = Math.abs(targetSum - 100) < 0.05;
+  const hasTargets = targetSum > 0;
+  const calc = React.useMemo(() => computeAllocation(groups, targets, extraNum), [groups, targets, extraNum]);
+
+  const fillFromCurrent = () => saveTargets(Object.fromEntries(groups.map(g => [g.key, +(calc.total > 0 ? g.value / calc.total * 100 : 0).toFixed(1)])));
   const normalize = () => {
     if (targetSum <= 0) return;
-    saveTargets(Object.fromEntries(
-      groups.map(g => [g.key, +((Math.max(0, +targets[g.key] || 0)) / targetSum * 100).toFixed(1)])
-    ));
+    saveTargets(Object.fromEntries(groups.map(g => [g.key, +(Math.max(0, +targets[g.key] || 0) / targetSum * 100).toFixed(1)])));
+  };
+  const example = () => {
+    const pcts = [70, 15, 10, 5];
+    saveTargets(Object.fromEntries(groups.map((g, i) => [g.key, pcts[i] || 0])));
   };
 
-  const card = { background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding: isMobile ? '16px' : '20px 24px' };
-  const kicker = { fontSize:11, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--fg-muted)', marginBottom:6 };
-  const hasTargets = targetSum > 0;
+  const firstInput = useRef(null);
+  const stortenRef = useRef(null);
+  const focusQ = app.route && app.route.query && app.route.query.focus;
+  useEffect(() => {
+    if (focusQ === 'storten' && stortenRef.current) {
+      stortenRef.current.focus();
+      try { stortenRef.current.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ }
+    }
+  }, [focusQ]);
 
-  return (
-    <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '16px 14px 100px' : '28px 28px 60px' }}>
-      {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', gap:16, flexWrap:'wrap', marginBottom:24 }}>
-        <div>
-          <div style={{ fontSize:11, textTransform:'uppercase', letterSpacing:'0.12em', color:'var(--fg-muted)', marginBottom:6, fontFamily:'var(--ff-mono)' }}>
-            Portefeuille · {fmtEur(calc.total)}
-          </div>
-          <h1 style={{ margin:0, fontFamily:'var(--ff-display)', fontWeight:500, fontSize: isMobile ? 30 : 38, letterSpacing:'-0.02em', lineHeight:1 }}>
-            Verdeling
-          </h1>
-        </div>
-        <div style={{ display:'flex', gap:6 }}>
-          {ALLOC_GROUPINGS.map(g => (
-            <FilterChip key={g.key} active={grouping === g.key} onClick={() => changeGrouping(g.key)}>{g.label}</FilterChip>
-          ))}
-        </div>
-      </div>
+  const scaleMax = Math.max(1, ...calc.rows.map(r => Math.max(r.currentPct, r.targetPct, calc.amount > 0 ? r.afterPct : 0))) * 1.12;
+  const tol = ATTENTION_THRESHOLDS.driftPt;
+  const showAfter = hasTargets && calc.amount > 0;
 
-      {/* Stacked bars: huidig vs doel vs na storting */}
-      <div style={{ ...card, marginBottom:16 }}>
-        <AllocBar label="Huidig" rows={calc.rows} field="currentPct" />
-        {hasTargets && <AllocBar label="Doel" rows={calc.rows} field="targetPct" />}
-        {hasTargets && calc.amount > 0 && <AllocBar label="Na storting" rows={calc.rows} field="afterPct" />}
-        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px 14px', marginTop:12 }}>
-          {calc.rows.map(r => (
-            <span key={r.key} style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:12, color:'var(--fg-muted)' }}>
-              <span style={dotStyle(r.color)} />{r.label}
-            </span>
-          ))}
+  const sumPill = hasTargets
+    ? <Pill tone={sumOk ? 'neutral' : 'warn'} className="num">{sumOk ? 'Σ 100%' : `Σ ${fmtPct(targetSum, { decimals: 1, sign: false })} van 100%`}</Pill>
+    : null;
+
+  const bars = (
+    <Card>
+      <div className="al-bars">
+        <div className="al-bar"><span className="al-bar__label">Huidig</span>
+          <AllocationBar height={14} showLabels privacy={privacy} segments={calc.rows.map(r => ({ key: r.key, label: r.label, color: r.color, value: r.value }))} /></div>
+        {hasTargets && <div className="al-bar"><span className="al-bar__label">Doel</span>
+          <AllocationBar height={14} showLabels privacy={privacy} segments={calc.rows.map(r => ({ key: r.key, label: r.label, color: r.color, value: r.targetPct / 100 * calc.total }))} /></div>}
+        {showAfter && <div className="al-bar"><span className="al-bar__label">Na storting</span>
+          <AllocationBar height={14} showLabels privacy={privacy} segments={calc.rows.map(r => ({ key: r.key, label: r.label, color: r.color, value: r.value + r.plan }))} /></div>}
+        <div className="al-legend">
+          {calc.rows.map(r => <span key={r.key}><Swatch color={r.color} size={8} />{r.label}</span>)}
         </div>
       </div>
+    </Card>
+  );
 
-      {/* Samenvatting */}
-      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:16, marginBottom:16 }}>
-        <div style={card}>
-          <div style={kicker}>Bijstorten om doel te halen</div>
-          <div style={{ fontFamily:'var(--ff-mono)', fontSize:28, fontWeight:600, color: hasTargets && sumOk ? 'var(--accent)' : 'var(--fg-dim)' }}>
-            {hasTargets && sumOk ? fmtEur(calc.needed) : '—'}
-          </div>
-          <div style={{ fontSize:12, color:'var(--fg-dim)', marginTop:6, fontFamily:'var(--ff-mono)', lineHeight:1.5 }}>
-            {!hasTargets ? 'Vul hieronder je gewenste percentages in.'
-              : !sumOk ? `Doelen tellen op tot ${targetSum.toFixed(1)}% — moet 100% zijn.`
-              : calc.needed < 1 ? 'Je zit al op (of boven) je doelverdeling.'
-              : `Zonder te verkopen · nieuw totaal ${fmtEur(calc.neededTotal)}`}
-          </div>
-          {sumOk && calc.blocked.length > 0 && (
-            <div style={{ fontSize:12, color:'var(--negative)', marginTop:8 }}>
-              {calc.blocked.join(', ')} {calc.blocked.length === 1 ? 'heeft' : 'hebben'} 0% als doel — dat haal je alleen door te verkopen.
-            </div>
+  const neededMsg = !hasTargets ? 'Vul hieronder je gewenste percentages in.'
+    : !sumOk ? `Doelen tellen op tot ${fmtPct(targetSum, { decimals: 1, sign: false })} — moet 100% zijn.`
+    : calc.needed < 1 ? 'Je zit al op (of boven) je doelverdeling.'
+    : `Zonder te verkopen · nieuw totaal ${money(calc.neededTotal)}`;
+
+  const calcCards = (
+    <div className="al-calc">
+      <Card>
+        <div className="al-kicker">Bijstorten om doel te halen</div>
+        <div className={`al-big num${hasTargets && sumOk ? '' : ' is-off'}`}>{hasTargets && sumOk ? money(calc.needed) : '—'}</div>
+        <div className="al-msg">{neededMsg}</div>
+        {sumOk && calc.blocked.length > 0 && (
+          <div className="al-warn"><Icon name="triangle-alert" size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+            <span>{calc.blocked.join(', ')} {calc.blocked.length === 1 ? 'heeft' : 'hebben'} 0% als doel — dat haal je alleen door te verkopen.</span></div>
+        )}
+      </Card>
+      <Card>
+        <div className="al-kicker"><label htmlFor="al-storten">Ik wil storten</label></div>
+        <div className="al-storten">
+          <MoneyInput id="al-storten" inputRef={stortenRef} large value={extra} onChange={setExtra} placeholder="0" data-testid="storten-input" />
+          {hasTargets && sumOk && calc.needed >= 1 && (
+            <Button variant="secondary" size={isMobile ? 'md' : 'lg'} onClick={() => setExtra(String(Math.ceil(calc.needed)))}>= {money(Math.ceil(calc.needed))}</Button>
           )}
         </div>
-        <div style={card}>
-          <div style={kicker}>Ik wil storten</div>
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            <span style={{ fontFamily:'var(--ff-mono)', fontSize:20, color:'var(--fg-muted)' }}>€</span>
-            <input type="number" inputMode="decimal" min="0" step="50" value={extra} placeholder="0"
-              onChange={e => setExtra(e.target.value)}
-              style={{ ...inputStyle, fontFamily:'var(--ff-mono)', fontSize:20, padding:'8px 12px' }} />
-            {hasTargets && sumOk && calc.needed >= 1 && (
-              <Button variant="secondary" onClick={() => setExtra(String(Math.ceil(calc.needed)))} style={{ whiteSpace:'nowrap' }}>
-                = {fmtEur(Math.ceil(calc.needed))}
-              </Button>
-            )}
-          </div>
-          <div style={{ fontSize:12, color:'var(--fg-dim)', marginTop:8, lineHeight:1.5 }}>
-            Het bedrag gaat eerst naar de onderwogen onderdelen. De kolom "Storting" toont hoe je het verdeelt.
-          </div>
-        </div>
+        <div className="al-msg">Het bedrag gaat eerst naar de onderwogen onderdelen. De kolom "Storting" toont hoe je het verdeelt.</div>
+      </Card>
+    </div>
+  );
+
+  const emptyBanner = !hasTargets && (
+    <div className="al-empty">
+      <span className="al-empty__text">Nog geen doelverdeling ingesteld.</span>
+      <Button variant="primary" size="sm" onClick={fillFromCurrent}>Neem huidige verdeling over</Button>
+      <Button variant="secondary" size="sm" onClick={example}>Voorbeeld 70/15/10/5</Button>
+      <Button variant="ghost" size="sm" onClick={() => firstInput.current && firstInput.current.focus()}>Zelf instellen</Button>
+    </div>
+  );
+
+  const driftCell = r => {
+    const drift = r.currentPct - r.targetPct;
+    const out = hasTargets && Math.abs(drift) > tol;
+    return (
+      <div className="al-drift">
+        <BulletTrack current={r.currentPct} target={hasTargets ? r.targetPct : null} tolerance={hasTargets ? tol : null}
+          after={showAfter ? r.afterPct : null} scaleMax={scaleMax} color={r.color} height={6} />
+        <span className={`al-drift__pt num${out ? ' is-out' : ''}`}>{hasTargets ? fmtPt(drift) : '—'}</span>
       </div>
+    );
+  };
 
-      {/* Tabel */}
-      <div style={card}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:10 }}>
-          <div style={{ fontWeight:600, fontSize:15 }}>Doelverdeling</div>
-          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-            <span style={{ fontFamily:'var(--ff-mono)', fontSize:12, color: sumOk ? 'var(--positive)' : 'var(--negative)' }}>
-              Σ {targetSum.toFixed(1)}%
-            </span>
-            {!sumOk && targetSum > 0 && <Button variant="secondary" onClick={normalize}>Schaal naar 100%</Button>}
-            <Button variant="secondary" onClick={fillFromCurrent}>Neem huidige over</Button>
-          </div>
-        </div>
+  const tableActions = (
+    <>
+      {sumPill}
+      {hasTargets && !sumOk && <Button size="sm" onClick={normalize}>Schaal naar 100%</Button>}
+      <Button size="sm" onClick={fillFromCurrent}>Neem huidige over</Button>
+    </>
+  );
 
-        {isMobile ? (
-          <div>
-            {calc.rows.map(r => (
-              <div key={r.key} style={{ padding:'12px 0', borderTop:'1px solid var(--border)' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}>
-                  <span style={{ display:'flex', alignItems:'center', gap:8, fontSize:14, minWidth:0 }}>
-                    <span style={dotStyle(r.color)} />{r.label}
-                  </span>
-                  <TargetInput value={targets[r.key]} onChange={v => setTarget(r.key, v)} />
-                </div>
-                <DeviationBar current={r.currentPct} target={r.targetPct} color={r.color} />
-                <div style={{ display:'flex', justifyContent:'space-between', fontFamily:'var(--ff-mono)', fontSize:11, color:'var(--fg-muted)', marginTop:4 }}>
-                  <span>{fmtEur(r.value)} · {r.currentPct.toFixed(1)}%</span>
-                  <span>{calc.amount > 0 ? <>Storting <b style={{ color:'var(--fg)' }}>{fmtEur(r.plan)}</b></> : sumOk && <>Bijstorten <b style={{ color:'var(--fg)' }}>{fmtEur(r.toReach)}</b></>}</span>
-                </div>
-              </div>
+  const desktopTable = (
+    <Card title="Doelverdeling" actions={tableActions} padding={0}>
+      {emptyBanner && <div style={{ padding: '12px 16px 0' }}>{emptyBanner}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table className="table al-table">
+          <thead>
+            <tr>
+              <th>Onderdeel</th><th className="num">Waarde</th><th className="num">Huidig</th><th className="num">Doel</th>
+              <th>Afwijking</th>
+              <th className="num" title="Minimale bijstorting per onderdeel om het doel te halen zonder te verkopen">Bijstorten</th>
+              <th className="num" title="Kopen/verkopen binnen het huidige totaal">Herbalanceren</th>
+              {calc.amount > 0 && <th className="num">Storting</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {calc.rows.map((r, i) => (
+              <tr key={r.key}>
+                <td><span className="al-label"><Swatch color={r.color} />{r.label}</span></td>
+                <td className="num">{money(r.value)}</td>
+                <td className="num">{alPct(r.currentPct)}</td>
+                <td className="num"><AlTargetInput value={targets[r.key]} onChange={v => setTarget(r.key, v)} label={`Doel ${r.label}`}
+                  testId={`target-input-${r.key}`} inputRef={i === 0 ? firstInput : undefined} /></td>
+                <td>{driftCell(r)}</td>
+                <td className="num">{sumOk && r.toReach >= 1 ? money(r.toReach) : '—'}</td>
+                <td className="num">{sumOk ? money(r.rebalance, { sign: true }) : '—'}</td>
+                {calc.amount > 0 && <td className="num" style={{ fontWeight: 600 }}>{money(r.plan)}</td>}
+              </tr>
             ))}
-          </div>
-        ) : (
-          <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', minWidth:820, borderCollapse:'collapse', fontSize:13 }}>
-              <thead>
-                <tr style={{ fontSize:10, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--fg-muted)', fontFamily:'var(--ff-mono)' }}>
-                  <th style={thL}>Onderdeel</th>
-                  <th style={thR}>Waarde</th>
-                  <th style={thR}>Huidig</th>
-                  <th style={{ ...thR, paddingRight:22 }}>Doel</th>
-                  <th style={{ ...thL, paddingLeft:16, width:150 }}>Afwijking</th>
-                  <th style={thR} title="Minimale bijstorting per onderdeel om het doel te halen zonder te verkopen">Bijstorten</th>
-                  <th style={thR} title="Kopen/verkopen binnen het huidige totaal">Herbalanceren</th>
-                  {calc.amount > 0 && <th style={thR}>Storting</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {calc.rows.map(r => (
-                  <tr key={r.key} style={{ borderTop:'1px solid var(--border)' }}>
-                    <td style={tdL}>
-                      <span style={{ display:'inline-flex', alignItems:'center', gap:8 }}><span style={dotStyle(r.color)} />{r.label}</span>
-                    </td>
-                    <td style={tdR}>{fmtEur(r.value)}</td>
-                    <td style={tdR}>{r.currentPct.toFixed(1)}%</td>
-                    <td style={{ ...tdR, padding:'6px 0 6px 8px' }}><TargetInput value={targets[r.key]} onChange={v => setTarget(r.key, v)} /></td>
-                    <td style={{ ...tdL, paddingLeft:16 }}><DeviationBar current={r.currentPct} target={r.targetPct} color={r.color} /></td>
-                    <td style={{ ...tdR, fontWeight:600 }}>{sumOk ? (r.toReach >= 1 ? fmtEur(r.toReach) : '—') : '—'}</td>
-                    <td style={{ ...tdR, color: !sumOk ? 'var(--fg-dim)' : r.rebalance >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
-                      {sumOk ? `${r.rebalance >= 0 ? '+' : '−'}${fmtEur(Math.abs(r.rebalance))}` : '—'}
-                    </td>
-                    {calc.amount > 0 && <td style={{ ...tdR, fontWeight:600, color:'var(--accent)' }}>{fmtEur(r.plan)}</td>}
-                  </tr>
-                ))}
-              </tbody>
-              {sumOk && (
-                <tfoot>
-                  <tr style={{ borderTop:'1px solid var(--border-strong)', fontWeight:600 }}>
-                    <td style={tdL}>Totaal</td>
-                    <td style={tdR}>{fmtEur(calc.total)}</td>
-                    <td style={tdR}>100%</td>
-                    <td style={tdR}>{targetSum.toFixed(1)}%</td>
-                    <td />
-                    <td style={tdR}>{fmtEur(calc.needed)}</td>
-                    <td style={tdR}>€ 0</td>
-                    {calc.amount > 0 && <td style={{ ...tdR, color:'var(--accent)' }}>{fmtEur(calc.amount)}</td>}
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        )}
+          </tbody>
+          {sumOk && (
+            <tfoot>
+              <tr>
+                <td>Totaal</td><td className="num">{money(calc.total)}</td><td className="num">100%</td>
+                <td className="num">{alPct(targetSum)}</td><td />
+                <td className="num">{money(calc.needed)}</td><td className="num">{money(0)}</td>
+                {calc.amount > 0 && <td className="num">{money(calc.amount)}</td>}
+              </tr>
+            </tfoot>
+          )}
+        </table>
       </div>
+    </Card>
+  );
 
-      <div style={{ marginTop:16, fontSize:11, color:'var(--fg-dim)', fontFamily:'var(--ff-mono)', lineHeight:1.6 }}>
-        <b style={{ color:'var(--fg-muted)' }}>Bijstorten</b> = alleen kopen, niet verkopen. <b style={{ color:'var(--fg-muted)' }}>Herbalanceren</b> = kopen én verkopen binnen je huidige totaal.
+  const mobileCards = (
+    <div className="al-view" style={{ gap: 10 }}>
+      <div className="al-top"><h2>Doelverdeling</h2><span className="al-top__spacer" />{sumPill}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {hasTargets && !sumOk && <Button size="sm" onClick={normalize}>Schaal naar 100%</Button>}
+        {hasTargets && <Button size="sm" onClick={fillFromCurrent}>Neem huidige over</Button>}
+      </div>
+      {emptyBanner}
+      <div className="al-mcards">
+        {calc.rows.map((r, i) => (
+          <div key={r.key} className="al-mcard">
+            <div className="al-mcard__top">
+              <span className="al-mcard__label"><Swatch color={r.color} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span></span>
+              <AlStepper value={targets[r.key]} onChange={v => setTarget(r.key, v)} label={`Doel ${r.label}`}
+                testId={`target-input-${r.key}`} inputRef={i === 0 ? firstInput : undefined} />
+            </div>
+            {driftCell(r)}
+            <div className="al-mcard__meta num">
+              <span>{money(r.value)} · {alPct(r.currentPct)}</span>
+              <span>{calc.amount > 0 ? <>Storting <b>{money(r.plan)}</b></> : sumOk ? <>Bijstorten <b>{money(r.toReach)}</b></> : null}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="al-view">
+      <div className="al-top">
+        <h2>Verdeling</h2>
+        <span className="al-top__meta num">Portefeuille {money(calc.total)}</span>
+        <span className="al-top__spacer" />
+        <Segmented ariaLabel="Groepering" size="sm" value={grouping} onChange={changeGrouping}
+          options={ALLOC_GROUPINGS.map(g => ({ value: g.key, label: g.label }))} />
+        {!isMobile && sumPill}
+      </div>
+      {isMobile ? <>{calcCards}{bars}{mobileCards}</> : <>{bars}{calcCards}{desktopTable}</>}
+      <div className="al-foot">
+        <b>Bijstorten</b> = alleen kopen, niet verkopen. <b>Herbalanceren</b> = kopen én verkopen binnen je huidige totaal.
         Alleen partijen die in het totaal meetellen worden meegenomen. Doelen worden gesynct.
       </div>
     </div>
   );
 }
 
-const thL = { textAlign:'left',  padding:'8px 8px 8px 0', fontWeight:600 };
-const thR = { textAlign:'right', padding:'8px 0 8px 8px', fontWeight:600 };
-const tdL = { textAlign:'left',  padding:'10px 8px 10px 0' };
-const tdR = { textAlign:'right', padding:'10px 0 10px 8px', fontFamily:'var(--ff-mono)', whiteSpace:'nowrap' };
-
-function TargetInput({ value, onChange }) {
+function PlanScreen({ app }) {
+  const tab = (app.route && app.route.params && app.route.params.tab) === 'pensioen' ? 'pensioen' : 'verdeling';
+  const go = v => app.navigate('/plan/' + v);
+  const tabs = [
+    { value: 'verdeling', label: 'Verdeling', testId: 'plan-tab-verdeling' },
+    { value: 'pensioen', label: 'Pensioen', testId: 'plan-tab-pensioen' },
+  ];
   return (
-    <span style={{ display:'inline-flex', alignItems:'center', gap:4, whiteSpace:'nowrap' }}>
-      <input type="number" inputMode="decimal" min="0" max="100" step="0.5"
-        value={value ?? ''} placeholder="0"
-        onChange={e => onChange(e.target.value)}
-        style={{ ...inputStyle, width:72, padding:'5px 8px', textAlign:'right', fontFamily:'var(--ff-mono)', fontSize:13 }} />
-      <span style={{ fontSize:12, color:'var(--fg-muted)' }}>%</span>
-    </span>
-  );
-}
-
-function AllocBar({ label, rows, field }) {
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:'88px 1fr', alignItems:'center', gap:10, marginBottom:8 }}>
-      <span style={{ fontSize:11, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--fg-muted)', fontFamily:'var(--ff-mono)' }}>{label}</span>
-      <div style={{ display:'flex', height:22, borderRadius:6, overflow:'hidden', background:'var(--surface-2)' }}>
-        {rows.filter(r => r[field] > 0).map(r => (
-          <div key={r.key} title={`${r.label}: ${r[field].toFixed(1)}%`}
-            style={{ width:`${r[field]}%`, background:r.color, transition:'width .3s',
-              display:'flex', alignItems:'center', justifyContent:'center',
-              fontSize:10, color:'#fff', fontFamily:'var(--ff-mono)', overflow:'hidden', whiteSpace:'nowrap',
-              borderRight:'1px solid var(--surface)' }}>
-            {r[field] >= 7 ? `${Math.round(r[field])}%` : ''}
-          </div>
-        ))}
+    <div className="al-page">
+      <div className="al-head">
+        <h1 className="sr-only">Plan</h1>
+        {!app.isMobile && <Tabs className="al-tabs" ariaLabel="Plan" tabs={tabs} value={tab} onChange={go} />}
       </div>
+      {app.isMobile && (
+        <Segmented ariaLabel="Plan" full pill value={tab} onChange={go}
+          options={tabs.map(t => ({ value: t.value, label: t.label, testId: t.testId }))} />
+      )}
+      {tab === 'pensioen'
+        ? (window.PensioenView ? <PensioenView app={app} /> : null)
+        : <AlVerdelingView app={app} />}
     </div>
   );
 }
 
-// Balk met huidige % en een markering op het doel-%.
-function DeviationBar({ current, target, color }) {
-  const scale = Math.max(current, target, 1) * 1.15;
-  const diff = current - target;
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
-      <div style={{ position:'relative', flex:1, height:8, background:'var(--surface-2)', borderRadius:4 }}>
-        <div style={{ width:`${current / scale * 100}%`, height:'100%', background:color, borderRadius:4, opacity:.85 }} />
-        {target > 0 && (
-          <div title={`Doel ${target.toFixed(1)}%`}
-            style={{ position:'absolute', top:-3, bottom:-3, left:`${target / scale * 100}%`, width:2, background:'var(--fg)', borderRadius:1 }} />
-        )}
-      </div>
-      <span style={{ fontFamily:'var(--ff-mono)', fontSize:11, minWidth:44, textAlign:'right',
-        color: Math.abs(diff) < 0.5 ? 'var(--fg-dim)' : diff > 0 ? 'var(--negative)' : 'var(--positive)' }}>
-        {diff >= 0 ? '+' : '−'}{Math.abs(diff).toFixed(1)}
-      </span>
-    </div>
-  );
-}
-
-Object.assign(window, { AllocationTab, computeAllocation, allocationGroups });
+Object.assign(window, { PlanScreen, ALLOC_GROUPINGS, computeAllocation, allocationGroups });

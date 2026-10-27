@@ -8,7 +8,6 @@ Persoonlijk financieel dashboard (PWA) — portfolio, transacties en pensioen in
 |---|---|
 | `index.html` | Hoofdapp (shell, thema's, mobiele nav) |
 | `app/*.jsx` | React-modules: `data` (model/berekeningen), `ui` (primitieven), `charts`, `modals`, `dashboard`, `tabs`, `main` (app-root, sync) |
-| `preview/` | Design-varianten (Lumina, Terminal, Vault) |
 | `zeekaart/` | Losse zeekaart-PWA |
 | `api/`, `supabase/` | Koers-updates (Vercel function + Supabase Edge Function) |
 | `scripts/build.mjs` | Productie-build (zie hieronder) |
