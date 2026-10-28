@@ -31,7 +31,12 @@ const PARTIES = [
   { id: 'goud',         name: 'Fysiek Goud',   category: 'Edelmetaal',   subtitle: 'Eigen bezit — gram',       color: 'oklch(75% 0.15 70)',  unit: 'gram',  unitLabel: 'g',     goal: 20 },
   { id: 'zilver',       name: 'Fysiek Zilver', category: 'Edelmetaal',   subtitle: 'Eigen bezit — ounce',      color: 'oklch(70% 0.03 240)', unit: 'ounce', unitLabel: 'oz',    goal: 30 },
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
+  // Gevuld door het Financieel Systeem: per afgesloten maand (vanaf okt 2026) het bedrag dat overbleef,
+  // als inleg/opname met id 'fin-over-JJJJ-MM'. Waarde = opgetelde maandoverschotten.
+  { id: 'lopende-rekening', name: 'Lopende rekening', category: 'Liquide', subtitle: 'Maandoverschot uit Financieel Systeem', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
 ];
+// Posten die altijd in de partijlijst moeten staan (ook bij een bestaande, gesyncte lijst), tenzij verwijderd.
+const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening'];
 
 // ===== Crypto-posten =====
 // Een "post" (unit 'post', bv. Finst of Wallet) groepeert per-coin sub-holdings: gewone crypto-partijen
@@ -82,6 +87,9 @@ function migrateCryptoPosts(parties, deletedPartyIds) {
       if (at >= 0) list.splice(at, 0, { ...seedById[id] }); else list.push({ ...seedById[id] });
       changed = true;
     }
+  }
+  for (const id of ALWAYS_SEEDED_PARTY_IDS) {
+    if (!has(id) && !tomb[id]) { list.push({ ...seedById[id] }); changed = true; }
   }
   for (const def of CRYPTO_LEAF_DEFS) {
     const i = list.findIndex(p => p && p.id === def.id);
