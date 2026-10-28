@@ -668,10 +668,10 @@ function mapT212Valuation(account) {
 
 
 // ── Routing (S1) ──────────────────────────────────────────────
-const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
+const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'financieel', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
 const SH_SECTION_TITLES = {
   weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', wallet: 'Wallet', sync: 'Synchronisatie', t212: 'Trading 212',
-  partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over',
+  partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over', financieel: 'Financieel',
 };
 const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
 const SH_WEEKDAYS = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
