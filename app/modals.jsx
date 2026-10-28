@@ -42,8 +42,8 @@ injectStyles('modals', `
 }
 `);
 
-const MD_FORM_KEYS = ['party', 'type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'valueEur', 'feeEur', 'metalType', 'silverUnit', 'goldUnit', 'instrument', 'note'];
-const MD_TILE_ORDER = ['inleg', 'koop', 'verkoop', 'opname', 'dividend', 'rente', 'waardering', 'kosten', 'cashback'];
+const MD_FORM_KEYS = ['party', 'type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'valueEur', 'feeEur', 'metalType', 'silverUnit', 'goldUnit', 'instrument', 'note', 'toParty', 'feeQty'];
+const MD_TILE_ORDER = ['inleg', 'koop', 'verkoop', 'opname', 'dividend', 'rente', 'waardering', 'kosten', 'overboeking', 'cashback'];
 const MD_SHORT = { cashback: 'Cashback', rente: 'Rente', kosten: 'Kosten' };
 const MD_METAL_TYPES = ['koop', 'verkoop', 'waardering', 'dividend', 'opname'];
 const MD_INSTR_TYPES = ['koop', 'verkoop', 'cashback', 'dividend'];
@@ -67,6 +67,7 @@ function mdNeeds(type, party) {
     case 'inleg': case 'rente': case 'kosten': return ['amountEur'];
     case 'opname': return mdUnitBased(party) ? ['quantity'] : ['amountEur'];
     case 'koop': case 'verkoop': case 'cashback': case 'dividend': return ['quantity', 'unitPriceEur'];
+    case 'overboeking': return ['quantity'];
     case 'waardering':
       if (unit === 'bundle') return ['valueEur'];
       if (mdIsMixed(party) || unit === 'gram' || unit === 'ounce') return ['quantity'];
@@ -88,11 +89,19 @@ function mdFormUnitLabel(form, party) {
   return 'stuks';
 }
 
-function mdBlank(initial, preset, today) {
+function mdBlank(initial, preset, today, allParties) {
   const i = initial || {};
   const p = preset || {};
+  // Sub-holding (finst-btc) → post (finst) + coin (BTC) in het formulier.
+  const all = allParties || [];
+  const leafOf = id => all.find(x => x && x.id === id && x.postId) || null;
+  const leaf = leafOf(i.party || p.party);
+  const toLeaf = leafOf(i.toParty);
   const f = {
-    party: i.party || p.party || '',
+    party: leaf ? leaf.postId : (i.party || p.party || ''),
+    coin: (leaf && leaf.coin) || p.coin || 'BTC',
+    toPost: toLeaf ? toLeaf.postId : '',
+    feeQty: mdNum(i.feeQty),
     type: i.type || p.type || '',
     date: i.date || today,
     amountEur: mdNum(i.amountEur),
@@ -120,10 +129,13 @@ function mdTypeIcon(type) { return (TX_TYPE_META[type] && TX_TYPE_META[type].ico
 
 function TransactionSheet({ app, open, preset, initial, onClose }) {
   const parties = (app && app.model && app.model.parties) || [];
+  const allParties = (app && app.model && app.model.allParties) || parties;
+  const postOfLeaf = (app && app.model && app.model.postOfLeaf) || {};
+  const leavesByPost = (app && app.model && app.model.leavesByPost) || {};
   const byId = React.useMemo(() => Object.fromEntries(parties.map(p => [p.id, p])), [parties]);
   const today = todayIsoLocal();
   const isEdit = !!initial;
-  const [form, setForm] = useState(() => mdBlank(initial, preset, today));
+  const [form, setForm] = useState(() => mdBlank(initial, preset, today, allParties));
   const [step, setStep] = useState(1);
   const [typeNote, setTypeNote] = useState(null);
   const [feeOpen, setFeeOpen] = useState(false);
@@ -132,18 +144,19 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
 
   const defaultPartyFor = React.useCallback(type => {
     const ok = p => p && (!type || allowedTxTypes(p).includes(type));
-    const recent = ((app && app.prefs && app.prefs.recentParties) || []).map(id => byId[id]).find(ok);
+    const recent = ((app && app.prefs && app.prefs.recentParties) || []).map(id => byId[postOfLeaf[id] || id]).find(ok);
     if (recent) return recent.id;
     const open1 = ((app && app.model && app.model.open) || []).map(s => s.party).find(ok);
     if (open1) return open1.id;
     const any = parties.find(ok) || parties[0];
     return any ? any.id : '';
-  }, [app, byId, parties]);
+  }, [app, byId, parties, postOfLeaf]);
 
   useEffect(() => {
     if (!open) return;
-    const f = mdBlank(initial, preset, todayIsoLocal());
+    const f = mdBlank(initial, preset, todayIsoLocal(), allParties);
     if (!initial && f.type && !f.party) f.party = defaultPartyFor(f.type);
+    if (!initial && f.party && byId[f.party] && isPostParty(byId[f.party])) Object.assign(f, mdPostPatch(f, f.party, f.coin));
     setForm(f);
     setStep(initial || (preset && preset.type) ? 2 : 1);
     setTypeNote(null);
@@ -151,8 +164,16 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     setFeeOpen(!!(initial && +initial.feeEur > 0));
   }, [open, preset, initial]); // eslint-disable-line
 
-  const party = byId[form.party] || null;
-  const orphanId = isEdit && initial.party && !byId[initial.party] ? initial.party : null;
+  // Crypto-post (Finst/Wallet): de gekozen coin bepaalt de sub-holding waarop geboekt wordt.
+  const selected = byId[form.party] || null;
+  const isPost = isPostParty(selected);
+  const postCoins = isPost ? (leavesByPost[selected.id] || []).map(l => l.coin) : [];
+  const party = isPost ? cryptoLeafFor(allParties, selected.id, form.coin) : selected;
+  const isTransfer = form.type === 'overboeking';
+  const transferPosts = parties.filter(p => isPostParty(p) && (leavesByPost[p.id] || []).length);
+  const toPostOptions = transferPosts.filter(p => p.id !== form.party && cryptoLeafFor(allParties, p.id, form.coin));
+  const toLeaf = isTransfer && form.toPost && form.toPost !== form.party ? cryptoLeafFor(allParties, form.toPost, form.coin) : null;
+  const orphanId = isEdit && initial.party && !byId[initial.party] && !postOfLeaf[initial.party] ? initial.party : null;
 
   const allowedFor = (p, partyId) => {
     if (!p) return TX_TYPES.map(t => t.key);
@@ -166,15 +187,27 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     setForm(f => {
       const p = byId[id];
       const allowed = allowedFor(p, id);
+      const extra = mdPostPatch(f, id, f.coin);
       if (f.type && p && !allowed.includes(f.type)) {
         const nt = allowed[0];
         setTypeNote(`Type aangepast naar ${TX_LABELS[nt]}`);
-        return { ...f, party: id, type: nt };
+        return { ...f, ...extra, party: id, type: nt };
       }
       setTypeNote(null);
-      return { ...f, party: id };
+      return { ...f, ...extra, party: id };
     });
   };
+  // Coin geldig houden voor de gekozen post en een passende ontvangende post kiezen.
+  function mdPostPatch(f, partyId, coin) {
+    const p = byId[partyId];
+    if (!isPostParty(p)) return {};
+    const coins = (leavesByPost[p.id] || []).map(l => l.coin);
+    const c = coins.includes(coin) ? coin : (coins[0] || coin);
+    const okTo = id => id && id !== partyId && cryptoLeafFor(allParties, id, c);
+    const toPost = okTo(f.toPost) ? f.toPost : ((transferPosts.find(x => okTo(x.id)) || {}).id || '');
+    return { coin: c, toPost };
+  }
+  const changeCoin = c => setForm(f => ({ ...f, ...mdPostPatch(f, f.party, c), coin: c }));
   const changeType = t => {
     setTypeNote(null);
     setForm(f => ({ ...f, type: t }));
@@ -182,8 +215,11 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   const pickTile = t => {
     setForm(f => {
       let pid = f.party;
-      if (!pid || !allowedTxTypes(byId[pid] || {}).includes(t)) pid = (preset && preset.party) || defaultPartyFor(t);
-      return { ...f, type: t, party: pid };
+      if (!pid || !allowedTxTypes(byId[pid] || {}).includes(t)) {
+        const pp = preset && preset.party ? (postOfLeaf[preset.party] || preset.party) : null;
+        pid = pp && allowedTxTypes(byId[pp] || {}).includes(t) ? pp : defaultPartyFor(t);
+      }
+      return { ...f, ...mdPostPatch(f, pid, f.coin), type: t, party: pid };
     });
     setTypeNote(null);
     setStep(2);
@@ -226,6 +262,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   const orderValue = qtyN * pxN;
   const feeRaw = parseNlNumber(form.feeEur) || 0;
   const showFee = MD_FEE_TYPES.includes(form.type);
+  const feeQtyN = isTransfer ? parseNlNumber(form.feeQty) : null;
   const feeEur = !showFee ? 0 : (form.feeMode === 'pct' ? (orderValue > 0 ? orderValue * feeRaw / 100 : 0) : feeRaw);
   const showInstrument = party && party.id === 'trading212' && MD_INSTR_TYPES.includes(form.type);
   const showMetal = isMixed && MD_METAL_TYPES.includes(form.type);
@@ -242,6 +279,11 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
       errors[k] = 'Vul een bedrag in';
     }
   }
+  if (isTransfer) {
+    if (!toLeaf) errors.toPost = 'Kies een ontvangende post';
+    if (form.feeQty !== '' && (feeQtyN == null || feeQtyN < 0)) errors.feeQty = 'Vul geldige netwerkkosten in';
+  }
+  if (isPost && !party) errors.coin = 'Deze post heeft geen sub-holding voor deze coin';
   const baseValid = !!(form.party && form.type && /^\d{4}-\d{2}-\d{2}$/.test(form.date || ''));
   const valid = baseValid && Object.keys(errors).length === 0;
   const reason = !form.party ? 'Kies een partij' : !form.date ? 'Kies een datum' : Object.values(errors)[0] || null;
@@ -256,7 +298,11 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     setTried(true);
     if (!valid) return;
     const base = initial ? Object.fromEntries(Object.entries(initial).filter(([k]) => !MD_FORM_KEYS.includes(k) && k !== 'updatedAt')) : {};
-    const tx = { ...base, id: (initial && initial.id) || makeId(), party: form.party, type: form.type, date: form.date };
+    const tx = { ...base, id: (initial && initial.id) || makeId(), party: party ? party.id : form.party, type: form.type, date: form.date };
+    if (isTransfer) {
+      tx.toParty = toLeaf.id;
+      if (feeQtyN > 0) tx.feeQty = feeQtyN;
+    }
     if (form.note.trim()) tx.note = form.note.trim();
     if (showInstrument && form.instrument.trim()) tx.instrument = form.instrument.trim();
     if (showMetal) {
@@ -279,6 +325,19 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   // Live line
   const liveLine = (() => {
     if (!party || !form.type) return null;
+    if (isTransfer) {
+      const sm = app.model && app.model.byId && app.model.byId[party.id];
+      if (!sm) return null;
+      const coin = party.unitLabel || form.coin;
+      let avail = sm.bookedQuantity != null ? sm.bookedQuantity : (+sm.quantity || 0);
+      if (isEdit && initial && initial.type === 'overboeking' && initial.party === party.id) avail += transferOutQty(initial);
+      const out = qtyN + (feeQtyN > 0 ? feeQtyN : 0);
+      const fromName = selected ? selected.name : party.name;
+      const moved = out > 0 && sm.avgCost != null ? out * sm.avgCost : null;
+      return <>Geboekt bij {fromName}: <b className="num">{fmtQty(avail, coin, { decimals: 8 })}</b>
+        {moved != null && <> · kostprijs mee ≈ <b className="num">{fmtMoney(moved, { decimals: 2 })}</b></>}
+        {out > avail + 1e-12 && <> · <span style={{ color: 'var(--warn)' }}>meer dan geboekt</span></>}</>;
+    }
     if (['koop', 'verkoop', 'cashback'].includes(form.type) && orderValue > 0) {
       return <>Orderbedrag <b className="num">{fmtMoney(orderValue, { decimals: 2 })}</b>
         {feeEur > 0 && <> · {form.type === 'verkoop' ? 'netto' : 'totaal'} <b className="num">{fmtMoney(form.type === 'verkoop' ? orderValue - feeEur : orderValue + feeEur, { decimals: 2 })}</b></>}</>;
@@ -303,11 +362,12 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     return null;
   })();
 
-  const presetParty = preset && preset.party ? byId[preset.party] : null;
+  const presetParty = preset && preset.party ? byId[postOfLeaf[preset.party] || preset.party] : null;
   const tileTypes = MD_TILE_ORDER.filter(k => k !== 'cashback' || (presetParty && allowedTxTypes(presetParty).includes('cashback')));
-  const recent = ((app.prefs && app.prefs.recentParties) || []).map(id => byId[id]).filter(Boolean).slice(0, 5);
+  const recent = [...new Set(((app.prefs && app.prefs.recentParties) || []).map(id => postOfLeaf[id] || id))]
+    .map(id => byId[id]).filter(p => p && (!isTransfer || isPostParty(p))).slice(0, 5);
 
-  const typeOptions = party ? allowedFor(party, party.id) : TX_TYPES.map(t => t.key);
+  const typeOptions = selected ? allowedFor(selected, isEdit ? initial.party : selected.id) : TX_TYPES.map(t => t.key);
   const ids = 'md-tx';
 
   const footer = step === 2 ? (
@@ -329,7 +389,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           <p className="md-lead">Wat wil je vastleggen?</p>
           <div className="md-types">
             {tileTypes.map(k => {
-              const disabled = !!(presetParty && !allowedTxTypes(presetParty).includes(k));
+              const disabled = !!(presetParty && !allowedTxTypes(presetParty).includes(k)) || (k === 'overboeking' && transferPosts.length < 2);
               return (
                 <button key={k} type="button" className="md-type" data-testid={`tx-type-${k}`} aria-disabled={disabled || undefined}
                   onClick={() => { if (!disabled) pickTile(k); }}>
@@ -361,7 +421,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           )}
           {typeNote && <div className="md-note" role="status"><Icon name="info" size={14} />{typeNote}</div>}
 
-          <Field label="Partij" htmlFor={`${ids}-party`}
+          <Field label={isTransfer ? 'Van' : 'Partij'} htmlFor={`${ids}-party`}
             hint={party && party.unit === 'bundle' ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
             {recent.length > 0 && (
               <div className="md-chips">
@@ -373,9 +433,26 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
             <Select id={`${ids}-party`} value={form.party} onChange={e => changeParty(e.target.value)}>
               {!form.party && <option value="">Kies een partij</option>}
               {orphanId && <option value={orphanId}>Onbekend ({orphanId})</option>}
-              {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {(isTransfer ? transferPosts : parties).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
           </Field>
+
+          {isPost && postCoins.length > 0 && (
+            <Field label="Coin" error={tried ? errors.coin : null}>
+              <Segmented ariaLabel="Coin" full value={form.coin} onChange={changeCoin}
+                options={postCoins.map(c => ({ value: c, label: `${(CRYPTO_COIN_BY_KEY[c] || {}).label || c} (${c})` }))} />
+            </Field>
+          )}
+
+          {isTransfer && (
+            <Field label="Naar" htmlFor={`${ids}-to`} error={tried ? errors.toPost : null}
+              hint="Verplaatst coins en hun kostprijs tussen je eigen posten. Telt niet als inleg of opname.">
+              <Select id={`${ids}-to`} value={toLeaf ? form.toPost : ''} onChange={e => set('toPost', e.target.value)}>
+                {!toLeaf && <option value="">Kies een post</option>}
+                {toPostOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </Field>
+          )}
 
           <Field label="Datum" htmlFor={`${ids}-date`}>
             <div className="md-chips">
@@ -436,6 +513,18 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
               )}
               <Field label={`Prijs per ${unitLabel} (€)`} htmlFor={`${ids}-px`} error={errFor('unitPriceEur')}>
                 <MoneyInput id={`${ids}-px`} value={form.unitPriceEur} onChange={setUnitPrice} placeholder="0,00" />
+              </Field>
+            </div>
+          )}
+
+          {isTransfer && (
+            <div className="md-row2">
+              <Field label={`Aantal verzonden (${unitLabel})`} htmlFor={`${ids}-xq`} error={errFor('quantity')}>
+                <MoneyInput id={`${ids}-xq`} prefix="" large value={form.quantity} onChange={v => set('quantity', v)} placeholder="0" />
+              </Field>
+              <Field label={`Netwerkkosten (${unitLabel})`} htmlFor={`${ids}-xf`} error={errors.feeQty && form.feeQty !== '' ? errors.feeQty : null}
+                hint="Optioneel. Extra afgeschreven bij de bron; telt als kosten in de kostprijs.">
+                <MoneyInput id={`${ids}-xf`} prefix="" value={form.feeQty} onChange={v => set('feeQty', v)} placeholder="0" />
               </Field>
             </div>
           )}
@@ -505,13 +594,23 @@ function TxDetailSheet({ app, open, txId, onClose }) {
   const unit = txUnitLabel(tx, party);
   const info = txAmountInfo(tx, party);
   const has = v => v !== undefined && v !== null && v !== '';
+  const isTransfer = tx.type === 'overboeking';
   const rows = [];
   rows.push(['Type', TX_LABELS[tx.type] || tx.type]);
-  rows.push(['Partij', party
+  rows.push([isTransfer ? 'Van' : 'Partij', party
     ? <span className="md-party"><Monogram party={party} size={28} />{party.name}</span>
     : `Onbekend (${tx.party})`]);
   rows.push(['Datum', fmtDateLong(tx.date)]);
-  if (+tx.quantity) rows.push(['Aantal', fmtQty(+tx.quantity, unit, { decimals: party && party.unit === 'crypto' ? 8 : 4 })]);
+  if (isTransfer) {
+    const toS = app.model.byId[tx.toParty];
+    rows.push(['Naar', toS ? <span className="md-party"><Monogram party={toS.party} size={28} />{toS.party.name}</span> : `Onbekend (${tx.toParty || '—'})`]);
+    rows.push(['Aantal verzonden', fmtQty(+tx.quantity || 0, unit, { decimals: 8 })]);
+    if (+tx.feeQty) rows.push(['Netwerkkosten', fmtQty(+tx.feeQty, unit, { decimals: 8 })]);
+    rows.push(['Ontvangen', fmtQty(+tx.quantity || 0, unit, { decimals: 8 })]);
+    const tc = transferCostMap(txs)[tx.id];
+    if (tc) rows.push(['Kostprijs verplaatst', <Money value={tc.cost} decimals={2} />]);
+  }
+  if (+tx.quantity && !isTransfer) rows.push(['Aantal', fmtQty(+tx.quantity, unit, { decimals: party && party.unit === 'crypto' ? 8 : 4 })]);
   if (+tx.unitPriceEur) rows.push(['Prijs per eenheid', <Money value={+tx.unitPriceEur} decimals={4} />]);
   if (+tx.quantity && +tx.unitPriceEur) rows.push(['Orderbedrag', <Money value={txGross(tx)} decimals={2} />]);
   if (has(tx.amountEur)) rows.push(['Bedrag', <Money value={+tx.amountEur} decimals={2} />]);

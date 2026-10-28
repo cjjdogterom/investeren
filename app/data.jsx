@@ -18,8 +18,12 @@ function goldToGram(qty, goldUnit) {
 
 const PARTIES = [
   { id: 'meesman',      name: 'Meesman',       category: 'Indexfondsen', subtitle: 'Wereldwijd aandelenfonds', color: 'oklch(58% 0.14 255)', unit: 'part',  unitLabel: 'part.', goal: 25000 },
-  { id: 'finst-btc',   name: 'Bitcoin',        category: 'Crypto',   subtitle: 'BTC via Finst',           color: 'oklch(72% 0.18 55)',  unit: 'crypto', unitLabel: 'BTC',   goal: 5000, spotKey: 'btcSpotEur'  },
-  { id: 'finst-eth',   name: 'Ethereum',       category: 'Crypto',   subtitle: 'ETH via Finst',           color: 'oklch(60% 0.12 265)', unit: 'crypto', unitLabel: 'ETH',   goal: 2500, spotKey: 'ethSpotEur'  },
+  { id: 'finst',        name: 'Finst',          category: 'Crypto',   subtitle: 'Crypto-exchange · BTC en ETH', color: 'oklch(72% 0.18 55)', unit: 'post', unitLabel: '€', goal: 7500 },
+  { id: 'wallet',       name: 'Wallet',         category: 'Crypto',   subtitle: 'Coinbase Wallet · self-custody', color: 'oklch(60% 0.12 265)', unit: 'post', unitLabel: '€', goal: 0, selfCustody: true },
+  { id: 'finst-btc',   name: 'Bitcoin',        category: 'Crypto',   subtitle: 'BTC via Finst',           color: 'oklch(72% 0.18 55)',  unit: 'crypto', unitLabel: 'BTC',   goal: 5000, spotKey: 'btcSpotEur', postId: 'finst', coin: 'BTC' },
+  { id: 'finst-eth',   name: 'Ethereum',       category: 'Crypto',   subtitle: 'ETH via Finst',           color: 'oklch(60% 0.12 265)', unit: 'crypto', unitLabel: 'ETH',   goal: 2500, spotKey: 'ethSpotEur', postId: 'finst', coin: 'ETH' },
+  { id: 'wallet-btc',  name: 'Bitcoin',        category: 'Crypto',   subtitle: 'BTC in Coinbase Wallet',  color: 'oklch(72% 0.18 55)',  unit: 'crypto', unitLabel: 'BTC',   goal: 0, spotKey: 'btcSpotEur', postId: 'wallet', coin: 'BTC' },
+  { id: 'wallet-eth',  name: 'Ethereum',       category: 'Crypto',   subtitle: 'ETH in Coinbase Wallet',  color: 'oklch(60% 0.12 265)', unit: 'crypto', unitLabel: 'ETH',   goal: 0, spotKey: 'ethSpotEur', postId: 'wallet', coin: 'ETH' },
   { id: 'finst-paxg',  name: 'Pax Gold',       category: 'Edelmetaal', subtitle: 'PAXG via Finst',         color: 'oklch(76% 0.14 85)',  unit: 'crypto', unitLabel: 'PAXG',  goal: 1500, spotKey: 'paxgSpotEur' },
   { id: 'finst-top25', name: 'Top 25 Bundel',  category: 'Crypto',   subtitle: 'Top 25 tokens via Finst', color: 'oklch(62% 0.15 195)', unit: 'bundle', unitLabel: '€',     goal: 1000 },
   { id: 'goldrepublic', name: 'Goldrepublic',  category: 'Edelmetaal',   subtitle: 'Goud & zilver in kluis',   color: 'oklch(78% 0.14 85)',  unit: 'mixed', unitLabel: 'g/oz',  goal: 5000, isMixed: true },
@@ -28,6 +32,94 @@ const PARTIES = [
   { id: 'zilver',       name: 'Fysiek Zilver', category: 'Edelmetaal',   subtitle: 'Eigen bezit — ounce',      color: 'oklch(70% 0.03 240)', unit: 'ounce', unitLabel: 'oz',    goal: 30 },
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
 ];
+
+// ===== Crypto-posten =====
+// Een "post" (unit 'post', bv. Finst of Wallet) groepeert per-coin sub-holdings: gewone crypto-partijen
+// met postId + coin (finst-btc, wallet-eth …). Transacties blijven op de sub-holding staan, dus bestaande
+// boekingen (party 'finst-btc') hoeven niet herschreven te worden; de UI toont alleen de post.
+const CRYPTO_COINS = [
+  { coin: 'BTC', label: 'Bitcoin',  spotKey: 'btcSpotEur', decimals: 8 },
+  { coin: 'ETH', label: 'Ethereum', spotKey: 'ethSpotEur', decimals: 8 },
+];
+const CRYPTO_COIN_BY_KEY = Object.fromEntries(CRYPTO_COINS.map(c => [c.coin, c]));
+const CRYPTO_POST_IDS = ['finst', 'wallet'];
+const CRYPTO_LEAF_DEFS = [
+  { id: 'finst-btc',  postId: 'finst',  coin: 'BTC' },
+  { id: 'finst-eth',  postId: 'finst',  coin: 'ETH' },
+  { id: 'wallet-btc', postId: 'wallet', coin: 'BTC' },
+  { id: 'wallet-eth', postId: 'wallet', coin: 'ETH' },
+];
+
+function isPostParty(p) { return !!p && p.unit === 'post'; }
+
+// Controle van een publiek wallet-adres. Geeft null (ok) of een Nederlandse foutmelding.
+function validateChainAddress(coin, addr) {
+  const a = String(addr || '').trim();
+  if (!a) return null;
+  if (a.split(/\s+/).length >= 6) return 'Dit lijkt op een herstelzin (seed phrase). Vul die nooit in: alleen je publieke adres.';
+  if (/\s/.test(a)) return 'Een adres bevat geen spaties.';
+  if (coin === 'BTC') {
+    if (/^[xyz]pub/i.test(a)) return 'Een xpub wordt niet ondersteund; vul een los Bitcoin-adres in.';
+    return /^(bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/i.test(a) ? null : 'Geen geldig Bitcoin-adres (begint met bc1, 1 of 3).';
+  }
+  if (coin === 'ETH') return /^0x[0-9a-fA-F]{40}$/.test(a) ? null : 'Geen geldig Ethereum-adres (0x gevolgd door 40 tekens).';
+  return 'Onbekende coin';
+}
+
+// Idempotente migratie van de partijlijst: voegt de posten Finst en Wallet en hun coin-sub-holdings toe
+// en koppelt bestaande finst-btc / finst-eth aan Finst. Transacties en waarden blijven ongewijzigd.
+// Respecteert tombstones (een verwijderde post komt niet terug). Geeft dezelfde array terug als er niets verandert.
+function migrateCryptoPosts(parties, deletedPartyIds) {
+  if (!Array.isArray(parties) || !parties.length) return parties;
+  const tomb = deletedPartyIds || {};
+  const seedById = Object.fromEntries(PARTIES.map(p => [p.id, p]));
+  let changed = false;
+  const list = parties.slice();
+  const has = id => list.some(p => p && p.id === id);
+  for (const id of CRYPTO_POST_IDS) {
+    if (!has(id) && !tomb[id]) {
+      const at = list.findIndex(p => p && CRYPTO_LEAF_DEFS.some(d => d.postId === id && d.id === p.id));
+      if (at >= 0) list.splice(at, 0, { ...seedById[id] }); else list.push({ ...seedById[id] });
+      changed = true;
+    }
+  }
+  for (const def of CRYPTO_LEAF_DEFS) {
+    const i = list.findIndex(p => p && p.id === def.id);
+    if (i >= 0) {
+      const p = list[i];
+      if (!p.postId && !p.detachedFromPost && has(def.postId)) {
+        list[i] = { ...p, postId: def.postId, coin: def.coin, unit: 'crypto', spotKey: p.spotKey || CRYPTO_COIN_BY_KEY[def.coin].spotKey };
+        changed = true;
+      }
+    } else if (!tomb[def.id] && has(def.postId)) {
+      list.push({ ...seedById[def.id] });
+      changed = true;
+    }
+  }
+  return changed ? list : parties;
+}
+
+// postId → [leaf parties]; leaves waarvan de post niet (meer) bestaat tellen als gewone partij.
+function cryptoPostIndex(parties) {
+  const posts = {};
+  for (const p of parties || []) if (isPostParty(p)) posts[p.id] = p;
+  const leavesByPost = {}, postOfLeaf = {};
+  for (const p of parties || []) {
+    if (p && p.postId && posts[p.postId] && !isPostParty(p)) {
+      (leavesByPost[p.postId] = leavesByPost[p.postId] || []).push(p);
+      postOfLeaf[p.id] = p.postId;
+    }
+  }
+  for (const k of Object.keys(leavesByPost)) {
+    leavesByPost[k].sort((a, b) => CRYPTO_COINS.findIndex(c => c.coin === a.coin) - CRYPTO_COINS.findIndex(c => c.coin === b.coin));
+  }
+  return { posts, leavesByPost, postOfLeaf };
+}
+
+// Sub-holding van een post voor een coin (of null).
+function cryptoLeafFor(parties, postId, coin) {
+  return (parties || []).find(p => p && p.postId === postId && p.coin === coin && !isPostParty(p)) || null;
+}
 
 // ===== Widget registry for customizable dashboard =====
 const WIDGET_REGISTRY = [
@@ -162,6 +254,8 @@ function loadState() {
       }
       // Bewaar customParties NIET meer; alleen state.parties telt vanaf nu
       delete parsed.customParties;
+      // Migratie: crypto-posten Finst + Wallet (idempotent, transacties blijven ongewijzigd)
+      parsed.parties = migrateCryptoPosts(parsed.parties, parsed.deletedPartyIds);
       // Migratie: tweaks (spot prices, theme, API keys) verhuizen naar state.tweaks
       if (!parsed.tweaks) {
         parsed.tweaks = { ...(window.TWEAKS || {}) };
@@ -218,6 +312,7 @@ const TX_TYPES = [
   { key: 'rente',      label: 'Rente / Rendement' },
   { key: 'kosten',     label: 'Kosten / Fee' },
   { key: 'waardering', label: 'Waardering' },
+  { key: 'overboeking', label: 'Overboeking' },
 ];
 const TX_LABELS = Object.fromEntries(TX_TYPES.map(t => [t.key, t.label]));
 
@@ -359,11 +454,40 @@ function totalValuationPoints(partyTxs) {
     .map(t => ({ date: t.date, value: +t.valueEur }));
 }
 
+// ----- Overboekingen (crypto van de ene post naar de andere) -----
+// tx: { type: 'overboeking', party: bron-sub-holding, toParty: doel-sub-holding, quantity: verzonden aantal,
+//       feeQty: netwerkkosten in dezelfde coin (optioneel, extra afgeschreven bij de bron) }.
+// De kostprijs verhuist pro rata mee (incl. de kostprijs van de netwerkkosten): geen inleg/opname, geen gerealiseerd resultaat.
+function txTouchesParty(t, id) { return !!t && (t.party === id || (t.type === 'overboeking' && t.toParty === id)); }
+function transferOutQty(t) { return (+t.quantity || 0) + (+t.feeQty || 0); }
+const DT_TRANSFER_CACHE = new WeakMap();
+// id → { avg, cost }: gemiddelde kostprijs van de bron op het moment van de overboeking en de meeverhuisde kostprijs.
+function transferCostMap(transactions) {
+  if (!Array.isArray(transactions)) return {};
+  const hit = DT_TRANSFER_CACHE.get(transactions);
+  if (hit) return hit;
+  const map = {};
+  const transfers = transactions.filter(t => t && t.type === 'overboeking')
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  for (const t of transfers) {
+    const before = transactions.filter(x => x !== t && txTouchesParty(x, t.party)
+      && (x.date < t.date || (x.date === t.date && x.type !== 'overboeking')));
+    const src = summarizeParty({ id: t.party, unit: 'crypto' }, before, {}, { transferCost: map });
+    const avg = src.quantity > 0 ? src.costBasis / src.quantity : 0;
+    map[t.id] = { avg, cost: Math.min(src.costBasis, transferOutQty(t) * avg) };
+  }
+  DT_TRANSFER_CACHE.set(transactions, map);
+  return map;
+}
+
 // Valuation for a party — tracks goud/zilver quantities separately for goldrepublic.
-function summarizeParty(party, transactions, spots) {
+// ctx.transferCost: optioneel vooraf berekende transferCostMap (nodig als `transactions` een deelselectie is).
+function summarizeParty(party, transactions, spots, ctx) {
   const txs = transactions
-    .filter(t => t.party === party.id)
+    .filter(t => txTouchesParty(t, party.id))
     .sort((a, b) => a.date.localeCompare(b.date));
+  const hasTransfers = txs.some(t => t.type === 'overboeking');
+  const transferCost = hasTransfers ? ((ctx && ctx.transferCost) || transferCostMap(transactions)) : {};
 
   let quantity = 0;
   let goldQty = 0;   // for goldrepublic
@@ -378,8 +502,22 @@ function summarizeParty(party, transactions, spots) {
   let totalDividend = 0, totalFees = 0, totalIncome = 0;
   let totalCashback = 0;
   let netCashIn = 0;
+  let bookedQuantity = null, chainCheckedAt = null;
 
   for (const t of txs) {
+    if (t.type === 'overboeking') {
+      const tc = transferCost[t.id] || { avg: 0, cost: 0 };
+      if (t.party === party.id) {
+        quantity = Math.max(0, quantity - transferOutQty(t));
+        costBasis = Math.max(0, costBasis - tc.cost);
+        totalFees += (+t.feeQty || 0) * tc.avg; // netwerkkosten (informatief, kostprijs verhuist mee)
+      }
+      if (t.toParty === party.id) {
+        quantity += +t.quantity || 0;
+        costBasis += tc.cost;
+      }
+      continue;
+    }
     // Transactiekosten tellen mee in costBasis (echte netto-investering)
     if (t.feeEur) {
       totalFees += +t.feeEur;
@@ -510,6 +648,13 @@ function summarizeParty(party, transactions, spots) {
     currentValueEur = goldQty * (spots.goldSpotEurPerGram || 0) + silverQty * (spots.silverSpotEurPerOunce || 0);
     quantity = goldQty + silverQty; // total quantity (not meaningful unit)
   } else if (party.unit === 'crypto') {
+    // Self-custody wallet met publiek adres: on-chain saldo is leidend voor het aantal.
+    const chain = party.address && spots && spots.chainBalances ? spots.chainBalances[party.id] : null;
+    if (chain && chain.address === party.address && Number.isFinite(chain.qty)) {
+      bookedQuantity = quantity;
+      quantity = chain.qty;
+      chainCheckedAt = chain.checkedAt || null;
+    }
     // Crypto: gebruik live spot prijs, val terug op laatste waardering
     currentUnitPrice = spotEurForParty(party, spots) ?? lastUnitPrice;
     currentValueEur  = (currentUnitPrice || 0) * quantity;
@@ -535,7 +680,8 @@ function summarizeParty(party, transactions, spots) {
     currentValueEur = currentUnitPrice != null ? quantity * currentUnitPrice : costBasis;
   }
 
-  const avgCost = (party.isMixed ? goldQty + silverQty : quantity) > 0 ? costBasis / (party.isMixed ? goldQty + silverQty : quantity) : null;
+  const costQty = party.isMixed ? goldQty + silverQty : (bookedQuantity != null ? bookedQuantity : quantity);
+  const avgCost = costQty > 0 ? costBasis / costQty : null;
   const invested = costBasis + realizedCostBasis;
   const pnl = currentValueEur - costBasis + realizedPnl;
   const pnlPct = invested > 0 ? (pnl / invested) * 100 : 0;
@@ -553,6 +699,7 @@ function summarizeParty(party, transactions, spots) {
     totalCashback, netCashIn,
     realizedCostBasis, realizedProceeds, realizedPnl,
     pnl, pnlPct,
+    bookedQuantity, chainCheckedAt,
   };
 }
 
@@ -560,6 +707,7 @@ function summarizeParty(party, transactions, spots) {
 function buildPartyTimeSeries(transactions, parties, spots) {
   if (!transactions.length) return { dates: [], byParty: {}, total: [], invested: [] };
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  const tcMap = transferCostMap(transactions);
   const txByParty = Object.fromEntries(parties.map(p => [p.id, sorted.filter(t => t.party === p.id)]));
   const unitValuationsByParty = Object.fromEntries(parties.map(p => [p.id, unitValuationPoints(txByParty[p.id] || [])]));
   const totalValuationsByParty = Object.fromEntries(parties.map(p => [p.id, totalValuationPoints(txByParty[p.id] || [])]));
@@ -575,7 +723,15 @@ function buildPartyTimeSeries(transactions, parties, spots) {
   const endIso = todayIsoLocal();
   while (iso <= endIso) {
     while (ti < sorted.length && sorted[ti].date <= iso) {
-      const t = sorted[ti]; const s = state[t.party]; if (!s) { ti++; continue; }
+      const t = sorted[ti];
+      if (t.type === 'overboeking') {
+        const tc = tcMap[t.id] || { cost: 0 };
+        const src = state[t.party], dst = state[t.toParty];
+        if (src) { src.qty = Math.max(0, src.qty - transferOutQty(t)); src.cost = Math.max(0, src.cost - tc.cost); }
+        if (dst) { dst.qty += +t.quantity || 0; dst.cost += tc.cost; }
+        ti++; continue;
+      }
+      const s = state[t.party]; if (!s) { ti++; continue; }
       const p = parties.find(x => x.id === t.party);
       if (t.feeEur) s.cost += +t.feeEur; // fees tellen mee in investering
       switch (t.type) {
@@ -1038,15 +1194,26 @@ const ATTENTION_THRESHOLDS = { concentrationPct: 40, driftPt: 5, staleDays: 30, 
 
 function dtUnitKind(party) {
   if (!party) return 'part';
+  if (party.unit === 'post') return 'post';
   if (party.isMixed || party.unit === 'mixed') return 'mixed';
   return party.unit || 'part';
 }
 function dtFmt2(n) { return dtNf(2).format(+n || 0); }
 function dtLastHistDate(hist) { return Array.isArray(hist) && hist.length ? hist[hist.length - 1].date : null; }
 
+// Per-coin tekst voor een crypto-post, bv. "0,0055 BTC · 0,02 ETH" (alleen coins met saldo, anders alle).
+function postCoinsText(s) {
+  const leaves = s.leaves || [];
+  const withQty = leaves.filter(l => (+l.quantity || 0) > 0);
+  const list = withQty.length ? withQty : leaves;
+  if (!list.length) return '—';
+  return list.map(l => fmtQty(+l.quantity || 0, l.party.unitLabel, { decimals: (+l.quantity || 0) < 1 ? 6 : 4 })).join(' · ');
+}
+
 function holdingQtyText(s) {
   const p = s.party, q = +s.quantity || 0;
   switch (dtUnitKind(p)) {
+    case 'post':   return postCoinsText(s);
     case 'part':   return `${dtFmt2(q)} ${p.unitLabel || 'part.'}`;
     case 'gram':   return `${dtFmt2(q)} g`;
     case 'ounce':  return `${dtFmt2(q)} oz`;
@@ -1064,6 +1231,7 @@ function holdingPriceText(s, spots = {}) {
       return `NAV ${fmtMoney(px, { decimals: 4 })}${date ? ' · ' + fmtDateShort(date) : ''}`;
     }
     case 'crypto': return `Spot ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`;
+    case 'post':   return (s.leaves || []).map(l => `${l.party.unitLabel} ${fmtMoney(l.currentUnitPrice, { decimals: (l.currentUnitPrice || 0) >= 1000 ? 0 : 2 })}`).join(' · ') || '—';
     case 'gram':   return `Spot ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`;
     case 'ounce':  return `Spot ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`;
     case 'mixed':  return `Goud ${fmtMoney(spots.goldSpotEurPerGram, { decimals: 2 })}/g · Zilver ${fmtMoney(spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`;
@@ -1078,6 +1246,7 @@ function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
   switch (kind) {
     case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
     case 'crypto': return { text: `${holdingQtyText(s)} · ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`, staleDays: null };
+    case 'post':   return { text: postCoinsText(s), staleDays: null };
     case 'gram':   return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null };
     case 'ounce':  return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`, staleDays: null };
     case 'mixed':  return { text: `Au ${fmtQty(s.goldQty || 0, 'g', { decimals: 2 })} · Ag ${fmtQty(s.silverQty || 0, 'oz', { decimals: 2 })}`, staleDays: null };
@@ -1148,10 +1317,13 @@ const TX_TYPE_META = {
   waardering: { icon: 'diamond',            hint: 'Nieuwe waarde',     income: false },
   kosten:     { icon: 'receipt',            hint: 'Fee, beheer',       income: false },
   cashback:   { icon: 'gift',               hint: 'Cashback',          income: true  },
+  overboeking: { icon: 'arrow-left-right',  hint: 'Crypto naar andere post', income: false },
 };
 
 function allowedTxTypes(party) {
+  if (isPostParty(party)) return allowedTxTypes({ unit: 'crypto', postId: party.id });
   return TX_TYPES.map(t => t.key).filter(k => {
+    if (k === 'overboeking') return !!(party && party.unit === 'crypto' && party.postId);
     if (k === 'cashback' && !(party && party.id === 'trading212')) return false;
     if (party && party.unit === 'bundle' && ['koop', 'verkoop', 'cashback', 'dividend', 'rente'].includes(k)) return false;
     return true;
@@ -1186,11 +1358,30 @@ function txNetTotal(t) {
     case 'dividend': return txGross(t);
     case 'inleg': case 'opname': case 'rente': case 'kosten': return +t.amountEur || 0;
     case 'waardering': return t.valueEur != null && t.valueEur !== '' ? +t.valueEur : null;
+    case 'overboeking': return null;
     default: return +t.amountEur || 0;
   }
 }
 
+// Naam voor weergave van een (sub-)partij-id, bv. "Wallet" voor wallet-btc. Gevuld door buildPortfolioModel.
+let DT_PARTY_INDEX = {};
+function dtPostNameOf(id) {
+  const p = DT_PARTY_INDEX[id];
+  if (!p) return id || '?';
+  const post = p.postId ? DT_PARTY_INDEX[p.postId] : null;
+  return post ? post.name : p.name;
+}
+function txTransferText(t, party) {
+  const coin = (party && party.unitLabel) || '';
+  const fee = +t.feeQty || 0;
+  return `${dtPostNameOf(t.party)} → ${dtPostNameOf(t.toParty)} · ${fmtQty(+t.quantity || 0, coin, { decimals: 8 })}`
+    + (fee > 0 ? ` (+ ${fmtQty(fee, coin, { decimals: 8 })} netwerkkosten)` : '');
+}
+
 function txAmountInfo(t, party) {
+  if (t.type === 'overboeking') {
+    return { text: fmtQty(+t.quantity || 0, (party && party.unitLabel) || '', { decimals: 8 }), tone: 'muted', sign: '' };
+  }
   if (t.type === 'waardering') {
     let text = '—';
     if (t.valueEur != null && t.valueEur !== '') text = `= ${fmtMoney(+t.valueEur, { decimals: (+t.valueEur) % 1 === 0 ? 0 : 2 })}`;
@@ -1206,6 +1397,7 @@ function txAmountInfo(t, party) {
 }
 
 function txDetailsText(t, party) {
+  if (t.type === 'overboeking') return txTransferText(t, party);
   const prefix = t.instrument ? `${t.instrument} · ` : '';
   const qty = +t.quantity || 0, px = +t.unitPriceEur || 0;
   if (qty > 0 && px > 0) {
@@ -1233,15 +1425,16 @@ function buildFlowSeries(transactions, parties) {
   const dates = dtDailyDates(sorted[0].date, todayIso);
   const idx = new Map(dates.map((x, i) => [x, i]));
   const netByParty = {};
+  const ctx = { transferCost: transferCostMap(transactions) };
   for (const p of parties || []) {
     const arr = new Array(dates.length).fill(0);
-    const txs = sorted.filter(t => t.party === p.id);
+    const txs = sorted.filter(t => txTouchesParty(t, p.id));
     const points = [];
     const seen = new Set();
     for (const t of txs) {
       if (t.date > todayIso || seen.has(t.date)) continue;
       seen.add(t.date);
-      const sm = summarizeParty(p, txs.filter(x => x.date <= t.date), {});
+      const sm = summarizeParty(p, txs.filter(x => x.date <= t.date), {}, ctx);
       points.push([idx.get(t.date), sm.costBasis - sm.realizedPnl]);
     }
     let pi = 0, cur = 0;
@@ -1257,6 +1450,34 @@ function buildFlowSeries(transactions, parties) {
 function dtIncluded(p) { return (p.includeInTotal ?? p.includeInPortfolio) !== false; }
 function dtInChart(p)  { return (p.includeInTimeChart ?? p.includeInPortfolio) !== false; }
 
+// Samenvatting van een crypto-post = som van zijn coin-sub-holdings (+ eventuele boekingen direct op de post).
+function aggregatePostSummary(post, leaves, own) {
+  const parts = own && own.transactions && own.transactions.length ? [...leaves, own] : leaves;
+  const sum = k => parts.reduce((a, x) => a + (+x[k] || 0), 0);
+  const seen = new Set();
+  const transactions = [];
+  for (const x of parts) for (const t of x.transactions || []) if (!seen.has(t.id)) { seen.add(t.id); transactions.push(t); }
+  transactions.sort((a, b) => a.date.localeCompare(b.date));
+  const invested = sum('invested');
+  const pnl = sum('pnl');
+  const lastDates = parts.map(x => x.lastValuationDate).filter(Boolean).sort();
+  const chainDates = leaves.map(x => x.chainCheckedAt).filter(Boolean).sort();
+  return {
+    party: post, transactions,
+    quantity: null, goldQty: undefined, silverQty: undefined,
+    costBasis: sum('costBasis'), avgCost: null,
+    currentUnitPrice: null, currentValueEur: sum('currentValueEur'),
+    invested,
+    lastValuationDate: lastDates.length ? lastDates[lastDates.length - 1] : null,
+    totalDividend: sum('totalDividend'), totalFees: sum('totalFees'), totalIncome: sum('totalIncome'),
+    totalCashback: sum('totalCashback'), netCashIn: sum('netCashIn'),
+    realizedCostBasis: sum('realizedCostBasis'), realizedProceeds: sum('realizedProceeds'), realizedPnl: sum('realizedPnl'),
+    pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
+    bookedQuantity: null, chainCheckedAt: chainDates.length ? chainDates[chainDates.length - 1] : null,
+    leaves,
+  };
+}
+
 function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {} } = {}) {
   parties = parties || [];
   transactions = transactions || [];
@@ -1265,13 +1486,51 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   valueSeries = valueSeries || buildPartyTimeSeries(transactions, parties, spots);
   const todayIso = todayIsoLocal();
 
+  // Crypto-posten: sub-holdings (finst-btc …) samenvoegen tot hun post (Finst). Totalen veranderen niet:
+  // de post is exact de som van zijn sub-holdings.
+  const allParties = parties;
+  DT_PARTY_INDEX = Object.fromEntries(allParties.map(p => [p.id, p]));
+  const postIdx = cryptoPostIndex(allParties);
+  const leafSummaries = {};
+  const rawById = {};
+  summaries.forEach(s => { rawById[s.party.id] = s; });
+  if (Object.keys(postIdx.postOfLeaf).length || Object.keys(postIdx.posts).length) {
+    const vsByParty = { ...((valueSeries && valueSeries.byParty) || {}) };
+    const flByParty = { ...((flows && flows.netByParty) || {}) };
+    const sumArr = (arrs) => {
+      const list = arrs.filter(Boolean);
+      if (!list.length) return null;
+      const out = new Array(Math.max(...list.map(a => a.length))).fill(0);
+      for (const a of list) for (let i = 0; i < a.length; i++) out[i] += a[i] || 0;
+      return out;
+    };
+    const postSummaries = {};
+    for (const post of Object.values(postIdx.posts)) {
+      const leaves = (postIdx.leavesByPost[post.id] || []).map(l => {
+        const ls = rawById[l.id] || summarizeParty(l, transactions, spots);
+        const view = { ...ls, party: { ...ls.party, name: `${post.name} · ${l.unitLabel || l.coin || l.name}` } };
+        leafSummaries[l.id] = view;
+        return view;
+      });
+      postSummaries[post.id] = aggregatePostSummary(post, leaves, rawById[post.id]);
+      vsByParty[post.id] = sumArr(leaves.map(l => vsByParty[l.party.id])) || vsByParty[post.id];
+      flByParty[post.id] = sumArr(leaves.map(l => flByParty[l.party.id])) || flByParty[post.id];
+    }
+    parties = allParties.filter(p => !postIdx.postOfLeaf[p.id]);
+    summaries = parties.map(p => postSummaries[p.id] || rawById[p.id] || summarizeParty(p, transactions, spots));
+    valueSeries = { ...(valueSeries || {}), byParty: vsByParty };
+    flows = { ...(flows || {}), netByParty: flByParty };
+  }
+  const dispIdOf = id => postIdx.postOfLeaf[id] || id;
+
   const byId = {};
+  Object.values(leafSummaries).forEach(s => { byId[s.party.id] = s; });
   summaries.forEach(s => { byId[s.party.id] = s; });
   const included = summaries.filter(s => dtIncluded(s.party));
   const chartIds = summaries.filter(s => dtInChart(s.party)).map(s => s.party.id);
   const empty = [], closed = [], open = [];
   for (const s of summaries) {
-    if (!s.transactions.length) empty.push(s);
+    if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5)) empty.push(s);
     else if (isClosedSummary(s)) closed.push(s);
     else open.push(s);
   }
@@ -1285,7 +1544,7 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   const cutoff = addDaysIso(todayIso, -365);
   let income12m = 0;
   for (const t of transactions) {
-    if (!includedIds.has(t.party) || !(t.date > cutoff)) continue;
+    if (!includedIds.has(dispIdOf(t.party)) || !(t.date > cutoff)) continue;
     if (t.type === 'rente') income12m += +t.amountEur || 0;
     else if (t.type === 'dividend') {
       const q = +t.quantity || 0, px = +t.unitPriceEur || 0;
@@ -1362,26 +1621,28 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   const flow = netArr.map((x, i) => (i === 0 ? x : x - netArr[i - 1]));
   const series = { dates, value: valueArr, net: netArr, flow, byParty, netByParty, ids: chartIds.slice() };
 
-  const partyIds = new Set(parties.map(p => p.id));
+  const partyIds = new Set(allParties.map(p => p.id));
   const orphans = transactions.filter(t => !partyIds.has(t.party));
 
   const dateIdx = new Map(dates.map((x, i) => [x, i]));
   const chartSet = new Set(chartIds);
   const markers = [];
   for (const t of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
-    if (!chartSet.has(t.party)) continue;
-    const s = byId[t.party];
+    const dispId = dispIdOf(t.party);
+    if (!chartSet.has(dispId) || t.type === 'overboeking') continue;
+    const s = byId[dispId];
     const index = dateIdx.get(t.date);
     if (index == null) continue;
     if (t.type === 'waardering' && (s.party.unit === 'bundle' || s.party.unit === 'eur')) {
       const v = t.valueEur != null && t.valueEur !== '' ? +t.valueEur : (t.unitPriceEur != null ? +t.unitPriceEur : null);
-      markers.push({ index, date: t.date, kind: 'waardering', partyId: t.party, label: `Waardering ${s.party.name}${v != null ? ' · ' + fmtMoney(v) : ''}` });
+      markers.push({ index, date: t.date, kind: 'waardering', partyId: dispId, label: `Waardering ${s.party.name}${v != null ? ' · ' + fmtMoney(v) : ''}` });
     } else if (t.type === 'opname') {
-      markers.push({ index, date: t.date, kind: 'opname', partyId: t.party, label: `Opname ${s.party.name} · ${fmtMoney(txGross(t))}` });
+      markers.push({ index, date: t.date, kind: 'opname', partyId: dispId, label: `Opname ${s.party.name} · ${fmtMoney(txGross(t))}` });
     }
   }
 
-  return { parties, summaries, byId, included, chartIds, open, closed, empty, totals, classes, series, orphans, markers };
+  return { parties, summaries, byId, included, chartIds, open, closed, empty, totals, classes, series, orphans, markers,
+    allParties, postOfLeaf: postIdx.postOfLeaf, leavesByPost: postIdx.leavesByPost, dispIdOf };
 }
 
 function seriesExcluding(series, partyIds) {
@@ -1676,6 +1937,8 @@ Object.assign(window, {
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,
+  CRYPTO_COINS, CRYPTO_COIN_BY_KEY, isPostParty, validateChainAddress, migrateCryptoPosts, cryptoPostIndex, cryptoLeafFor, txTouchesParty,
+  transferOutQty, transferCostMap, aggregatePostSummary, txTransferText, dtPostNameOf,
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,

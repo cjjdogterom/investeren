@@ -32,7 +32,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, '_site');
 
 const EXCLUDE = new Set([
-  '.git', '.github', '.claude', 'node_modules', '_site', 'outputs',
+  '.git', '.github', '.claude', 'node_modules', '_site', 'outputs', 'ios',
   'package.json', 'package-lock.json', 'scripts',
   // niet nodig op de statische site (api/ draait als Vercel-function vanaf de repo-root)
   'api', 'supabase', 'README.md', '.gitignore', 'vercel.json',

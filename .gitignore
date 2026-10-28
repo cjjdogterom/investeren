@@ -24,3 +24,9 @@ _site/
 
 # Claude Code intern
 .claude/
+
+# iOS (Xcode)
+ios/**/xcuserdata/
+ios/**/DerivedData/
+ios/**/build/
+DerivedData/

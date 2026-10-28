@@ -4,6 +4,7 @@ const ST_SECTIONS = [
   { key: 'weergave',    label: 'Weergave',       icon: 'sun',                desc: 'Thema, kleuren en privacy' },
   { key: 'overzicht',   label: 'Overzicht',      icon: 'layout-dashboard',   desc: 'Modules en standaardperiode' },
   { key: 'koersen',     label: 'Koersen',        icon: 'trending-up',        desc: 'Live prijzen en Meesman NAV' },
+  { key: 'wallet',      label: 'Wallet',         icon: 'wallet',             desc: 'Coinbase Wallet alleen-lezen koppelen' },
   { key: 'sync',        label: 'Synchronisatie', icon: 'cloud',              desc: 'Supabase-koppeling' },
   { key: 't212',        label: 'Trading 212',    icon: 'download',           desc: 'Stortingen en waarde importeren' },
   { key: 'partijen',    label: 'Partijen',       icon: 'layers',             desc: 'Partijen beheren en toevoegen' },
@@ -11,7 +12,7 @@ const ST_SECTIONS = [
   { key: 'gevarenzone', label: 'Gevarenzone',    icon: 'triangle-alert',     desc: 'Verwijderen en terugzetten' },
   { key: 'over',        label: 'Over',           icon: 'info',               desc: 'Versie, uitleg en sneltoetsen' },
 ];
-const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
+const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'wallet', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
 const ST_SETTINGS_PRICE_ORDER = ['gold', 'silver', 'btc', 'eth', 'paxg'];
 const ST_PRICE_UNITS = { gold: '€/g', silver: '€/oz', btc: '€/BTC', eth: '€/ETH', paxg: '€/PAXG', meesman: '€/part.' };
 const ST_SQL = `create table if not exists portfolio (\n  id text primary key,\n  data jsonb not null default '{}',\n  updated_at timestamptz default now()\n);\nalter table portfolio enable row level security;\ndrop policy if exists "allow all" on portfolio;\ncreate policy "allow all" on portfolio\n  for all using (true) with check (true);`;
@@ -47,6 +48,12 @@ injectStyles('settings', `
   .st-status--err { color: var(--warn); word-break: break-word; }
   .st-label { font-size: 13.5px; font-weight: 600; color: var(--fg); }
   .st-sub { font-size: 12px; color: var(--fg-subtle); }
+  .st-addr { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 13px; }
+  .st-wcoin { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .st-wcoin:first-of-type { border-top: 0; padding-top: 0; }
+  .st-wline { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .st-wline b { color: var(--fg); font-weight: 600; }
+  .st-wline .st-status--err { font-size: 12.5px; }
   .st-switches > .switch + .switch { border-top: 1px solid var(--border); }
   .st-themes .seg__btn { gap: 8px; }
   .st-theme-sw { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgb(127 127 127 / .45); flex: none; display: inline-block; vertical-align: -2px; margin-right: 6px; }
@@ -294,6 +301,88 @@ function StKoersen({ app }) {
   );
 }
 
+// Self-custody wallet koppelen: alleen PUBLIEKE adressen (nooit herstelzin of private key).
+function StWallet({ app }) {
+  const model = app.model || {};
+  const posts = (model.parties || []).filter(p => p.unit === 'post' && (p.selfCustody || p.id === 'wallet'));
+  const leavesOf = id => ((model.leavesByPost || {})[id] || []);
+  const rawParty = id => (model.allParties || []).find(p => p.id === id) || {};
+  const initialAddrs = () => Object.fromEntries(posts.flatMap(p => leavesOf(p.id)).map(l => [l.id, rawParty(l.id).address || '']));
+  const sig = posts.flatMap(p => leavesOf(p.id)).map(l => l.id + '=' + (rawParty(l.id).address || '')).join('|');
+  const [addrs, setAddrs] = React.useState(initialAddrs);
+  React.useEffect(() => { setAddrs(initialAddrs()); }, [sig]); // eslint-disable-line
+  if (!posts.length) {
+    return <Card title="Wallet"><EmptyState icon="wallet" title="Geen wallet-post" body="Voeg een crypto-post toe om een wallet te koppelen." /></Card>;
+  }
+  const allLeaves = posts.flatMap(p => leavesOf(p.id));
+  const errs = Object.fromEntries(allLeaves.map(l => [l.id, validateChainAddress(l.coin, addrs[l.id])]));
+  const changed = allLeaves.filter(l => (addrs[l.id] || '').trim() !== (rawParty(l.id).address || ''));
+  const hasErr = allLeaves.some(l => errs[l.id]);
+  const anyAddr = allLeaves.some(l => rawParty(l.id).address);
+  const save = () => {
+    if (hasErr || !changed.length) return;
+    const changes = Object.fromEntries(changed.map(l => [l.id, (addrs[l.id] || '').trim()]));
+    app.setSyncedState(st => {
+      const tomb = st.deletedPartyIds || {};
+      const list = migrateCryptoPosts((Array.isArray(st.parties) && st.parties.length) ? st.parties : [...PARTIES], tomb);
+      const stamp = new Date().toISOString();
+      return { ...st, parties: list.map(p => {
+        if (!(p.id in changes)) return p;
+        const n = { ...p, updatedAt: stamp };
+        if (changes[p.id]) n.address = changes[p.id]; else delete n.address;
+        return n;
+      }) };
+    });
+    app.toast && app.toast('Wallet-adressen opgeslagen');
+  };
+  const cb = app.chainBalances || {};
+  return (
+    <>
+      {posts.map(post => (
+        <Card key={post.id} title={`${post.name} koppelen`} meta="Alleen-lezen">
+          <div className="st-stack">
+            <p className="st-note">Vul alleen je <b>publieke</b> ontvangstadressen in (Coinbase Wallet → Ontvangen). Deel nooit je herstelzin (seed phrase) of private key: die heeft deze app niet nodig. Saldi komen van mempool.space (BTC) en een publieke Ethereum-node (ETH, alleen mainnet).</p>
+            {leavesOf(post.id).map(l => {
+              const meta = CRYPTO_COIN_BY_KEY[l.coin] || {};
+              const saved = rawParty(l.id).address || '';
+              const st = saved ? cb[l.id] : null;
+              const sm = (model.byId || {})[l.id];
+              const diff = sm && sm.bookedQuantity != null ? (+sm.quantity || 0) - (+sm.bookedQuantity || 0) : 0;
+              const id = 'st-addr-' + l.id;
+              return (
+                <div className="st-wcoin" key={l.id}>
+                  <Field label={`${meta.label || l.coin}-adres (${l.coin})`} htmlFor={id} error={errs[l.id]}>
+                    <Input id={id} className="st-addr" value={addrs[l.id] || ''} spellCheck={false} autoComplete="off" autoCapitalize="off"
+                      placeholder={l.coin === 'BTC' ? 'bc1q…' : '0x…'} data-testid={id}
+                      onChange={e => { const v = e.target.value; setAddrs(a => ({ ...a, [l.id]: v })); }} />
+                  </Field>
+                  {saved && (
+                    <div className="st-wline" aria-live="polite">
+                      {st && st.checkedAt
+                        ? <span>Saldo <b>{fmtQty(+st.qty || 0, l.coin, { decimals: 8 })}</b> · gecontroleerd {fmtRelDay(st.checkedAt.slice(0, 10))} {fmtTime(st.checkedAt)}</span>
+                        : <span>{app.chainLoading ? 'Saldo ophalen…' : 'Nog geen saldo opgehaald'}</span>}
+                      {st && st.error && <span className="st-status st-status--err">⚠ {st.error}</span>}
+                      {sm && sm.bookedQuantity != null && Math.abs(diff) > 1e-9 && (
+                        <span className="st-status st-status--err">Verschil met boekingen {diff > 0 ? '+' : '−'}{fmtQty(Math.abs(diff), l.coin, { decimals: 8 })}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div className="st-row">
+              <Button variant="primary" icon="check" disabled={hasErr || !changed.length} onClick={save} data-testid="st-wallet-save">Opslaan</Button>
+              <Button icon={app.chainLoading ? 'loader' : 'refresh-cw'} disabled={!anyAddr || !!app.chainLoading}
+                onClick={() => app.refreshChain && app.refreshChain({ force: true })}>Saldo nu ophalen</Button>
+            </div>
+            <p className="st-note">Het on-chain saldo is leidend voor het aantal coins in {post.name}; de kostprijs komt uit je boekingen (koop en overboekingen). Bij een verschil zie je een melding. Saldi worden elke 5 minuten en bij handmatig verversen van de koersen opnieuw opgehaald.</p>
+          </div>
+        </Card>
+      ))}
+    </>
+  );
+}
+
 function StSync({ app }) {
   const [showKey, setShowKey] = React.useState(false);
   const s = app.syncStatus || {};
@@ -492,6 +581,7 @@ function StSectionBody({ app, section }) {
   switch (section) {
     case 'overzicht': return <StOverzicht app={app} />;
     case 'koersen': return <StKoersen app={app} />;
+    case 'wallet': return <StWallet app={app} />;
     case 'sync': return <StSync app={app} />;
     case 't212': return <StT212 app={app} />;
     case 'partijen': return <StPartijen app={app} />;

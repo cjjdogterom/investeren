@@ -76,7 +76,7 @@ injectStyles('tabs', `
 `);
 
 const TR_MAIN_TYPES = ['inleg', 'koop', 'verkoop', 'opname', 'waardering'];
-const TR_MORE_TYPES = ['dividend', 'rente', 'kosten', 'cashback'];
+const TR_MORE_TYPES = ['dividend', 'rente', 'kosten', 'overboeking', 'cashback'];
 const TR_PERIODS = [{ value: 'alles', label: 'Alles' }, { value: 'jaar', label: 'Dit jaar' }, { value: '12m', label: 'Laatste 12 maanden' }];
 const TR_ORPHAN = '__orphan';
 const TR_PAGE_MONTHS = 6;
@@ -383,6 +383,15 @@ function TransactiesScreen({ app }) {
   const all = (app.state && app.state.transactions) || [];
   const parties = (app.model && app.model.parties) || [];
   const byId = React.useMemo(() => Object.fromEntries(parties.map(p => [p.id, p])), [parties]);
+  // Sub-holdings (finst-btc) tellen onder hun post (Finst); een overboeking hoort bij beide posten.
+  const postOfLeaf = (app.model && app.model.postOfLeaf) || {};
+  const dispId = id => postOfLeaf[id] || id;
+  const txPostIds = t => {
+    const a = dispId(t.party);
+    if (t.type !== 'overboeking' || !t.toParty) return [a];
+    const b = dispId(t.toParty);
+    return b === a ? [a] : [a, b];
+  };
   const selParties = trSplit(q.partij);
   const selTypes = trSplit(q.type);
   const periode = ['jaar', '12m'].includes(q.periode) ? q.periode : 'alles';
@@ -420,12 +429,12 @@ function TransactiesScreen({ app }) {
     const needle = (q.q || '').trim().toLowerCase();
     const from = periode === 'jaar' ? `${today.slice(0, 4)}-01-01` : periode === '12m' ? addDaysIso(today, -365) : null;
     return all.filter(t => {
-      const orphan = !byId[t.party];
-      if (selParties.length && !selParties.includes(orphan ? TR_ORPHAN : t.party)) return false;
+      const orphan = !byId[dispId(t.party)];
+      if (selParties.length && !(orphan ? selParties.includes(TR_ORPHAN) : txPostIds(t).some(id => selParties.includes(id)))) return false;
       if (selTypes.length && !selTypes.includes(t.type)) return false;
       if (from && !(t.date > from || (periode === 'jaar' && t.date >= from))) return false;
       if (needle) {
-        const hay = [(byId[t.party] || {}).name || t.party, t.note, t.instrument].filter(Boolean).join(' ').toLowerCase();
+        const hay = [...txPostIds(t).map(id => (byId[id] || {}).name || id), (trPartyOf(app, t.party) || {}).name, t.note, t.instrument].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
@@ -447,8 +456,8 @@ function TransactiesScreen({ app }) {
 
   const groups = React.useMemo(() => {
     const sorted = trSort(filtered);
-    const orphans = sorted.filter(t => !byId[t.party]);
-    const rest = sorted.filter(t => byId[t.party]);
+    const orphans = sorted.filter(t => !byId[dispId(t.party)]);
+    const rest = sorted.filter(t => byId[dispId(t.party)]);
     const map = new Map();
     for (const t of rest) {
       const k = (t.date || '').slice(0, 7);
@@ -467,7 +476,10 @@ function TransactiesScreen({ app }) {
   // Filter option lists
   const counts = React.useMemo(() => {
     const c = {};
-    for (const t of all) { const k = byId[t.party] ? t.party : TR_ORPHAN; c[k] = (c[k] || 0) + 1; }
+    for (const t of all) {
+      if (!byId[dispId(t.party)]) { c[TR_ORPHAN] = (c[TR_ORPHAN] || 0) + 1; continue; }
+      for (const k of txPostIds(t)) c[k] = (c[k] || 0) + 1;
+    }
     return c;
   }, [all, byId]);
   const partyOptions = [

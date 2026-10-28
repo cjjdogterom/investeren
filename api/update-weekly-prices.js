@@ -7,6 +7,8 @@ const PARTIES = [
   { id: 'meesman', unit: 'part', priceAsset: 'meesman_aandelen_wereldwijd_totaal' },
   { id: 'finst-btc', unit: 'crypto', priceAsset: 'btc_eur' },
   { id: 'finst-eth', unit: 'crypto', priceAsset: 'eth_eur' },
+  { id: 'wallet-btc', unit: 'crypto', priceAsset: 'btc_eur' },
+  { id: 'wallet-eth', unit: 'crypto', priceAsset: 'eth_eur' },
   { id: 'finst-paxg', unit: 'crypto', priceAsset: 'paxg_eur' },
   { id: 'finst-top25', unit: 'bundle' },
   { id: 'goldrepublic', unit: 'mixed', isMixed: true },
@@ -333,7 +335,10 @@ function rowToTx(r) {
     metalType: r.metal_type || null,
     silverUnit: r.silver_unit || null,
     goldUnit: r.gold_unit || null,
-    valueEur: r.value_eur == null ? null : +r.value_eur,
+    // Overboeking (crypto tussen posten): instrument = doel-sub-holding, value_eur = netwerkkosten in coin.
+    valueEur: r.type === 'overboeking' || r.value_eur == null ? null : +r.value_eur,
+    toParty: r.type === 'overboeking' ? (r.instrument || null) : undefined,
+    feeQty: r.type === 'overboeking' && r.value_eur != null ? +r.value_eur : undefined,
   };
 }
 
@@ -390,6 +395,17 @@ function calculatePortfolioValue(date, transactions, history, parties = PARTIES)
     .filter(t => t.date <= date)
     .sort((a, b) => a.date.localeCompare(b.date))
     .forEach(t => {
+      if (t.type === 'overboeking') {
+        // Verplaatst aantal + pro-rata kostprijs; netwerkkosten (feeQty) gaan extra af bij de bron.
+        const src = state[t.party];
+        const dst = state[t.toParty];
+        const out = (+t.quantity || 0) + (+t.feeQty || 0);
+        const avg = src && src.qty > 0 ? src.cost / src.qty : 0;
+        const moved = src ? Math.min(src.cost, out * avg) : 0;
+        if (src) { src.qty = Math.max(0, src.qty - out); src.cost = Math.max(0, src.cost - moved); }
+        if (dst) { dst.qty += +t.quantity || 0; dst.cost += moved; }
+        return;
+      }
       const p = partyMap[t.party];
       const s = state[t.party];
       if (!p || !s) return;

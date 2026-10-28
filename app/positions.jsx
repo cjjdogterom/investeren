@@ -117,6 +117,15 @@ injectStyles('positions', `
 .ps-kgrid dd { margin: 0; font: 600 15px/20px var(--font); font-variant-numeric: tabular-nums; }
 .ps-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 12px; border-radius: var(--r-2); background: var(--surface-2); font-size: 12.5px; color: var(--fg-muted); }
 .ps-strip b { color: var(--fg); font-weight: 550; font-variant-numeric: tabular-nums; }
+.ps-coins { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-2); overflow: hidden; }
+.ps-coin { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 12px; }
+.ps-coin + .ps-coin { border-top: 1px solid var(--border); }
+.ps-coin__name { font: 600 14px/20px var(--font); }
+.ps-coin__sub { font-size: 12.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ps-coin__end { text-align: right; display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.ps-coin__val { font: 600 14px/20px var(--font); }
+.ps-coin__chain { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--fg-muted); }
+.ps-coin__warn { color: var(--warn); display: inline-flex; align-items: center; gap: 4px; }
 .ps-pgoal { display: flex; flex-direction: column; gap: 6px; }
 .ps-pgoal__row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--fg-muted); }
 .ps-pgoal__track { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
@@ -740,6 +749,55 @@ function PsHoldingStrip({ s, spots }) {
   return <div className="ps-strip">{items}</div>;
 }
 
+// Per-coin uitsplitsing van een crypto-post (Finst / Wallet), incl. on-chain status voor self-custody.
+function PsPostCoins({ app, s }) {
+  const privacy = !!(app.prefs && app.prefs.privacy);
+  const leaves = s.leaves || [];
+  if (!leaves.length) return null;
+  const cb = app.chainBalances || {};
+  return (
+    <div>
+      <div className="ps-sec-head" style={{ marginBottom: 8 }}><h3 className="ps-sec-title">Per coin</h3></div>
+      <div className="ps-coins" data-testid="post-coins">
+        {leaves.map(l => {
+          const p = l.party;
+          const coin = p.unitLabel || p.coin;
+          const meta = CRYPTO_COIN_BY_KEY[p.coin] || {};
+          const chain = p.address ? cb[p.id] : null;
+          const onChain = l.bookedQuantity != null;
+          const diff = onChain ? (+l.quantity || 0) - (+l.bookedQuantity || 0) : 0;
+          return (
+            <div className="ps-coin" key={p.id} data-testid={'post-coin-' + p.id}>
+              <Monogram party={p} size={32} />
+              <div style={{ minWidth: 0 }}>
+                <div className="ps-coin__name">{meta.label || p.name}</div>
+                <div className="ps-coin__sub">{fmtQty(+l.quantity || 0, coin, { decimals: 8 })} · {psUnitPrice(l.currentUnitPrice, '')}</div>
+              </div>
+              <div className="ps-coin__end">
+                <span className="ps-coin__val"><Money value={l.currentValueEur || 0} /></span>
+                <span className={psTone(l.pnl)} style={{ fontSize: 12.5 }}>{privacy ? '€ •••••' : fmtMoney(l.pnl || 0, { sign: true })}</span>
+              </div>
+              {p.address && (
+                <div className="ps-coin__chain">
+                  {chain && chain.checkedAt
+                    ? <span><Icon name="link" size={12} /> On-chain · gecontroleerd {fmtRelDay(chain.checkedAt.slice(0, 10))} {fmtTime(chain.checkedAt)}</span>
+                    : <span><Icon name="link" size={12} /> On-chain · nog niet opgehaald</span>}
+                  {chain && chain.error && <span className="ps-coin__warn"><Icon name="circle-alert" size={12} />{chain.error}{chain.checkedAt ? ' (laatste saldo getoond)' : ''}</span>}
+                  {onChain && Math.abs(diff) > 1e-9 && (
+                    <span className="ps-coin__warn" title="Het on-chain saldo is leidend voor het aantal; boek ontbrekende overboekingen of kosten om de kostprijs te laten kloppen.">
+                      <Icon name="triangle-alert" size={12} />Verschil met boekingen {diff > 0 ? '+' : '−'}{fmtQty(Math.abs(diff), coin, { decimals: 8 })}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PsPartyBody({ app, s }) {
   const { model, prefs, spots } = app;
   const p = s.party;
@@ -758,8 +816,9 @@ function PsPartyBody({ app, s }) {
   const hasChart = primary.length >= 2 && primary.some(v => Math.abs(v) > 0.5);
   const cg = cagrOf(s);
   const gp = goalProgress(s);
-  const txs = useMemo(() => app.state.transactions.filter(t => t.party === id)
-    .slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')), [app.state.transactions, id]);
+  // s.transactions bevat ook inkomende overboekingen en, bij een crypto-post, de boekingen van alle coins.
+  const txs = useMemo(() => (s.transactions || [])
+    .slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')), [s.transactions]);
   const ci = cursor != null && cursor < chartDates.length ? cursor : null;
   const shown = ci != null ? primary[ci] : s.currentValueEur;
   const shownNet = ci != null && secondary ? secondary[ci] : (s.costBasis - s.realizedPnl);
@@ -798,7 +857,7 @@ function PsPartyBody({ app, s }) {
           ? <div><dt>Via cashback</dt><dd><Money value={s.totalCashback || 0} /></dd></div>
           : <div><dt>Dividend en rente</dt><dd><Money value={s.totalIncome || 0} /></dd></div>}
       </dl>
-      {s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />}
+      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
       {gp && (
         <div className="ps-pgoal">
           <div className="ps-pgoal__row"><span>Doel</span><span className="num">{fmtPct(gp.pct, { decimals: 0, sign: false })} · {privacy && !['gram', 'ounce'].includes(p.unit) ? '€ •••••' : gp.label}</span></div>
@@ -815,7 +874,7 @@ function PsPartyBody({ app, s }) {
         {txs.length === 0
           ? <EmptyState icon="receipt" title="Nog geen transacties" body="Voeg een inleg, koop of waardering toe."
               action={{ label: 'Transactie toevoegen', onClick: () => app.openTx({ party: id }) }} />
-          : (window.TxList ? <TxList app={app} txs={txs} variant="party" showParty={false} limit={allTx ? undefined : 12} /> : null)}
+          : (window.TxList ? <TxList app={app} txs={txs} variant="party" showParty={p.unit === 'post'} limit={allTx ? undefined : 12} /> : null)}
         {txs.length > 12 && !allTx && (
           <Button variant="ghost" full onClick={() => setAllTx(true)} style={{ marginTop: 8 }}>Toon alle {txs.length} transacties</Button>
         )}
@@ -856,9 +915,12 @@ function PsPanelMenu({ app, party }) {
 function PartyPanel({ app, partyId, onClose, asPage = false }) {
   const s = app.model.byId[partyId];
   const close = onClose || (() => app.navigate('/posities'));
+  const isPost = !!(s && s.party.unit === 'post');
   const footer = s ? (
     <div className="ps-pfoot">
-      <Button variant="secondary" icon="diamond" onClick={() => app.openTx({ party: partyId, type: 'waardering' })}>Waarde bijwerken</Button>
+      {isPost
+        ? <Button variant="secondary" icon="arrow-left-right" onClick={() => app.openTx({ party: partyId, type: 'overboeking' })}>Overboeking</Button>
+        : <Button variant="secondary" icon="diamond" onClick={() => app.openTx({ party: partyId, type: 'waardering' })}>Waarde bijwerken</Button>}
       <Button variant="primary" icon="plus" onClick={() => app.openTx({ party: partyId })}>Transactie</Button>
     </div>
   ) : null;
@@ -948,7 +1010,9 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
   const cls = ASSET_CLASS_BY_KEY[assetClassOf({ category: finalCategory })];
   const nameOk = form.name.trim().length > 0;
   const valid = nameOk && finalCategory.length > 0;
-  const txCount = party ? app.state.transactions.filter(t => t.party === party.id).length : 0;
+  const isPost = !!(party && party.unit === 'post');
+  const ownIds = party ? new Set([party.id, ...((app.model && app.model.leavesByPost && app.model.leavesByPost[party.id]) || []).map(l => l.id)]) : new Set();
+  const txCount = party ? app.state.transactions.filter(t => ownIds.has(t.party)).length : 0;
 
   const setUnit = value => {
     const opt = PARTY_UNIT_OPTIONS.find(o => o.value === value);
@@ -975,6 +1039,7 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
     };
     delete p.includeInPortfolio;
     if (form.unit === 'crypto' && form.spotKey) p.spotKey = form.spotKey; else delete p.spotKey;
+    if (isPost) { p.unit = 'post'; p.unitLabel = party.unitLabel || '€'; p.isMixed = false; }
     app.saveParty(p);
     onClose && onClose();
   };
@@ -1035,6 +1100,9 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
               <Input id="ps-f-newcat" value={form.customCategory} onChange={e => set('customCategory', e.target.value)} aria-describedby="ps-f-newcat-hint" autoComplete="off" />
             </Field>
           )}
+          {isPost ? (
+            <p className="ps-classline" style={{ margin: 0 }}>Crypto-post: waarde = som van de coins (BTC, ETH) × live koers.{party.selfCustody ? ' Publieke adressen stel je in bij Instellingen → Wallet.' : ''}</p>
+          ) : (<>
           <Field label="Waarderingsmethode" htmlFor="ps-f-unit">
             <Select id="ps-f-unit" value={form.unit} onChange={e => setUnit(e.target.value)}>
               {PARTY_UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1047,10 +1115,13 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
               </Select>
             </Field>
           )}
+          </>)}
           <div className="ps-form__row">
+            {!isPost && (
             <Field label="Eenheid label" htmlFor="ps-f-ul">
               <Input id="ps-f-ul" value={form.unitLabel} onChange={e => set('unitLabel', e.target.value)} autoComplete="off" />
             </Field>
+            )}
             <Field label="Doel (€ of eenheden)" htmlFor="ps-f-goal" hint="€ voor waarde-partijen, gram/ounce voor metaal">
               <Input id="ps-f-goal" inputMode="decimal" value={form.goal} onChange={e => set('goal', e.target.value)} aria-describedby="ps-f-goal-hint" placeholder="0" autoComplete="off" />
             </Field>

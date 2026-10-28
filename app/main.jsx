@@ -99,7 +99,12 @@ async function supabaseSelectAll(makeQuery, pageSize = 1000) {
 // camelCase <-> snake_case helpers voor de transactions tabel
 let transactionUpdatedAtColumnAvailable = true;
 
+// Overboeking (crypto tussen posten) gebruikt bestaande kolommen, zonder schemawijziging:
+//   instrument ← toParty (doel-sub-holding, bv. 'wallet-btc'; instrument is alleen voor Trading 212 in gebruik)
+//   value_eur  ← feeQty  (netwerkkosten in coin; value_eur is alleen voor waarderingen in gebruik)
+// rowToTx zet dit voor type 'overboeking' weer terug, zodat de velden lossless round-trippen.
 function txToRow(t, includeUpdatedAt = true) {
+  const isTransfer = t.type === 'overboeking';
   const row = {
     id:             t.id,
     party:          t.party,
@@ -113,9 +118,11 @@ function txToRow(t, includeUpdatedAt = true) {
     metal_type:     t.metalType    || null,
     silver_unit:    t.silverUnit   || null,
     gold_unit:      t.goldUnit     || null,
-    instrument:     t.instrument   || null,
+    instrument:     isTransfer ? (t.toParty || null) : (t.instrument || null),
     t212_id:        t._t212Id      || null,
-    value_eur:      t.valueEur     != null ? +t.valueEur     : null,
+    value_eur:      isTransfer
+      ? (t.feeQty != null && t.feeQty !== '' ? +t.feeQty : null)
+      : (t.valueEur != null ? +t.valueEur : null),
   };
   if (includeUpdatedAt && t.updatedAt) row.updated_at = t.updatedAt;
   return row;
@@ -131,9 +138,14 @@ function rowToTx(r) {
   if (r.metal_type)             t.metalType    = r.metal_type;
   if (r.silver_unit)            t.silverUnit   = r.silver_unit;
   if (r.gold_unit)              t.goldUnit     = r.gold_unit;
-  if (r.instrument)             t.instrument   = r.instrument;
   if (r.t212_id)                t._t212Id      = r.t212_id;
-  if (r.value_eur      != null) t.valueEur     = +r.value_eur;
+  if (r.type === 'overboeking') {
+    if (r.instrument)           t.toParty      = r.instrument;
+    if (r.value_eur    != null) t.feeQty       = +r.value_eur;
+  } else {
+    if (r.instrument)           t.instrument   = r.instrument;
+    if (r.value_eur    != null) t.valueEur     = +r.value_eur;
+  }
   if (r.updated_at || r.created_at) t.updatedAt = r.updated_at || r.created_at;
   return t;
 }
@@ -380,6 +392,49 @@ async function fetchCryptoPrices() {
   };
 }
 
+// On-chain saldo van een PUBLIEK adres (alleen-lezen; nooit seed phrase of private key).
+// BTC: mempool.space (bevestigd saldo = funded − spent). ETH: publieke JSON-RPC (eth_getBalance), met fallback.
+async function fetchChainBalance(coin, address) {
+  const timeout = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+  if (coin === 'BTC') {
+    const res = await fetch(`https://mempool.space/api/address/${encodeURIComponent(address)}`, { cache: 'no-store', signal: timeout(12000) });
+    if (res.status === 400) throw new Error('Ongeldig BTC-adres');
+    if (!res.ok) throw new Error(`mempool.space gaf ${res.status}`);
+    const j = await res.json();
+    const cs = j.chain_stats || {};
+    const sats = (+cs.funded_txo_sum || 0) - (+cs.spent_txo_sum || 0);
+    return sats / 1e8;
+  }
+  if (coin === 'ETH') {
+    const endpoints = ['https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com'];
+    let lastErr = null;
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', signal: timeout(12000),
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }),
+        });
+        if (!res.ok) throw new Error(`RPC gaf ${res.status}`);
+        const j = await res.json();
+        if (j.error) throw new Error(j.error.message || 'RPC-fout');
+        if (typeof j.result !== 'string' || !/^0x[0-9a-f]*$/i.test(j.result)) throw new Error('Ongeldig RPC-antwoord');
+        const wei = BigInt(j.result === '0x' ? '0x0' : j.result);
+        return Number(wei / BigInt(1000000000)) / 1e9; // wei → gwei (exact) → ETH
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('ETH-saldo ophalen mislukt');
+  }
+  throw new Error(`Onbekende coin ${coin}`);
+}
+
+// Cache van on-chain saldi: per apparaat (niet gesynchroniseerd), zodat de app direct een waarde heeft.
+const CHAIN_CACHE_KEY = 'investeringen-chain-v1';
+const CHAIN_REFRESH_MS = 5 * 60 * 1000;
+function loadChainCache() {
+  try { const v = JSON.parse(localStorage.getItem(CHAIN_CACHE_KEY)); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+  catch (e) { return {}; }
+}
+
 // Haal 1 jaar dagelijkse crypto-prijzen op (vul history bij eerste gebruik)
 async function fetchCryptoHistory() {
   const toDays = prices => prices
@@ -583,9 +638,9 @@ function mapT212Valuation(account) {
 
 
 // ── Routing (S1) ──────────────────────────────────────────────
-const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
+const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
 const SH_SECTION_TITLES = {
-  weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', sync: 'Synchronisatie', t212: 'Trading 212',
+  weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', wallet: 'Wallet', sync: 'Synchronisatie', t212: 'Trading 212',
   partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over',
 };
 const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
@@ -1046,6 +1101,13 @@ function App() {
   const tweaks = state.tweaks || {};
   const [liveSpot, setLiveSpot]     = React.useState({});
   const [spotStatus, setSpotStatus] = React.useState({ loading: false, error: null, fetchedAt: null });
+  const [chainBalances, setChainBalances] = React.useState(loadChainCache);
+  const [chainLoading, setChainLoading] = React.useState(false);
+  const chainBalancesRef = React.useRef(chainBalances);
+  chainBalancesRef.current = chainBalances;
+  const chainTargetsRef = React.useRef([]);
+  const refreshChainRef = React.useRef(null);
+  React.useEffect(() => { try { localStorage.setItem(CHAIN_CACHE_KEY, JSON.stringify(chainBalances)); } catch (e) { /* ignore */ } }, [chainBalances]);
   const [t212Status, setT212Status] = React.useState({ loading: false, error: null, imported: 0, done: false });
   const [importMsg, setImportMsg]   = React.useState(null);
   const [supabaseConfig, setSupabaseConfig] = React.useState(loadSupabaseConfig);
@@ -1120,8 +1182,8 @@ function App() {
 
       const mergedDeletedPartyIds = mergeDeletedIds(remote.deletedPartyIds, s.deletedPartyIds);
       const hasPartyTombstones = Object.keys(mergedDeletedPartyIds).length > 0;
-      const mergedParties = normalizeParties(mergeByNewest(remote.parties, s.parties))
-        .filter(p => !isDeletedByTombstone(p, mergedDeletedPartyIds));
+      const mergedParties = migrateCryptoPosts(normalizeParties(mergeByNewest(remote.parties, s.parties))
+        .filter(p => !isDeletedByTombstone(p, mergedDeletedPartyIds)), mergedDeletedPartyIds);
       const mergedTweaks = { ...(s.tweaks || {}), ...(remote.tweaks || {}) };
 
       return {
@@ -1350,6 +1412,8 @@ function App() {
     const manual = options?.manual === true || options?.type === 'click';
     const autoServerRefresh = !manual && claimAutomaticServerPriceRefresh();
     setSpotStatus(s => ({ ...s, loading: true, error: null }));
+    // On-chain wallet-saldi mee verversen (automatisch hooguit elke 5 min, handmatig altijd).
+    if (refreshChainRef.current) refreshChainRef.current({ force: manual });
 
     let serverRefreshFailed = false;
     if (manual || autoServerRefresh) {
@@ -1682,6 +1746,7 @@ function App() {
     meesmanNavResolved, histSig(meesmanHistResolved),
     histSig(state.goldHistory), histSig(state.silverHistory),
     histSig(state.btcHistory), histSig(state.ethHistory), histSig(state.paxgHistory),
+    Object.entries(chainBalances || {}).map(([k, v]) => `${k}:${v && v.address}:${v && v.qty}`).join(','),
   ].join('|');
   const spots = React.useMemo(() => ({
     goldSpotEurPerGram:    displayTweaks.goldSpotEurPerGram,
@@ -1697,16 +1762,64 @@ function App() {
     btcHistory:            state.btcHistory    || [],
     ethHistory:            state.ethHistory    || [],
     paxgHistory:           state.paxgHistory   || [],
+    chainBalances:         chainBalances || {},
   }), [spotsKey]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.
   const allParties = React.useMemo(() => {
     const list = state.parties; const tomb = state.deletedPartyIds || {};
-    return (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? list : PARTIES;
+    return (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? migrateCryptoPosts(list, tomb) : PARTIES;
   }, [state.parties, state.deletedPartyIds]);
   const allPartiesRef = React.useRef(allParties);
   allPartiesRef.current = allParties;
+
+  // ── On-chain saldi (alleen-lezen, publieke adressen van self-custody sub-holdings) ──
+  const chainTargets = React.useMemo(() => allParties
+    .filter(p => p && p.unit === 'crypto' && p.postId && p.address && CRYPTO_COIN_BY_KEY[p.coin])
+    .map(p => ({ id: p.id, coin: p.coin, address: String(p.address).trim() })), [allParties]);
+  chainTargetsRef.current = chainTargets;
+  const chainSig = chainTargets.map(t => t.id + ':' + t.address).join('|');
+  const refreshChain = React.useCallback(async ({ force = false } = {}) => {
+    const targets = chainTargetsRef.current;
+    const cache = chainBalancesRef.current || {};
+    if (Object.keys(cache).some(id => !targets.some(t => t.id === id && t.address === (cache[id] || {}).address))) {
+      setChainBalances(prev => Object.fromEntries(Object.entries(prev).filter(([id, v]) => targets.some(t => t.id === id && t.address === (v || {}).address))));
+    }
+    const now = Date.now();
+    const due = targets.filter(t => {
+      const c = cache[t.id];
+      if (force || !c || c.address !== t.address) return true;
+      return now - (Date.parse(c.attemptAt || c.checkedAt || '') || 0) > CHAIN_REFRESH_MS;
+    });
+    if (!due.length) return;
+    setChainLoading(true);
+    const results = await Promise.all(due.map(async t => {
+      const attemptAt = new Date().toISOString();
+      const invalid = validateChainAddress(t.coin, t.address);
+      if (invalid) return { id: t.id, address: t.address, error: invalid, attemptAt };
+      try {
+        const qty = await fetchChainBalance(t.coin, t.address);
+        return { id: t.id, address: t.address, qty, checkedAt: attemptAt, attemptAt, error: null };
+      } catch (e) {
+        const msg = e && e.name === 'TimeoutError' ? 'Time-out bij ophalen van het saldo'
+          : (e instanceof TypeError ? 'Saldo-dienst niet bereikbaar' : ((e && e.message) || 'Ophalen mislukt'));
+        return { id: t.id, address: t.address, error: msg, attemptAt };
+      }
+    }));
+    setChainBalances(prev => {
+      const next = { ...prev };
+      for (const r of results) {
+        const old = prev[r.id] && prev[r.id].address === r.address ? prev[r.id] : {};
+        next[r.id] = r.error ? { ...old, address: r.address, error: r.error, attemptAt: r.attemptAt } : { address: r.address, qty: r.qty, checkedAt: r.checkedAt, attemptAt: r.attemptAt, error: null };
+        delete next[r.id].id;
+      }
+      return next;
+    });
+    setChainLoading(false);
+  }, []);
+  refreshChainRef.current = refreshChain;
+  React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
   const summaries   = React.useMemo(() => allParties.map(p => summarizeParty(p, state.transactions, spots)), [state.transactions, allParties, spots]);
   const flows       = React.useMemo(() => buildFlowSeries(state.transactions, allParties), [state.transactions, allParties]);
   const valueSeries = React.useMemo(() => buildPartyTimeSeries(state.transactions, allParties, spots), [state.transactions, allParties, spots]);
@@ -1909,12 +2022,16 @@ function App() {
       const stamp = new Date().toISOString();
       const tomb = s.deletedPartyIds || {};
       const list = (Array.isArray(s.parties) && (s.parties.length || Object.keys(tomb).length)) ? s.parties : [...PARTIES];
-      const next = { ...s, parties: list.filter(p => p.id !== id), deletedPartyIds: { ...tomb, [id]: stamp } };
+      // Crypto-post: verwijder ook de coin-sub-holdings (anders zou de migratie ze los laten staan).
+      const ids = new Set([id, ...list.filter(p => p.postId === id).map(p => p.id)]);
+      const partyTomb = { ...tomb };
+      ids.forEach(x => { partyTomb[x] = stamp; });
+      const next = { ...s, parties: list.filter(p => !ids.has(p.id)), deletedPartyIds: partyTomb };
       if (deleteTransactions) {
         const prevDeleted = s.deletedTransactionIds || {};
         const tombstones = { ...prevDeleted };
-        for (const t of (s.transactions || [])) if (t.party === id) tombstones[t.id] = stamp;
-        next.transactions = (s.transactions || []).filter(t => t.party !== id);
+        for (const t of (s.transactions || [])) if (ids.has(t.party)) tombstones[t.id] = stamp;
+        next.transactions = (s.transactions || []).filter(t => !ids.has(t.party));
         next.deletedTransactionIds = tombstones;
       }
       return next;
@@ -1961,6 +2078,7 @@ function App() {
   const app = React.useMemo(() => ({
     state, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
+    chainBalances, chainLoading, refreshChain,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
@@ -1968,6 +2086,7 @@ function App() {
     overlayOpen: overlay !== null, confirm: confirmFn, toast,
   }), [state, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
+    chainBalances, chainLoading, refreshChain,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
