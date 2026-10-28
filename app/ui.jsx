@@ -520,6 +520,15 @@ function Delta({ format, ...props }) {
 
 function Monogram({ party, size = 32, closed = false, className, style }) {
   const color = partyColorOf(party);
+  const logo = typeof partyLogo === 'function' ? partyLogo(party) : null;
+  const [failed, setFailed] = React.useState(null);
+  if (logo && failed !== logo) {
+    return (
+      <span aria-hidden="true" className={uiCx('monogram monogram--logo', size !== 32 && `monogram--${size}`, closed && 'monogram--closed', className)} style={style}>
+        <img src={logo} alt="" draggable="false" decoding="async" onError={() => setFailed(logo)} />
+      </span>
+    );
+  }
   const tint = closed ? null : {
     background: `color-mix(in srgb, ${color} 16%, var(--surface))`,
     boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${color} 40%, transparent)`,

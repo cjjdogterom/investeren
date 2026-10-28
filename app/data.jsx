@@ -1189,6 +1189,25 @@ function monogramOf(party) {
   return words[0].charAt(0).toUpperCase() + (words[0].charAt(1) || '').toLowerCase();
 }
 
+// ----- Logo's per partij (assets/logos/) -----
+// Bestanden '*-tile.*' zijn volledige app-tegels (vullen de hele tile). Op id; eigen (custom_*) partijen matchen op genormaliseerde naam. party.logo (pad of URL) wint altijd.
+const PARTY_LOGOS = {
+  meesman: 'meesman.svg', finst: 'finst.svg', 'finst-top25': 'finst.svg', wallet: 'coinbase-wallet.svg',
+  'finst-paxg': 'paxg.svg', goldrepublic: 'goldrepublic-tile.png', trading212: 't212-tile.png',
+  goud: 'gold-bar.svg', zilver: 'silver-bar.svg',
+  greenmine: 'greenmine.png', greenmining: 'greenmine.png', naoinvest: 'nao.png', nao: 'nao.png', uptomore: 'uptomore-tile.png',
+  coinbase: 'coinbase-wallet.svg', coinbasewallet: 'coinbase-wallet.svg',
+};
+const COIN_LOGOS = { BTC: 'btc.svg', ETH: 'eth.svg', PAXG: 'paxg.svg' };
+
+function partyLogo(party) {
+  if (!party) return null;
+  if (party.logo) return /^(https?:|data:|\/)/.test(party.logo) ? party.logo : assetUrl(party.logo);
+  const nameKey = String(party.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const file = PARTY_LOGOS[party.id] || COIN_LOGOS[String(party.coin || '').toUpperCase()] || PARTY_LOGOS[nameKey];
+  return file ? assetUrl('assets/logos/' + file) : null;
+}
+
 // ----- Holdings helpers -----
 const ATTENTION_THRESHOLDS = { concentrationPct: 40, driftPt: 5, staleDays: 30, navStaleDays: 7, priceStaleHours: 2 };
 
@@ -1928,7 +1947,7 @@ Object.assign(window, {
   unitValuationPoints, totalValuationPoints,
   UI_PREFS_KEY, DEFAULT_UI_PREFS, loadUiPrefs, saveUiPrefs, themeFromLegacy, MQ_MOBILE, MONTHS_NL, MONTHS_NL_LONG,
   fmtMoney, fmtPt, fmtCompact, fmtDateLong, fmtDateShort, fmtAxisMonth, fmtMonthName, fmtTime, fmtRelDay, parseNlNumber,
-  ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf,
+  ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
