@@ -252,7 +252,7 @@ async function supabaseLoadAll(client) {
     supabaseSelectAll(() => client.from('transactions').select('*').order('date', { ascending: true })),
     supabaseSelectAll(() => client.from('asset_price_history').select('asset,date,nav').gte('date', '2025-01-01').order('date', { ascending: true }).order('asset', { ascending: true })),
     supabaseSelectAll(() => client.from('portfolio_daily_values').select('date,total_eur,invested_eur').gte('date', '2025-01-01').order('date', { ascending: true })),
-    // Alleen-lezen: live 'Over deze maand' uit het Financieel Systeem. Wordt nooit teruggeschreven.
+    // Alleen-lezen: live 'Vrij op rekening' uit het Financieel Systeem. Wordt nooit teruggeschreven.
     Promise.resolve(client.from('portfolio').select('data').eq('id', 'financieel-over').maybeSingle()).catch(e => ({ data: null, error: e })),
   ]);
 
@@ -1190,7 +1190,7 @@ function App() {
     try { localStorage.setItem(SUPABASE_CFG_KEY, JSON.stringify(supabaseConfig)); } catch {}
   }, [supabaseConfig]);
 
-  // Live 'Over deze maand' (portfolio/financieel-over): los van de gesyncte state, nooit gepusht of geëxporteerd.
+  // Live 'Vrij op rekening' (portfolio/financieel-over): los van de gesyncte state, nooit gepusht of geëxporteerd.
   const [financieelOver, setFinancieelOver] = React.useState(null);
   React.useEffect(() => {
     window.__setFinancieelOver = v => setFinancieelOver(v || null); // dev/test-haak
@@ -1862,7 +1862,7 @@ function App() {
   }, []);
   refreshChainRef.current = refreshChain;
   React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
-  // Oude fin-over-boekingen (Over deze maand) tellen nergens mee: de post is live gewaardeerd.
+  // Oude fin-over-boekingen (Vrij op rekening) tellen nergens mee: de post is live gewaardeerd.
   const valTxs = React.useMemo(() => {
     const all = state.transactions || [];
     return all.some(isFinOverTx) ? all.filter(t => !isFinOverTx(t)) : all;

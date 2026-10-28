@@ -33,11 +33,11 @@ const PARTIES = [
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
   // Live post: waarde komt uit Supabase-rij portfolio/id 'financieel-over' (Financieel Systeem), niet uit transacties.
   // Id blijft 'lopende-rekening' voor compatibiliteit met bestaande, gesyncte partijlijsten.
-  { id: 'lopende-rekening', name: 'Over deze maand', category: 'Liquide', subtitle: 'Financieel · live', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
+  { id: 'lopende-rekening', name: 'Vrij op rekening', category: 'Liquide', subtitle: 'Financieel · live', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
 ];
 const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening'];
 
-// ===== Over deze maand (live uit het Financieel Systeem) =====
+// ===== Vrij op rekening (live uit het Financieel Systeem) =====
 const FIN_OVER_PARTY_ID = 'lopende-rekening';
 const FIN_OVER_STALE_DAYS = 2;
 // Oude maandboekingen (fin-over-JJJJ-MM) en alles op deze post worden genegeerd: de waarde is live.
@@ -73,7 +73,7 @@ function financieelOverSubtitle(fo) {
 // Synthetische samenvatting: waarde = inleg = bedrag → 0 winst, geen invloed op rendement.
 function financieelOverSummary(party, fo) {
   const v = fo.bedrag;
-  const p = Object.assign({}, party, { name: 'Over deze maand', category: 'Liquide', unit: 'eur', unitLabel: '€', subtitle: financieelOverSubtitle(fo) });
+  const p = Object.assign({}, party, { name: 'Vrij op rekening', category: 'Liquide', unit: 'eur', unitLabel: '€', subtitle: financieelOverSubtitle(fo) });
   return {
     party: p, transactions: [],
     quantity: v, costBasis: v, avgCost: null,
@@ -1639,7 +1639,7 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   }
   const dispIdOf = id => postIdx.postOfLeaf[id] || id;
 
-  // Over deze maand: live waarde uit het Financieel Systeem; zonder rij wordt de post verborgen.
+  // Vrij op rekening: live waarde uit het Financieel Systeem; zonder rij wordt de post verborgen.
   transactions = transactions.filter(t => !isFinOverTx(t));
   const foLive = normalizeFinancieelOver(financieelOver);
   if (parties.some(p => p.id === FIN_OVER_PARTY_ID)) {
@@ -1656,7 +1656,7 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   Object.values(leafSummaries).forEach(s => { byId[s.party.id] = s; });
   summaries.forEach(s => { byId[s.party.id] = s; });
   const included = summaries.filter(s => dtIncluded(s.party));
-  // Over deze maand telt mee in totaal/verdeling, maar niet in de waarde-reeks (geen storting, geen rendement).
+  // Vrij op rekening telt mee in totaal/verdeling, maar niet in de waarde-reeks (geen storting, geen rendement).
   const chartIds = summaries.filter(s => dtInChart(s.party) && !s.external).map(s => s.party.id);
   const empty = [], closed = [], open = [];
   for (const s of summaries) {
