@@ -333,6 +333,10 @@ function ovAttentionItems(app) {
     if ((u !== 'bundle' && u !== 'eur') || !(s.currentValueEur > 0)) continue;
     const sub = holdingSubline(s, spots);
     if (sub.staleDays == null) continue;
+    if (s.external) {
+      items.push({ id: 'stale-' + s.party.id, tone: 'warn', icon: 'clock', title: `${s.party.name} · ${sub.staleDays} dagen niet bijgewerkt`, sub: 'Wordt live bijgewerkt door het Financieel Systeem.' });
+      continue;
+    }
     items.push({ id: 'stale-' + s.party.id, tone: 'warn', icon: 'clock', title: `${s.party.name} · waardering ${sub.staleDays} dagen oud`, sub: s.lastValuationDate ? `Laatste waardering ${fmtDateLong(s.lastValuationDate)}` : 'Nog geen waardering', action: { label: 'Bijwerken', onClick: () => app.openTx({ party: s.party.id, type: 'waardering' }) } });
   }
   const total = model.totals.value;

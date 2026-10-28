@@ -306,7 +306,7 @@ function PsMoney({ value, sign = false, className }) {
 function PsSubline({ s, spots }) {
   const sub = holdingSubline(s, spots);
   if (sub.staleDays != null) {
-    return <span className="ps-sub ps-sub--stale"><Icon name="clock" size={12} />Waardering · {sub.staleDays} dagen oud</span>;
+    return <span className="ps-sub ps-sub--stale"><Icon name="clock" size={12} />{s.external ? `${sub.text} · ${sub.staleDays} dagen oud` : `Waardering · ${sub.staleDays} dagen oud`}</span>;
   }
   return <span className="ps-sub">{sub.text}</span>;
 }
@@ -976,7 +976,7 @@ function psPanelSubtitle(s, spots) {
   const cls = ASSET_CLASS_BY_KEY[assetClassOf(p)];
   const parts = [p.category || cls.label];
   const sub = holdingSubline(s, spots);
-  if (s.transactions.length) parts.push(sub.staleDays != null ? `waardering ${sub.staleDays} dagen oud` : sub.text);
+  if (s.transactions.length || s.external) parts.push(sub.staleDays != null ? `waardering ${sub.staleDays} dagen oud` : sub.text);
   if (!psIncluded(p)) parts.push('niet in totaal');
   if (!psInChart(p)) parts.push('niet in grafiek');
   return parts.join(' · ');

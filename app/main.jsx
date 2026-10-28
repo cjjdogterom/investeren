@@ -67,6 +67,9 @@ function getSupabaseClient(cfg) {
 }
 
 const PORTFOLIO_SETTINGS_EXCLUDED_KEYS = new Set([
+  'financieelOver',
+  '_financieelOver',
+  '_financieelOverLoaded',
   'transactions',
   'portfolioDailyValues',
   'goldHistory',
@@ -244,11 +247,13 @@ function priceRowsToState(rows = []) {
 
 // Laad alles uit Supabase: instellingen, transacties en prijs-historie.
 async function supabaseLoadAll(client) {
-  const [portfolioRes, txRes, priceRes, valueRes] = await Promise.all([
+  const [portfolioRes, txRes, priceRes, valueRes, finOverRes] = await Promise.all([
     client.from('portfolio').select('data').eq('id', 'main').maybeSingle(),
     supabaseSelectAll(() => client.from('transactions').select('*').order('date', { ascending: true })),
     supabaseSelectAll(() => client.from('asset_price_history').select('asset,date,nav').gte('date', '2025-01-01').order('date', { ascending: true }).order('asset', { ascending: true })),
     supabaseSelectAll(() => client.from('portfolio_daily_values').select('date,total_eur,invested_eur').gte('date', '2025-01-01').order('date', { ascending: true })),
+    // Alleen-lezen: live 'Over deze maand' uit het Financieel Systeem. Wordt nooit teruggeschreven.
+    Promise.resolve(client.from('portfolio').select('data').eq('id', 'financieel-over').maybeSingle()).catch(e => ({ data: null, error: e })),
   ]);
 
   if (portfolioRes.error && txRes.error && priceRes.error && valueRes.error) {
@@ -282,6 +287,8 @@ async function supabaseLoadAll(client) {
     transactions,
     portfolioDailyValues,
     _transactionsLoaded: transactionsLoaded,
+    _financieelOverLoaded: !(finOverRes && finOverRes.error),
+    _financieelOver: (finOverRes && finOverRes.data && finOverRes.data.data) || null,
   };
 }
 
@@ -1183,6 +1190,12 @@ function App() {
     try { localStorage.setItem(SUPABASE_CFG_KEY, JSON.stringify(supabaseConfig)); } catch {}
   }, [supabaseConfig]);
 
+  // Live 'Over deze maand' (portfolio/financieel-over): los van de gesyncte state, nooit gepusht of geëxporteerd.
+  const [financieelOver, setFinancieelOver] = React.useState(null);
+  React.useEffect(() => {
+    window.__setFinancieelOver = v => setFinancieelOver(v || null); // dev/test-haak
+    return () => { delete window.__setFinancieelOver; };
+  }, []);
   const applyRemoteData = React.useCallback(remoteData => {
     if (!remoteData) {
       transactionsLoadedRef.current = false;
@@ -1191,6 +1204,12 @@ function App() {
     const remote = { ...remoteData };
     const _transactionsLoaded = remote._transactionsLoaded;
     delete remote._transactionsLoaded;
+    if (remote._financieelOverLoaded) {
+      const fo = remote._financieelOver || null;
+      setFinancieelOver(prev => (JSON.stringify(prev) === JSON.stringify(fo) ? prev : fo));
+    }
+    delete remote._financieelOverLoaded;
+    delete remote._financieelOver;
     transactionsLoadedRef.current = _transactionsLoaded !== false;
     setState(s => {
       const meesman = normalizeMeesmanHistory(
@@ -1843,12 +1862,18 @@ function App() {
   }, []);
   refreshChainRef.current = refreshChain;
   React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
-  const summaries   = React.useMemo(() => allParties.map(p => summarizeParty(p, state.transactions, spots)), [state.transactions, allParties, spots]);
-  const flows       = React.useMemo(() => buildFlowSeries(state.transactions, allParties), [state.transactions, allParties]);
-  const valueSeries = React.useMemo(() => buildPartyTimeSeries(state.transactions, allParties, spots), [state.transactions, allParties, spots]);
+  // Oude fin-over-boekingen (Over deze maand) tellen nergens mee: de post is live gewaardeerd.
+  const valTxs = React.useMemo(() => {
+    const all = state.transactions || [];
+    return all.some(isFinOverTx) ? all.filter(t => !isFinOverTx(t)) : all;
+  }, [state.transactions]);
+  const viewState = React.useMemo(() => (valTxs === state.transactions ? state : { ...state, transactions: valTxs }), [state, valTxs]);
+  const summaries   = React.useMemo(() => allParties.map(p => summarizeParty(p, valTxs, spots)), [valTxs, allParties, spots]);
+  const flows       = React.useMemo(() => buildFlowSeries(valTxs, allParties), [valTxs, allParties]);
+  const valueSeries = React.useMemo(() => buildPartyTimeSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const model       = React.useMemo(
-    () => buildPortfolioModel({ parties: allParties, transactions: state.transactions, summaries, flows, valueSeries, spots }),
-    [allParties, state.transactions, summaries, flows, valueSeries, spots]
+    () => buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver }),
+    [allParties, valTxs, summaries, flows, valueSeries, spots, financieelOver]
   );
 
   const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
@@ -2131,7 +2156,7 @@ function App() {
   }, [isMobile, setPrefs, openTx, navigate]);
 
   const app = React.useMemo(() => ({
-    state, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
+    state: viewState, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
@@ -2139,7 +2164,7 @@ function App() {
     saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
     overlayOpen: overlay !== null, confirm: confirmFn, toast,
-  }), [state, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
+  }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
@@ -2151,7 +2176,7 @@ function App() {
   const driftWarn = React.useMemo(() => {
     try { return driftRows(model.summaries, state.targetAllocation).rows.some(r => r.outside); } catch (e) { return false; }
   }, [model, state.targetAllocation]);
-  const counts = { open: model.totals?.openCount ?? (model.open || []).length, tx: (state.transactions || []).length };
+  const counts = { open: model.totals?.openCount ?? (model.open || []).length, tx: (viewState.transactions || []).length };
 
   const ov = overlay || {};
   const screen = (

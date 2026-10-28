@@ -31,12 +31,60 @@ const PARTIES = [
   { id: 'goud',         name: 'Fysiek Goud',   category: 'Edelmetaal',   subtitle: 'Eigen bezit — gram',       color: 'oklch(75% 0.15 70)',  unit: 'gram',  unitLabel: 'g',     goal: 20 },
   { id: 'zilver',       name: 'Fysiek Zilver', category: 'Edelmetaal',   subtitle: 'Eigen bezit — ounce',      color: 'oklch(70% 0.03 240)', unit: 'ounce', unitLabel: 'oz',    goal: 30 },
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
-  // Gevuld door het Financieel Systeem: per afgesloten maand (vanaf okt 2026) het bedrag dat overbleef,
-  // als inleg/opname met id 'fin-over-JJJJ-MM'. Waarde = opgetelde maandoverschotten.
-  { id: 'lopende-rekening', name: 'Lopende rekening', category: 'Liquide', subtitle: 'Maandoverschot uit Financieel Systeem', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
+  // Live post: waarde komt uit Supabase-rij portfolio/id 'financieel-over' (Financieel Systeem), niet uit transacties.
+  // Id blijft 'lopende-rekening' voor compatibiliteit met bestaande, gesyncte partijlijsten.
+  { id: 'lopende-rekening', name: 'Over deze maand', category: 'Liquide', subtitle: 'Financieel · live', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
 ];
-// Posten die altijd in de partijlijst moeten staan (ook bij een bestaande, gesyncte lijst), tenzij verwijderd.
 const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening'];
+
+// ===== Over deze maand (live uit het Financieel Systeem) =====
+const FIN_OVER_PARTY_ID = 'lopende-rekening';
+const FIN_OVER_STALE_DAYS = 2;
+// Oude maandboekingen (fin-over-JJJJ-MM) en alles op deze post worden genegeerd: de waarde is live.
+function isFinOverTx(t) {
+  return !!t && (String(t.id || '').indexOf('fin-over-') === 0 || t.party === FIN_OVER_PARTY_ID || t.toParty === FIN_OVER_PARTY_ID);
+}
+function normalizeFinancieelOver(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const bedrag = typeof raw.bedrag === 'number' ? raw.bedrag : parseFloat(raw.bedrag);
+  if (!Number.isFinite(bedrag)) return null;
+  return {
+    bedrag,
+    maand: typeof raw.maand === 'string' ? raw.maand : null,
+    label: typeof raw.label === 'string' ? raw.label : null,
+    asOf: typeof raw.asOf === 'string' ? raw.asOf : null,
+    bron: raw.bron || 'financieel',
+  };
+}
+function financieelOverStaleDays(fo, now = Date.now()) {
+  const t = fo && fo.asOf ? Date.parse(fo.asOf) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const days = Math.floor((now - t) / 86400000);
+  return days > FIN_OVER_STALE_DAYS ? days : null;
+}
+function financieelOverSubtitle(fo) {
+  const pm = fo && fo.maand ? /^(\d{4})-(\d{2})/.exec(fo.maand) : null;
+  const maand = pm ? `${MONTHS_NL_LONG[+pm[2] - 1] || pm[2]} ${pm[1]}` : null;
+  const parts = ['Financieel'];
+  if (maand) parts.push(maand);
+  if (fo && fo.asOf) parts.push(`bijgewerkt ${fmtTime(fo.asOf)}`);
+  return parts.join(' · ');
+}
+// Synthetische samenvatting: waarde = inleg = bedrag → 0 winst, geen invloed op rendement.
+function financieelOverSummary(party, fo) {
+  const v = fo.bedrag;
+  const p = Object.assign({}, party, { name: 'Over deze maand', category: 'Liquide', unit: 'eur', unitLabel: '€', subtitle: financieelOverSubtitle(fo) });
+  return {
+    party: p, transactions: [],
+    quantity: v, costBasis: v, avgCost: null,
+    currentUnitPrice: 1, currentValueEur: v,
+    invested: v, lastValuationDate: fo.asOf ? fo.asOf.slice(0, 10) : null,
+    totalDividend: 0, totalFees: 0, totalIncome: 0, totalCashback: 0, netCashIn: v,
+    realizedCostBasis: 0, realizedProceeds: 0, realizedPnl: 0,
+    pnl: 0, pnlPct: 0, bookedQuantity: null, chainCheckedAt: null,
+    external: { kind: 'financieelOver', financieelOver: fo, staleDays: financieelOverStaleDays(fo) },
+  };
+}
 
 // ===== Crypto-posten =====
 // Een "post" (unit 'post', bv. Finst of Wallet) groepeert per-coin sub-holdings: gewone crypto-partijen
@@ -90,6 +138,10 @@ function migrateCryptoPosts(parties, deletedPartyIds) {
   }
   for (const id of ALWAYS_SEEDED_PARTY_IDS) {
     if (!has(id) && !tomb[id]) { list.push({ ...seedById[id] }); changed = true; }
+  }
+  {
+    const i = list.findIndex(p => p && p.id === FIN_OVER_PARTY_ID);
+    if (i >= 0 && list[i].name === 'Lopende rekening') { list[i] = { ...seedById[FIN_OVER_PARTY_ID], ...list[i], name: seedById[FIN_OVER_PARTY_ID].name, subtitle: seedById[FIN_OVER_PARTY_ID].subtitle }; changed = true; }
   }
   for (const def of CRYPTO_LEAF_DEFS) {
     const i = list.findIndex(p => p && p.id === def.id);
@@ -1285,6 +1337,7 @@ function holdingQtyText(s) {
 
 function holdingPriceText(s, spots = {}) {
   const p = s.party, px = s.currentUnitPrice;
+  if (s.external && s.external.kind === 'financieelOver') return 'Live · Financieel Systeem';
   switch (dtUnitKind(p)) {
     case 'part': {
       const date = (p.id === 'meesman' ? dtLastHistDate(spots.meesmanNavHistory) : null) || s.lastValuationDate;
@@ -1302,6 +1355,9 @@ function holdingPriceText(s, spots = {}) {
 
 function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
   const p = s.party, px = s.currentUnitPrice;
+  if (s.external && s.external.kind === 'financieelOver') {
+    return { text: p.subtitle || financieelOverSubtitle(s.external.financieelOver), staleDays: s.external.staleDays };
+  }
   const kind = dtUnitKind(p);
   switch (kind) {
     case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
@@ -1538,7 +1594,7 @@ function aggregatePostSummary(post, leaves, own) {
   };
 }
 
-function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {} } = {}) {
+function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {}, financieelOver = null } = {}) {
   parties = parties || [];
   transactions = transactions || [];
   summaries = summaries || parties.map(p => summarizeParty(p, transactions, spots));
@@ -1583,11 +1639,25 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   }
   const dispIdOf = id => postIdx.postOfLeaf[id] || id;
 
+  // Over deze maand: live waarde uit het Financieel Systeem; zonder rij wordt de post verborgen.
+  transactions = transactions.filter(t => !isFinOverTx(t));
+  const foLive = normalizeFinancieelOver(financieelOver);
+  if (parties.some(p => p.id === FIN_OVER_PARTY_ID)) {
+    if (!foLive) {
+      parties = parties.filter(p => p.id !== FIN_OVER_PARTY_ID);
+      summaries = summaries.filter(s => s.party.id !== FIN_OVER_PARTY_ID);
+    } else {
+      summaries = summaries.map(s => (s.party.id === FIN_OVER_PARTY_ID ? financieelOverSummary(s.party, foLive) : s));
+      parties = summaries.map(s => s.party);
+    }
+  }
+
   const byId = {};
   Object.values(leafSummaries).forEach(s => { byId[s.party.id] = s; });
   summaries.forEach(s => { byId[s.party.id] = s; });
   const included = summaries.filter(s => dtIncluded(s.party));
-  const chartIds = summaries.filter(s => dtInChart(s.party)).map(s => s.party.id);
+  // Over deze maand telt mee in totaal/verdeling, maar niet in de waarde-reeks (geen storting, geen rendement).
+  const chartIds = summaries.filter(s => dtInChart(s.party) && !s.external).map(s => s.party.id);
   const empty = [], closed = [], open = [];
   for (const s of summaries) {
     if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5)) empty.push(s);
@@ -1669,6 +1739,11 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
     for (const p of parties) {
       const s = byId[p.id];
       if (!s) continue;
+      if (s.external) {
+        byParty[p.id] = new Array(n).fill(s.currentValueEur || 0);
+        netByParty[p.id] = new Array(n).fill(s.currentValueEur || 0);
+        continue;
+      }
       byParty[p.id][L] = s.currentValueEur || 0;
       netByParty[p.id][L] = (s.costBasis || 0) - (s.realizedPnl || 0);
     }
@@ -2047,6 +2122,7 @@ Object.assign(window, {
   ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
+  FIN_OVER_PARTY_ID, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
   PERIODS, periodRange, periodStats, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
