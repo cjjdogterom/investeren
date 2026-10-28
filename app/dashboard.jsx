@@ -569,7 +569,7 @@ function OvPositiesCard({ app, pinIndex }) {
 }
 
 function OvMonthlyCard({ app }) {
-  const months = useMemo(() => monthlyNetFlows(app.model.series, 12), [app.model.series]);
+  const months = useMemo(() => monthlyNetFlows(seriesExcluding(app.model.series, [FIN_OVER_PARTY_ID]), 12), [app.model.series]);
   const net = months.reduce((a, m) => a + (m.net || 0), 0);
   const privacy = !!app.prefs.privacy;
   return (
@@ -712,7 +712,8 @@ function OvVoorJou({ app, items }) {
     );
   }
   if (on('monthly_inleg')) {
-    const months = monthlyNetFlows(model.series, 12);
+    // Schommelingen op Vrij op rekening zijn geen inleg in beleggingen.
+    const months = monthlyNetFlows(seriesExcluding(model.series, [FIN_OVER_PARTY_ID]), 12);
     const net = months.reduce((a, m) => a + (m.net || 0), 0);
     cards.push(
       <Card key="inleg" title="Inleg per maand">

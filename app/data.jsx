@@ -88,6 +88,43 @@ function financieelOverSubtitle(fo) {
   if (fo && fo.asOf) parts.push(`bijgewerkt ${fmtTime(fo.asOf)}`);
   return parts.join(' · ');
 }
+// Dagelijkse historie van Vrij op rekening (gesynct in state.financieelHistory):
+// { 'JJJJ-MM-DD': { v: bedrag, t: ISO-tijd van vastleggen } }. Een los getal (oud/handmatig) mag ook.
+function finHistEntry(e) {
+  if (e == null) return null;
+  if (typeof e === 'number') return Number.isFinite(e) ? { v: e, t: '' } : null;
+  if (typeof e === 'object' && e.v != null && Number.isFinite(+e.v)) return { v: +e.v, t: typeof e.t === 'string' ? e.t : '' };
+  return null;
+}
+// Samenvoegen per datum; bij dezelfde datum wint de laatst vastgelegde waarde (hoogste t).
+function mergeFinancieelHistory() {
+  const out = {};
+  for (let k = 0; k < arguments.length; k++) {
+    const m = arguments[k];
+    if (!m || typeof m !== 'object') continue;
+    for (const d of Object.keys(m)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      const e = finHistEntry(m[d]);
+      if (!e) continue;
+      if (!out[d] || e.t > out[d].t) out[d] = e;
+    }
+  }
+  return out;
+}
+// Gesorteerde [[datum, bedrag]]-punten.
+function financieelHistoryPoints(hist) {
+  return Object.entries(mergeFinancieelHistory(hist)).map(([d, e]) => [d, e.v]).sort((a, b) => a[0].localeCompare(b[0]));
+}
+// Trapreeks op een datum-as: laatst vastgelegde bedrag op of vóór de datum, 0 vóór de eerste registratie.
+function financieelStepSeries(dates, points) {
+  const out = new Array(dates.length).fill(0);
+  let j = -1;
+  for (let i = 0; i < dates.length; i++) {
+    while (j + 1 < points.length && points[j + 1][0] <= dates[i]) j++;
+    out[i] = j >= 0 ? points[j][1] : 0;
+  }
+  return out;
+}
 // Synthetische samenvatting: waarde = inleg = bedrag → 0 winst, geen invloed op rendement.
 function financieelOverSummary(party, fo) {
   const v = fo.bedrag;
@@ -1612,7 +1649,7 @@ function aggregatePostSummary(post, leaves, own) {
   };
 }
 
-function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {}, financieelOver = null } = {}) {
+function buildPortfolioModel({ parties = [], transactions = [], summaries, flows, valueSeries, spots = {}, financieelOver = null, financieelHistory = null } = {}) {
   parties = parties || [];
   transactions = transactions || [];
   summaries = summaries || parties.map(p => summarizeParty(p, transactions, spots));
@@ -1665,7 +1702,13 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
       parties = parties.filter(p => p.id !== FIN_OVER_PARTY_ID);
       summaries = summaries.filter(s => s.party.id !== FIN_OVER_PARTY_ID);
     } else {
-      summaries = summaries.map(s => (s.party.id === FIN_OVER_PARTY_ID ? financieelOverSummary(s.party, foLive) : s));
+      const finPoints = financieelHistoryPoints(financieelHistory);
+      summaries = summaries.map(s => {
+        if (s.party.id !== FIN_OVER_PARTY_ID) return s;
+        const fs = financieelOverSummary(s.party, foLive);
+        fs.external.history = finPoints;
+        return fs;
+      });
       parties = summaries.map(s => s.party);
     }
   }
@@ -1674,8 +1717,9 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   Object.values(leafSummaries).forEach(s => { byId[s.party.id] = s; });
   summaries.forEach(s => { byId[s.party.id] = s; });
   const included = summaries.filter(s => dtIncluded(s.party));
-  // Vrij op rekening telt mee in totaal/verdeling, maar niet in de waarde-reeks (geen storting, geen rendement).
-  const chartIds = summaries.filter(s => dtInChart(s.party) && !s.external).map(s => s.party.id);
+  // Vrij op rekening telt ook mee in de waarde-reeks: trapreeks uit de dagelijkse historie, met dezelfde
+  // bedragen als inleg. Stijgingen/dalingen zijn zo stortingen/opnames, nooit winst of verlies.
+  const chartIds = summaries.filter(s => dtInChart(s.party)).map(s => s.party.id);
   const empty = [], closed = [], open = [];
   for (const s of summaries) {
     if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5)) empty.push(s);
@@ -1758,8 +1802,10 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
       const s = byId[p.id];
       if (!s) continue;
       if (s.external) {
-        byParty[p.id] = new Array(n).fill(s.currentValueEur || 0);
-        netByParty[p.id] = new Array(n).fill(s.currentValueEur || 0);
+        const step = financieelStepSeries(dates, s.external.history || []);
+        step[L] = s.currentValueEur || 0; // eindpunt = live bedrag = hero
+        byParty[p.id] = step;
+        netByParty[p.id] = step.slice();
         continue;
       }
       byParty[p.id][L] = s.currentValueEur || 0;
@@ -2140,7 +2186,7 @@ Object.assign(window, {
   ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
-  FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
+  FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
   PERIODS, periodRange, periodStats, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,

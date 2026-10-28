@@ -292,14 +292,36 @@ async function supabaseFetchAll(path, pageSize = 1000) {
   return rows;
 }
 
-async function fetchPortfolioParties() {
+async function fetchPortfolioMain() {
   try {
     const rows = await supabaseFetch('portfolio?select=data&id=eq.main');
-    const parties = rows?.[0]?.data?.parties;
-    return Array.isArray(parties) && parties.length ? mergeById(PARTIES, parties) : PARTIES;
+    const data = rows?.[0]?.data || {};
+    const parties = data.parties;
+    return {
+      parties: Array.isArray(parties) && parties.length ? mergeById(PARTIES, parties) : PARTIES,
+      financieelHistory: data.financieelHistory && typeof data.financieelHistory === 'object' ? data.financieelHistory : {},
+    };
   } catch {
-    return PARTIES;
+    return { parties: PARTIES, financieelHistory: {} };
   }
+}
+
+// Vrij op rekening ('lopende-rekening'): waarde komt uit data.financieelHistory
+// ({ 'JJJJ-MM-DD': { v, t } } of los getal), niet uit transacties. Telt als waarde én inleg.
+const FIN_OVER_PARTY_ID = 'lopende-rekening';
+function isFinOverTx(t) {
+  return !!t && (String(t.id || '').indexOf('fin-over-') === 0 || t.party === FIN_OVER_PARTY_ID || t.toParty === FIN_OVER_PARTY_ID);
+}
+function financieelHistoryValueAt(hist, date) {
+  let best = null, value = 0;
+  for (const d of Object.keys(hist || {})) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > date || (best && d <= best)) continue;
+    const e = hist[d];
+    const v = typeof e === 'number' ? e : (e && e.v != null ? +e.v : NaN);
+    if (!Number.isFinite(v)) continue;
+    best = d; value = v;
+  }
+  return value;
 }
 
 async function upsertPortfolioValue(row) {
@@ -376,8 +398,12 @@ function priceRowsByAsset(rows) {
   }, {});
 }
 
-function calculatePortfolioValue(date, transactions, history, parties = PARTIES) {
-  const includedParties = parties.filter(p => p.includeInPortfolio !== false);
+function calculatePortfolioValue(date, transactions, history, parties = PARTIES, financieelHistory = null) {
+  const finOverParty = parties.find(p => p.id === FIN_OVER_PARTY_ID);
+  const finOverValue = finOverParty && finOverParty.includeInPortfolio !== false
+    ? financieelHistoryValueAt(financieelHistory, date) : 0;
+  transactions = transactions.filter(t => !isFinOverTx(t));
+  const includedParties = parties.filter(p => p.includeInPortfolio !== false && p.id !== FIN_OVER_PARTY_ID);
   const partyMap = Object.fromEntries(includedParties.map(p => [p.id, p]));
   const txByParty = Object.fromEntries(includedParties.map(p => [p.id, transactions.filter(t => t.party === p.id)]));
   const unitValuationsByParty = Object.fromEntries(includedParties.map(p => [p.id, unitValuationPoints(txByParty[p.id] || [])]));
@@ -541,6 +567,8 @@ function calculatePortfolioValue(date, transactions, history, parties = PARTIES)
     total += value;
     invested += s.cost;
   }
+  total += finOverValue;
+  invested += finOverValue;
   return {
     date,
     total_eur: +total.toFixed(2),
@@ -556,18 +584,19 @@ async function updateWeeklyPortfolioValue(date) {
 }
 
 async function buildPortfolioValueRows({ dates, startDate = '2025-01-01', endDate = todayIso(), weeklyOnly = false } = {}) {
-  const [txRows, priceRows, parties] = await Promise.all([
+  const [txRows, priceRows, main] = await Promise.all([
     supabaseFetchAll('transactions?select=*&order=date.asc'),
     supabaseFetchAll(`asset_price_history?select=asset,date,nav&date=lte.${endDate}&order=date.asc`),
-    fetchPortfolioParties(),
+    fetchPortfolioMain(),
   ]);
+  const parties = main.parties;
   const transactions = normalizeTransactions(txRows.map(rowToTx));
   const history = priceRowsByAsset(priceRows);
   const valueDates = dates || [...new Set(priceRows
     .map(r => r.date)
     .filter(date => date >= startDate && date <= endDate))]
     .filter(date => !weeklyOnly || new Date(`${date}T00:00:00Z`).getUTCDay() === 1);
-  return valueDates.map(date => calculatePortfolioValue(date, transactions, history, parties));
+  return valueDates.map(date => calculatePortfolioValue(date, transactions, history, parties, main.financieelHistory));
 }
 
 async function backfillPortfolioValues({ startDate = '2025-01-01', endDate = todayIso(), weeklyOnly = false } = {}) {

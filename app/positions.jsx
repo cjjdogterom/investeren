@@ -885,6 +885,7 @@ function PsPartyBody({ app, s }) {
         </div>
       )}
       <PsUnderlying party={p} value={s.currentValueEur} privacy={privacy} />
+      {s.external && s.external.history && s.external.history.length > 0 && <PsFinHistory points={s.external.history} privacy={privacy} />}
       <div>
         <div className="ps-sec-head">
           <h3 className="ps-sec-title">Transacties ({txs.length})</h3>
@@ -901,6 +902,29 @@ function PsPartyBody({ app, s }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Dagwaarden van Vrij op rekening (laatste 14 registraties, nieuwste eerst) met verschil t.o.v. de vorige.
+function PsFinHistory({ points, privacy }) {
+  const rows = points.map((pt, i) => ({ date: pt[0], v: pt[1], d: i > 0 ? pt[1] - points[i - 1][1] : null })).reverse().slice(0, 14);
+  return (
+    <section data-testid="party-fin-history">
+      <div className="ps-sec-head"><h3 className="ps-sec-title">Dagwaarden</h3><span className="ps-subtle" style={{ fontSize: 12 }}>{points.length} dagen vastgelegd</span></div>
+      <ul className="ps-und__list">
+        {rows.map(r => (
+          <li key={r.date} className="ps-und__row" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}>
+            <span className="ps-und__name">{fmtDateLong(r.date)}</span>
+            <span className="ps-und__end">
+              <span className={'ps-und__w num ' + (r.d == null || Math.abs(r.d) < 0.005 ? 'ps-subtle' : psTone(r.d))} style={{ fontWeight: 400 }}>
+                {r.d == null || Math.abs(r.d) < 0.005 ? '—' : (privacy ? UI_MASK : (r.d > 0 ? '+' : '−') + fmtMoney(Math.abs(r.d)))}
+              </span>
+              <span className="ps-und__val num">{privacy ? UI_MASK : fmtMoney(r.v)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -312,6 +312,10 @@ async function supabaseSaveSettings(client, state) {
       settings.parties = settings.parties.filter(p => !isDeletedByTombstone(p, deletedPartyIds));
     }
   }
+  // Dagwaarden Vrij op rekening: per datum samenvoegen, laatst vastgelegde waarde wint.
+  if (current?.data?.financieelHistory || settings.financieelHistory) {
+    settings.financieelHistory = mergeFinancieelHistory(current?.data?.financieelHistory, settings.financieelHistory);
+  }
   // widgetSnapshot leeft niet in de lokale state; behoud de remote versie.
   if (current?.data?.widgetSnapshot) settings.widgetSnapshot = current.data.widgetSnapshot;
   const { error } = await client
@@ -1224,6 +1228,27 @@ function App() {
     return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [financieelSleutel]);
   const financieelOver = financieelApi || financieelOverRow;
+  // Dagwaarde vastleggen in state.financieelHistory (gesynct) zodra er een verse waarde is.
+  // Alleen schrijven als het bedrag voor die dag verandert; nooit uit een Supabase-rij ouder dan 2 dagen.
+  React.useEffect(() => {
+    const fo = normalizeFinancieelOver(financieelOver);
+    if (!fo) return;
+    let day = todayIsoLocal();
+    if (!financieelApi) {
+      if (financieelOverStaleDays(fo) != null) return;
+      const t = fo.asOf ? new Date(fo.asOf) : null;
+      if (t && !Number.isNaN(t.getTime())) {
+        const d = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+        if (d < day) day = d;
+      }
+    }
+    const v = Math.round(fo.bedrag * 100) / 100;
+    setState(s => {
+      const cur = finHistEntry(s.financieelHistory && s.financieelHistory[day]);
+      if (cur && Math.abs(cur.v - v) < 0.005) return s;
+      return { ...s, financieelHistory: { ...(s.financieelHistory || {}), [day]: { v, t: new Date().toISOString() } } };
+    });
+  }, [financieelOver, financieelApi]);
   const applyRemoteData = React.useCallback(remoteData => {
     if (!remoteData) {
       transactionsLoadedRef.current = false;
@@ -1264,6 +1289,7 @@ function App() {
         deletedPartyIds:   mergedDeletedPartyIds,
         parties:           (mergedParties.length || hasPartyTombstones) ? mergedParties : normalizeParties(s.parties || []),
         tweaks:            mergedTweaks,
+        financieelHistory: mergeFinancieelHistory(s.financieelHistory, remote.financieelHistory),
         meesmanNavEur:     meesman.currentNav,
         meesmanNavHistory: meesman.history,
         goldHistory:       mergePriceHistory(s.goldHistory,   remote.goldHistory),
@@ -1900,8 +1926,8 @@ function App() {
   const flows       = React.useMemo(() => buildFlowSeries(valTxs, allParties), [valTxs, allParties]);
   const valueSeries = React.useMemo(() => buildPartyTimeSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const model       = React.useMemo(
-    () => buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver }),
-    [allParties, valTxs, summaries, flows, valueSeries, spots, financieelOver]
+    () => buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver, financieelHistory: state.financieelHistory }),
+    [allParties, valTxs, summaries, flows, valueSeries, spots, financieelOver, state.financieelHistory]
   );
 
   const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
