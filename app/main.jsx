@@ -172,7 +172,8 @@ function isIgnoredLegacyTransaction(tx) {
 
 function normalizeTransactions(transactions = []) {
   const cleaned = transactions.filter(tx => !isIgnoredLegacyTransaction(tx));
-  return mergeById(cleaned, CANONICAL_BTC_TRANSACTIONS)
+  // Canonieke BTC-boekingen vullen alleen ontbrekende aan; bestaande (ook bewerkte) boekingen winnen.
+  return mergeById(CANONICAL_BTC_TRANSACTIONS, cleaned)
     .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
