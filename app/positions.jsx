@@ -130,6 +130,26 @@ injectStyles('positions', `
 .ps-pgoal__row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--fg-muted); }
 .ps-pgoal__track { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .ps-pgoal__fill { height: 100%; border-radius: 3px; }
+.ps-und { display: flex; flex-direction: column; gap: 10px; }
+.ps-und__bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-3); gap: 2px; }
+.ps-und__bar > span { height: 100%; }
+.ps-und__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ps-und__row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); }
+.ps-und__row:first-child { border-top: 0; }
+.ps-und__row > .ui-swatch, .ps-und__dot { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+.ps-und__name { font: 500 13.5px/18px var(--font); min-width: 0; }
+.ps-und__full { grid-column: 2 / 3; font-size: 12px; line-height: 16px; color: var(--fg-muted); overflow-wrap: anywhere; }
+.ps-und__end { grid-row: span 2; align-self: start; text-align: right; display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.ps-und__w { font: 600 13.5px/18px var(--font); }
+.ps-und__val { font-size: 12px; line-height: 16px; color: var(--fg-muted); }
+.ps-und__sub { font: 600 12px/16px var(--font); color: var(--fg-muted); margin-top: 4px; display: flex; justify-content: space-between; gap: 8px; }
+.ps-und__sub span:last-child { font-weight: 400; }
+.ps-und__reg { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.ps-und__reg .ps-pgoal__track { height: 4px; }
+.ps-und__reg .num { text-align: right; color: var(--fg-muted); min-width: 40px; }
+.ps-und__src { font-size: 11.5px; line-height: 16px; color: var(--fg-subtle); }
+.ps-und__src a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ps-und__src a:hover { color: var(--fg); }
 .ps-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .ps-sec-title { margin: 0; font: 600 14px/20px var(--font); }
 .ps-link { border: 0; background: none; padding: 0; font: 500 12.5px/16px var(--font); color: var(--fg-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
@@ -864,6 +884,7 @@ function PsPartyBody({ app, s }) {
           <div className="ps-pgoal__track"><div className="ps-pgoal__fill" style={{ width: Math.min(100, gp.pct) + '%', background: partyColorOf(p) }} /></div>
         </div>
       )}
+      <PsUnderlying party={p} value={s.currentValueEur} privacy={privacy} />
       <div>
         <div className="ps-sec-head">
           <h3 className="ps-sec-title">Transacties ({txs.length})</h3>
@@ -880,6 +901,64 @@ function PsPartyBody({ app, s }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Look-through: verdeling van een fonds over zijn onderliggende fondsen (zie underlyingOf in data.jsx).
+function PsUnderlying({ party, value, privacy }) {
+  const u = underlyingOf(party);
+  if (!u) return null;
+  const funds = u.funds;
+  const sum = funds.reduce((a, f) => a + (f.weight || 0), 0) || 100;
+  const v = Number.isFinite(value) ? value : 0;
+  const pct1 = n => fmtPct(n, { decimals: 1, sign: false });
+  const reg = u.regions && Array.isArray(u.regions.items) && u.regions.items.length ? u.regions : null;
+  const src = (s, asOf) => s ? (
+    <>Bron: {s.publisher ? s.publisher + ', ' : ''}{s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer">{s.label}</a> : s.label}{asOf ? `, peildatum ${fmtDateLong(asOf)}` : ''}</>
+  ) : null;
+  return (
+    <section className="ps-und" aria-labelledby={'und-' + party.id} data-testid="party-underlying">
+      <div className="ps-sec-head">
+        <h3 className="ps-sec-title" id={'und-' + party.id}>Onderliggende fondsen</h3>
+        {u.targetNote && <span className="ps-subtle" style={{ fontSize: 12 }}>{u.targetNote}</span>}
+      </div>
+      <div className="ps-und__bar" role="img"
+        aria-label={funds.map(f => `${f.short || f.name} ${pct1(f.weight)}`).join(', ')}>
+        {funds.map(f => <span key={f.name} style={{ width: (f.weight / sum * 100) + '%', background: f.color || 'var(--fg-subtle)' }} />)}
+      </div>
+      <ul className="ps-und__list">
+        {funds.map(f => (
+          <li key={f.name} className="ps-und__row">
+            <span className="ps-und__dot" style={{ background: f.color || 'var(--fg-subtle)' }} aria-hidden="true" />
+            <span className="ps-und__name">{f.short || f.name}</span>
+            <span className="ps-und__end">
+              <span className="ps-und__w num">
+                {pct1(f.weight)}
+                {f.target != null && <span className="ps-subtle" style={{ fontWeight: 400 }}> · doel {pct1(f.target)}</span>}
+              </span>
+              <span className="ps-und__val num">{privacy ? UI_MASK : fmtMoney(v * f.weight / sum)}</span>
+            </span>
+            {f.short && <span className="ps-und__full">{f.name}{f.isin ? ` · ${f.isin}` : ''}</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="ps-und__src">{src(u.source, u.asOf)}</div>
+      {reg && (
+        <>
+          <div className="ps-und__sub"><span>{reg.title || 'Regio’s'}</span>{reg.note && <span>{reg.note}</span>}</div>
+          <div className="ps-und__reg">
+            {reg.items.map(r => (
+              <React.Fragment key={r.label}>
+                <span>{r.label}</span>
+                <span className="ps-pgoal__track"><span className="ps-pgoal__fill" style={{ display: 'block', width: Math.min(100, r.weight) + '%', background: 'var(--fg-subtle)' }} /></span>
+                <span className="num">{pct1(r.weight)}</span>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="ps-und__src">{src(reg.source, reg.asOf)}</div>
+        </>
+      )}
+    </section>
   );
 }
 

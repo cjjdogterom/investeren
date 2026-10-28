@@ -1200,6 +1200,39 @@ const PARTY_LOGOS = {
 };
 const COIN_LOGOS = { BTC: 'btc.svg', ETH: 'eth.svg', PAXG: 'paxg.svg' };
 
+// ----- Onderliggende fondsen (look-through) per partij -----
+// Statische data uit primaire bronnen. weight = feitelijk gewicht (%), target = strategisch gewicht (%) of null
+// als het prospectus geen vaste verdeling noemt (targetNote legt dan uit hoe er gewogen wordt).
+// party.underlying (zelfde vorm) wint boven deze tabel.
+const MEESMAN_UNDERLYING = {
+  name: 'Meesman Indexfonds Aandelen Wereldwijd Totaal A',
+  isin: 'NL0013689110',
+  targetNote: 'marktgewogen',
+  asOf: '2026-06-30',
+  source: { publisher: 'Meesman', label: 'Halfjaarbericht 2026', url: 'https://www.meesman.nl/media/yculft3d/mp-hjb-2026.pdf' },
+  funds: [
+    { name: 'Northern Trust World Screened Equity Index Fund', short: 'Ontwikkelde landen', index: 'MSCI World Custom ESG', isin: null, target: null, weight: 79.955, color: 'oklch(58% 0.14 255)' },
+    { name: 'Northern Trust Emerging Markets Screened Equity Index FGR Fund', short: 'Opkomende landen', index: 'MSCI Emerging Markets Custom ESG', isin: null, target: null, weight: 10.396, color: 'oklch(70% 0.13 175)' },
+    { name: 'Northern Trust World Small Cap Low Carbon Equity Index FGR Feeder Fund', short: 'Kleine bedrijven', index: 'MSCI World Small Cap Custom ESG Low Carbon', isin: null, target: null, weight: 9.649, color: 'oklch(78% 0.12 85)' },
+  ],
+  regions: {
+    title: 'Landen',
+    asOf: '2026-09-30',
+    note: '5.047 aandelen in 47 landen',
+    source: { publisher: 'Meesman', label: 'Factsheet', url: 'https://www.meesman.nl/media/zpvkkdiw/factsheet-meesman-indexfonds-aandelen-wereldwijd-totaal-a-30-09-2026.pdf' },
+    items: [
+      { label: 'Verenigde Staten', weight: 62.9 }, { label: 'Japan', weight: 6.1 }, { label: 'Taiwan', weight: 3.3 },
+      { label: 'Verenigd Koninkrijk', weight: 2.9 }, { label: 'Canada', weight: 2.8 }, { label: 'Overig', weight: 22.1 },
+    ],
+  },
+};
+const UNDERLYING_BY_PARTY = { meesman: MEESMAN_UNDERLYING };
+function underlyingOf(party) {
+  if (!party) return null;
+  const u = party.underlying || UNDERLYING_BY_PARTY[party.id];
+  return u && Array.isArray(u.funds) && u.funds.length ? u : null;
+}
+
 function partyLogo(party) {
   if (!party) return null;
   if (party.logo) return /^(https?:|data:|\/)/.test(party.logo) ? party.logo : assetUrl(party.logo);
