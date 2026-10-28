@@ -77,6 +77,7 @@ const PORTFOLIO_SETTINGS_EXCLUDED_KEYS = new Set([
   'meesmanNavHistory',
   'lastWeeklySpotSave',
   'customParties',
+  'widgetSnapshot',
 ]);
 
 function portfolioSettingsFromState(state = {}) {
@@ -261,7 +262,7 @@ async function supabaseLoadAll(client) {
   const _legacyTransactions = portfolioData.transactions;
   const settings = { ...portfolioData };
   ['transactions', 'portfolioDailyValues', 'goldHistory', 'silverHistory', 'btcHistory', 'ethHistory',
-    'paxgHistory', 'meesmanNavHistory', 'lastWeeklySpotSave'].forEach(k => { delete settings[k]; });
+    'paxgHistory', 'meesmanNavHistory', 'lastWeeklySpotSave', 'widgetSnapshot'].forEach(k => { delete settings[k]; });
 
   const transactionsLoaded = !txRes.error;
   const transactions = transactionsLoaded
@@ -304,10 +305,31 @@ async function supabaseSaveSettings(client, state) {
       settings.parties = settings.parties.filter(p => !isDeletedByTombstone(p, deletedPartyIds));
     }
   }
+  // widgetSnapshot leeft niet in de lokale state; behoud de remote versie.
+  if (current?.data?.widgetSnapshot) settings.widgetSnapshot = current.data.widgetSnapshot;
   const { error } = await client
     .from('portfolio')
     .upsert({ id: 'main', data: settings, updated_at: new Date().toISOString() }, { onConflict: 'id' });
   if (error) throw new Error(error.message);
+}
+
+// Schrijf alleen data.widgetSnapshot (voor de iOS-widget). Read-modify-write op het REMOTE
+// document: lokale instellingen worden nooit meegestuurd, dus dit overschrijft geen wijzigingen
+// van anderen. Bestaat de rij nog niet, dan niets doen.
+async function supabaseSaveWidgetSnapshot(client, snapshot) {
+  const { data: current, error: readError } = await client
+    .from('portfolio')
+    .select('data')
+    .eq('id', 'main')
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (!current || !current.data || typeof current.data !== 'object') return false;
+  const { error } = await client
+    .from('portfolio')
+    .update({ data: { ...current.data, widgetSnapshot: snapshot } })
+    .eq('id', 'main');
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 async function supabaseSyncTransactions(client, transactions = [], deletedTransactionIds = {}) {
@@ -1830,6 +1852,38 @@ function App() {
   );
 
   const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
+
+  // ── iOS-widget: publiceer de hero-getallen naar portfolio.data.widgetSnapshot ──
+  // Alleen na een geslaagde Supabase-load met transacties, zonder openstaande save/fout,
+  // met live koersen; en alleen bij ≥ € 1 verschil in totaal of ≥ 10 min sinds de vorige write.
+  const widgetSnapLastRef = React.useRef({ total: null, at: 0 });
+  const widgetSnapTimerRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!sbOk) return undefined;
+    clearTimeout(widgetSnapTimerRef.current);
+    widgetSnapTimerRef.current = setTimeout(() => {
+      if (!supabaseLoadedRef.current || !transactionsLoadedRef.current || pendingSaveRef.current) return;
+      if (syncStatus.error || syncStatus.loading || !syncStatus.syncedAt) return;
+      if (!spotStatus.fetchedAt || spotStatus.loading) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const snap = buildWidgetSnapshot(model, prefs);
+      if (!snap || !Number.isFinite(snap.total) || !(state.transactions || []).length) return;
+      const last = widgetSnapLastRef.current;
+      const now = Date.now();
+      if (last.total != null && Math.abs(snap.total - last.total) < 1 && now - last.at < 10 * 60 * 1000) return;
+      const client = getSupabaseClient(supabaseConfig);
+      if (!client) return;
+      widgetSnapLastRef.current = { total: snap.total, at: now };
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => {})
+        .then(() => supabaseSaveWidgetSnapshot(client, snap))
+        .catch(e => {
+          widgetSnapLastRef.current = last;
+          console.warn('[Supabase] widget-snapshot mislukt:', e.message);
+        });
+    }, 4000);
+    return () => clearTimeout(widgetSnapTimerRef.current);
+  }, [sbOk, model, prefs.exclPE, prefs.period, syncStatus, spotStatus, supabaseConfig, state.transactions]);
 
   // ── Navigation ──
   const doNavigate = React.useCallback((path, { replace = false } = {}) => {

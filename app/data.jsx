@@ -1772,6 +1772,62 @@ function periodStats({ dates, value, net }, i0, i1, all = false) {
   return { gain, pct, twr, twrGaps, annualized, startValue: V0, endValue: V1, startNet: N0, endNet: N1, netFlow: N1 - N0, days: D };
 }
 
+// Compacte momentopname voor de iOS-widget: exact dezelfde getallen als de Overzicht-hero
+// in rust (geen cursor), incl. Excl. PE- en periodekeuze uit prefs. Zie useOvPerformance.
+function buildWidgetSnapshot(model, prefs = {}) {
+  if (!model || !model.totals || !model.series) return null;
+  const r2 = x => (x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100);
+  const peIds = (model.chartIds || []).filter(id => model.byId && model.byId[id] && assetClassOf(model.byId[id].party) === 'pe');
+  const exclPE = !!prefs.exclPE && peIds.length > 0;
+  const series = exclPE ? seriesExcluding(model.series, peIds) : model.series;
+  const dates = series.dates || [];
+  let periodKey = prefs.period || '1J';
+  let r = periodRange(dates, periodKey);
+  if (!r.enabled) {
+    for (const k of ['ALL', '1J', 'YTD', '3M', '1M']) {
+      const rr = periodRange(dates, k);
+      if (rr.enabled) { r = rr; periodKey = k; break; }
+    }
+  }
+  const peInc = exclPE ? (model.included || []).filter(s => assetClassOf(s.party) === 'pe') : [];
+  const sumOf = f => peInc.reduce((a, s) => a + (f(s) || 0), 0);
+  const t = model.totals;
+  const value = t.value - sumOf(s => s.currentValueEur);
+  const net = t.netInvested - sumOf(s => s.costBasis - s.realizedPnl);
+  const pnl = t.pnl - sumOf(s => s.pnl);
+  const invested = t.invested - sumOf(s => s.invested);
+  const pnlPct = invested > 0 ? pnl / invested * 100 : null;
+  const stats = r.enabled ? periodStats(series, r.i0, r.i1, r.all) : null;
+  // Verandering vandaag: laatste punt vs. laatste punt vóór vandaag, excl. stortingen.
+  const last = dates.length - 1;
+  let today = null;
+  if (last >= 1) {
+    const iso = todayIsoLocal();
+    let p = last;
+    while (p > 0 && dates[p] >= iso) p--;
+    if (p < last && dates[p] < iso) {
+      const s = periodStats(series, p, last, false);
+      today = { gain: r2(s.gain), pct: r2(s.pct) };
+    } else today = { gain: 0, pct: 0 };
+  }
+  const n0 = Math.max(0, dates.length - 30);
+  return {
+    v: 1,
+    asOf: new Date().toISOString(),
+    total: r2(value),
+    netInvested: r2(net),
+    totalGain: r2(value - net),
+    totalGainPct: r2(pnlPct),
+    todayGain: today ? today.gain : null,
+    todayPct: today ? today.pct : null,
+    period: periodKey,
+    periodGain: stats ? r2(stats.gain) : null,
+    periodPct: r2(r.all ? pnlPct : (stats ? stats.pct : null)),
+    exclPE,
+    series: { dates: dates.slice(n0), values: series.value.slice(n0).map(x => Math.round(x)) },
+  };
+}
+
 function cumulativeTwr({ dates, value, net }, i0, i1) {
   const out = [];
   if (i1 < i0) return out;
@@ -1985,7 +2041,7 @@ Object.assign(window, {
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  PERIODS, periodRange, periodStats, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  PERIODS, periodRange, periodStats, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

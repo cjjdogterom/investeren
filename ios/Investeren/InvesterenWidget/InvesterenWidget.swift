@@ -105,7 +105,8 @@ struct Footer: View {
         if let s = entry.snapshot {
             HStack(spacing: 3) {
                 if entry.isStale { Image(systemName: "icloud.slash") }
-                Text("bijgewerkt \(Fmt.time(s.fetchedAt))")
+                Text("bijgewerkt \(Fmt.time(s.updatedAt))")
+                if !s.isLive { Text("· dagwaarde").opacity(0.75) }
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(Palette.muted)

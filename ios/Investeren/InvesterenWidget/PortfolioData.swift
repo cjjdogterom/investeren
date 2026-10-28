@@ -1,7 +1,9 @@
 import Foundation
 
-/// Read-only access to the daily portfolio values in Supabase (never writes).
+/// Read-only access to Supabase (never writes): the live hero snapshot that the web app
+/// publishes in portfolio.data.widgetSnapshot, with the daily values as fallback/sparkline.
 enum PortfolioAPI {
+    static let snapshotEndpoint = URL(string: "https://xlmbpohjlcwjubgiyjaw.supabase.co/rest/v1/portfolio?id=eq.main&select=snapshot:data->widgetSnapshot")!
     static let endpoint = URL(string: "https://xlmbpohjlcwjubgiyjaw.supabase.co/rest/v1/portfolio_daily_values?select=date,total_eur,invested_eur&order=date.desc&limit=31")!
     // Public anon key (same as app/main.jsx SUPABASE_DEFAULTS).
     static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsbWJwb2hqbGN3anViZ2l5amF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNjIyODksImV4cCI6MjA5MzYzODI4OX0.BXbY5_stirCdFLuXleBHu1VouYm1cguVZd3bjkygHlo"
@@ -12,8 +14,30 @@ enum PortfolioAPI {
         let invested_eur: Double?
     }
 
-    static func fetch() async throws -> PortfolioSnapshot {
-        var req = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+    /// Same numbers as the web app's Overzicht hero (see buildWidgetSnapshot in app/data.jsx).
+    struct AppSnapshot: Decodable {
+        let asOf: String
+        let total: Double
+        let netInvested: Double?
+        let totalGain: Double?
+        let totalGainPct: Double?   // percent, e.g. 92.68
+        let todayGain: Double?
+        let todayPct: Double?       // percent
+        let series: Series?
+        struct Series: Decodable { let dates: [String]?; let values: [Double]? }
+
+        var asOfDate: Date? {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = f.date(from: asOf) { return d }
+            f.formatOptions = [.withInternetDateTime]
+            return f.date(from: asOf)
+        }
+    }
+    private struct SnapshotRow: Decodable { let snapshot: AppSnapshot? }
+
+    private static func get(_ url: URL) async throws -> Data {
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         req.httpMethod = "GET"
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
@@ -22,11 +46,33 @@ enum PortfolioAPI {
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
-        let rows = try JSONDecoder().decode([Row].self, from: data)
+        return data
+    }
+
+    static func fetchAppSnapshot() async -> AppSnapshot? {
+        guard let data = try? await get(snapshotEndpoint),
+              let rows = try? JSONDecoder().decode([SnapshotRow].self, from: data) else { return nil }
+        return rows.first?.snapshot
+    }
+
+    static func fetchDaily() async throws -> PortfolioSnapshot {
+        let rows = try JSONDecoder().decode([Row].self, from: try await get(endpoint))
         guard let snap = PortfolioSnapshot(rowsNewestFirst: rows, fetchedAt: Date()) else {
             throw URLError(.cannotParseResponse)
         }
         return snap
+    }
+
+    /// Live app snapshot when present and ≤ 2 days old; otherwise the daily-values computation.
+    static func fetch() async throws -> PortfolioSnapshot {
+        async let appTask = fetchAppSnapshot()
+        async let dailyTask: PortfolioSnapshot? = try? fetchDaily()
+        let (app, daily) = await (appTask, dailyTask)
+        if let app, let asOf = app.asOfDate, Date().timeIntervalSince(asOf) <= 2 * 86400 {
+            return PortfolioSnapshot(app: app, asOf: asOf, daily: daily)
+        }
+        guard let daily else { throw URLError(.cannotLoadFromNetwork) }
+        return daily
     }
 }
 
@@ -40,9 +86,38 @@ struct PortfolioSnapshot: Codable, Equatable {
     var monthChangePct: Double?
     var series: [Double]        // oldest -> newest, up to 31 points
     var fetchedAt: Date
+    // Set when the numbers come from the web app's live snapshot (nil = daily-values fallback).
+    var asOf: Date? = nil
+    var appProfit: Double? = nil
+    var appProfitPct: Double? = nil   // fraction
 
-    var profit: Double { total - invested }
-    var profitPct: Double? { invested > 0 ? profit / invested : nil }
+    var isLive: Bool { asOf != nil }
+    var updatedAt: Date { asOf ?? fetchedAt }
+    var profit: Double { appProfit ?? (total - invested) }
+    var profitPct: Double? { isLive ? appProfitPct : (invested > 0 ? profit / invested : nil) }
+
+    init(app: PortfolioAPI.AppSnapshot, asOf: Date, daily: PortfolioSnapshot?) {
+        total = app.total
+        invested = app.netInvested ?? daily?.invested ?? 0
+        appProfit = app.totalGain ?? (total - invested)
+        appProfitPct = app.totalGainPct.map { $0 / 100 }
+        dayChange = app.todayGain
+        dayChangePct = app.todayPct.map { $0 / 100 }
+        self.asOf = asOf
+        fetchedAt = Date()
+        date = Self.dayFormatter.string(from: asOf)
+        if let vals = app.series?.values, vals.count >= 2 {
+            var v = vals
+            v[v.count - 1] = app.total
+            series = v
+            monthChange = app.total - vals[0]
+            monthChangePct = vals[0] != 0 ? (app.total - vals[0]) / vals[0] : nil
+        } else {
+            series = daily?.series ?? [app.total]
+            monthChange = daily?.monthChange
+            monthChangePct = daily?.monthChangePct
+        }
+    }
 
     init?(rowsNewestFirst rows: [PortfolioAPI.Row], fetchedAt: Date) {
         let rows = rows.sorted { $0.date > $1.date }
