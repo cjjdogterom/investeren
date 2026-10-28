@@ -5,6 +5,7 @@ const ST_SECTIONS = [
   { key: 'overzicht',   label: 'Overzicht',      icon: 'layout-dashboard',   desc: 'Modules en standaardperiode' },
   { key: 'koersen',     label: 'Koersen',        icon: 'trending-up',        desc: 'Live prijzen en Meesman NAV' },
   { key: 'wallet',      label: 'Wallet',         icon: 'wallet',             desc: 'Coinbase Wallet alleen-lezen koppelen' },
+  { key: 'financieel',  label: 'Financieel',     icon: 'wallet',             desc: 'Vrij op rekening uit je Financieel Systeem' },
   { key: 'sync',        label: 'Synchronisatie', icon: 'cloud',              desc: 'Supabase-koppeling' },
   { key: 't212',        label: 'Trading 212',    icon: 'download',           desc: 'Stortingen en waarde importeren' },
   { key: 'partijen',    label: 'Partijen',       icon: 'layers',             desc: 'Partijen beheren en toevoegen' },
@@ -463,6 +464,36 @@ function StT212({ app }) {
   );
 }
 
+function StFinancieel({ app }) {
+  const saved = app.tweaks?.financieelSleutel || '';
+  const [val, setVal] = React.useState(saved);
+  React.useEffect(() => { setVal(saved); }, [saved]);
+  const fs = app.financieelStatus || {};
+  const fo = app.financieelOver;
+  return (
+    <Card title="Vrij op rekening">
+      <div className="st-stack">
+        <p className="st-note">Haalt live het bedrag op dat je deze maand nog vrij hebt volgens je Financieel Systeem en toont het als post "Vrij op rekening" onder Liquide. De sleutel geeft alleen leestoegang tot dit ene bedrag en wordt via je eigen sync gedeeld met je andere apparaten.</p>
+        <label className="st-label" htmlFor="st-fin-key">Sleutel</label>
+        <Input id="st-fin-key" type="password" autoComplete="off" value={val} placeholder="Plak hier de deelsleutel"
+          onChange={e => setVal(e.target.value.trim())} />
+        <div className="st-row">
+          <Button variant="primary" icon="check" disabled={val === saved}
+            onClick={() => app.updateTweaks(tw => ({ ...tw, financieelSleutel: val }))}>Opslaan</Button>
+          {saved && <Button variant="ghost" onClick={() => app.updateTweaks(tw => ({ ...tw, financieelSleutel: '' }))}>Ontkoppelen</Button>}
+        </div>
+        {saved && (
+          <div className={'st-status ' + (fs.error ? 'st-status--err' : 'st-status--ok')} aria-live="polite">
+            {fs.error ? '⚠ ' + fs.error
+              : fo ? `✓ ${fmtEur(fo.bedrag, { decimals: 2 })} · ${fo.label || 'Vrij besteedbaar'}${fo.maandLabel ? ' · ' + fo.maandLabel : ''}`
+              : 'Ophalen…'}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function StPartijen({ app }) {
   const summaries = app.model?.summaries || [];
   const closedIds = new Set((app.model?.closed || []).map(x => x.party.id));
@@ -582,6 +613,7 @@ function StSectionBody({ app, section }) {
     case 'overzicht': return <StOverzicht app={app} />;
     case 'koersen': return <StKoersen app={app} />;
     case 'wallet': return <StWallet app={app} />;
+    case 'financieel': return <StFinancieel app={app} />;
     case 'sync': return <StSync app={app} />;
     case 't212': return <StT212 app={app} />;
     case 'partijen': return <StPartijen app={app} />;

@@ -56,6 +56,24 @@ function normalizeFinancieelOver(raw) {
     bron: raw.bron || 'financieel',
   };
 }
+const FINANCIEEL_API_URL = 'https://financieel.financieel-chris.workers.dev/api/vrij-besteedbaar';
+// API-antwoord { bedrag, maand: 'oktober 2026', naam, bijgewerkt: '28-10, 18:30' } → formaat van normalizeFinancieelOver.
+function financieelApiToOver(j) {
+  if (!j || j.bedrag == null) return null;
+  const bedrag = +j.bedrag;
+  if (!Number.isFinite(bedrag)) return null;
+  const mm = /^([a-z]+)\s+(\d{4})$/i.exec(String(j.maand || '').trim());
+  const mi = mm ? MONTHS_NL_LONG.indexOf(mm[1].toLowerCase()) : -1;
+  const year = mm ? +mm[2] : new Date().getFullYear();
+  const maand = mi >= 0 ? `${year}-${String(mi + 1).padStart(2, '0')}` : null;
+  let asOf = new Date().toISOString();
+  const bw = /^(\d{1,2})-(\d{1,2}),\s*(\d{1,2}):(\d{2})/.exec(String(j.bijgewerkt || ''));
+  if (bw) {
+    const d = new Date(year, +bw[2] - 1, +bw[1], +bw[3], +bw[4]);
+    if (!Number.isNaN(d.getTime())) asOf = d.toISOString();
+  }
+  return { bedrag, maand, label: j.naam || 'Vrij besteedbaar', asOf, bron: 'financieel-api', maandLabel: j.maand || null };
+}
 function financieelOverStaleDays(fo, now = Date.now()) {
   const t = fo && fo.asOf ? Date.parse(fo.asOf) : NaN;
   if (!Number.isFinite(t)) return null;
@@ -2122,7 +2140,7 @@ Object.assign(window, {
   ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
-  FIN_OVER_PARTY_ID, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
+  FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
   PERIODS, periodRange, periodStats, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,

@@ -1191,11 +1191,39 @@ function App() {
   }, [supabaseConfig]);
 
   // Live 'Vrij op rekening' (portfolio/financieel-over): los van de gesyncte state, nooit gepusht of geëxporteerd.
-  const [financieelOver, setFinancieelOver] = React.useState(null);
+  const [financieelOverRow, setFinancieelOver] = React.useState(null);
   React.useEffect(() => {
     window.__setFinancieelOver = v => setFinancieelOver(v || null); // dev/test-haak
     return () => { delete window.__setFinancieelOver; };
   }, []);
+  // Directe koppeling met de API van het Financieel Systeem (sleutel in tweaks.financieelSleutel).
+  // ?sleutel= in plaats van een Authorization-header: dan is er geen CORS-preflight nodig.
+  const financieelSleutel = (state.tweaks && state.tweaks.financieelSleutel) || '';
+  const [financieelApi, setFinancieelApi] = React.useState(null);
+  const [financieelStatus, setFinancieelStatus] = React.useState({ error: null });
+  React.useEffect(() => {
+    if (!financieelSleutel) { setFinancieelApi(null); setFinancieelStatus({ error: null }); return; }
+    let stop = false;
+    const load = () => fetch(FINANCIEEL_API_URL + '?sleutel=' + encodeURIComponent(financieelSleutel), { cache: 'no-store' })
+      .then(r => r.json().then(j => {
+        if (!r.ok) throw new Error(j && j.error ? j.error : 'HTTP ' + r.status);
+        return j;
+      }))
+      .then(j => {
+        if (stop) return;
+        const fo = financieelApiToOver(j);
+        if (!fo) throw new Error('Geen bedrag ontvangen');
+        setFinancieelApi(prev => (JSON.stringify(prev) === JSON.stringify(fo) ? prev : fo));
+        setFinancieelStatus({ error: null });
+      })
+      .catch(e => { if (!stop) setFinancieelStatus({ error: e.message || 'Ophalen mislukt' }); });
+    load();
+    const id = setInterval(load, 60000);
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [financieelSleutel]);
+  const financieelOver = financieelApi || financieelOverRow;
   const applyRemoteData = React.useCallback(remoteData => {
     if (!remoteData) {
       transactionsLoadedRef.current = false;
@@ -2158,7 +2186,7 @@ function App() {
   const app = React.useMemo(() => ({
     state: viewState, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
-    chainBalances, chainLoading, refreshChain,
+    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
@@ -2166,7 +2194,7 @@ function App() {
     overlayOpen: overlay !== null, confirm: confirmFn, toast,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
-    chainBalances, chainLoading, refreshChain,
+    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
