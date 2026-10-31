@@ -1092,6 +1092,7 @@ const DEFAULT_UI_PREFS = {
   startPrivate: false,
   sidebarCollapsed: false,
   period: '1J',
+  positionsPeriod: 'ALL',
   chartMode: 'value',
   exclPE: false,
   resultMode: 'eur',
@@ -1883,7 +1884,9 @@ function periodRange(dates, key, todayIso) {
   const i1 = len - 1;
   if (key === 'ALL') return { i0: 0, i1, all: true, enabled: len >= 2 };
   const t = todayIso || dates[i1];
-  const start = key === '1M' ? addDaysIso(t, -30)
+  const start = key === '1D' ? addDaysIso(t, -1)
+    : key === '1W' ? addDaysIso(t, -7)
+    : key === '1M' ? addDaysIso(t, -30)
     : key === '3M' ? addDaysIso(t, -91)
     : key === 'YTD' ? `${t.slice(0, 4)}-01-01`
     : addDaysIso(t, -365);
@@ -1917,6 +1920,33 @@ function periodStats({ dates, value, net }, i0, i1, all = false) {
   const twr = twrGaps > 0 ? null : (prod - 1) * 100;
   const annualized = (pct != null && D >= 365) ? (Math.pow(1 + pct / 100, 365 / D) - 1) * 100 : null;
   return { gain, pct, twr, twrGaps, annualized, startValue: V0, endValue: V1, startNet: N0, endNet: N1, netFlow: N1 - N0, days: D };
+}
+
+// Winst van één partij over een periode, exclusief stortingen/opnames in die periode:
+// (waarde − netto ingelegd) aan het eind minus hetzelfde aan het begin. Netto ingelegd = kostprijs −
+// gerealiseerd, dus kopen/inleg/overboeking-in verhogen het en verkoop/opname verlagen het (= geldstroom).
+// % = simple Dietz: winst / (beginwaarde + ½ · netto stroom); null als die basis ≤ 0.
+// 'ALL' = totale winst zoals de bestaande kolom (incl. gerealiseerd).
+function partyPeriodGain(model, s, key) {
+  if (!model || !s) return null;
+  if (key === 'ALL') return { gain: s.pnl || 0, pct: s.invested > 0 ? s.pnlPct : null, base: s.invested || 0, flow: 0 };
+  const series = model.series || {};
+  const r = periodRange(series.dates, key);
+  const v = series.byParty && series.byParty[s.party.id];
+  const n = series.netByParty && series.netByParty[s.party.id];
+  if (!r.enabled || !v || !n) return null;
+  const v0 = v[r.i0] || 0, v1 = v[r.i1] || 0, n0 = n[r.i0] || 0, n1 = n[r.i1] || 0;
+  const flow = n1 - n0;
+  const gain = (v1 - n1) - (v0 - n0);
+  const base = v0 + 0.5 * flow;
+  return { gain, pct: base > 0.5 ? gain / base * 100 : null, base, flow, start: series.dates[r.i0], end: series.dates[r.i1] };
+}
+
+// Som van periodewinsten; % over de opgetelde Dietz-basis.
+function sumPeriodGains(list) {
+  let gain = 0, base = 0, any = false;
+  for (const g of list) { if (!g) continue; any = true; gain += g.gain || 0; base += g.base || 0; }
+  return any ? { gain, base, pct: base > 0.5 ? gain / base * 100 : null } : null;
 }
 
 // Compacte momentopname voor de iOS-widget: exact dezelfde getallen als de Overzicht-hero
@@ -2189,7 +2219,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  PERIODS, periodRange, periodStats, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

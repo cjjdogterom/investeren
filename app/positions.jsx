@@ -75,6 +75,14 @@ injectStyles('positions', `
 .ps-list { display: flex; flex-direction: column; }
 .ps-lgroup { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 0 4px; border: 0; background: none; width: 100%; font: 500 13px/18px var(--font); color: var(--fg-muted); text-align: left; cursor: pointer; }
 .ps-lgroup__label { color: var(--fg); font-weight: 550; }
+.ps-lgroup__gain { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ps-lgroup__gain + .ps-lgroup__val { margin-left: 6px; }
+.ps-pgains { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.ps-pgains > div { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.ps-pgains dt { font-size: 11.5px; color: var(--fg-muted); margin-bottom: 2px; }
+.ps-pgains dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-pgains small { display: block; font-weight: 500; font-size: 11.5px; }
+@media (max-width: 420px) { .ps-pgains { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ps-lgroup__val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .ps-lrow { display: flex; align-items: center; gap: 12px; min-height: 64px; width: 100%; padding: 8px 0; border: 0; background: none; text-align: left; color: var(--fg); font: inherit; cursor: pointer; border-radius: 12px; }
 .ps-lrow:active { background: var(--surface-2); }
@@ -186,6 +194,32 @@ injectStyles('positions', `
 `);
 
 const PS_PERIOD_FALLBACK = ['ALL', '1J', 'YTD', '3M', '1M'];
+// Periodes op Posities: sturen zowel de winstkolommen als de trend. 'Alles' = totale winst.
+const PS_GAIN_PERIODS = [
+  { key: '1D',  label: '1D',    col: 'dag',   context: 'sinds gisteren' },
+  { key: '1W',  label: '1W',    col: 'week',  context: 'afgelopen 7 dagen' },
+  { key: '1M',  label: '1M',    col: 'maand', context: 'afgelopen maand' },
+  { key: '3M',  label: '3M',    col: '3M',    context: 'afgelopen 3 maanden' },
+  { key: 'YTD', label: 'YTD',   col: 'YTD',   context: 'dit jaar' },
+  { key: '1J',  label: '1J',    col: 'jaar',  context: 'afgelopen jaar' },
+  { key: 'ALL', label: 'Alles', col: null,    context: 'sinds {datum}' },
+];
+// Effectieve winstperiode voor Posities (val terug op 'Alles' als er te weinig data is).
+function psGainKey(model, prefs) {
+  const k = (prefs && prefs.positionsPeriod) || 'ALL';
+  if (k === 'ALL' || !PS_GAIN_PERIODS.some(p => p.key === k)) return 'ALL';
+  return periodRange(model.series.dates, k).enabled ? k : 'ALL';
+}
+function psGainLabel(key) {
+  const p = PS_GAIN_PERIODS.find(x => x.key === key);
+  return p && p.col ? 'Winst ' + p.col : 'Winst';
+}
+// Map partij-id → periodewinst ({gain, pct, base}) voor alle samenvattingen.
+function psGainMap(model, key) {
+  const out = {};
+  for (const s of [...model.summaries, ...model.closed, ...model.empty]) out[s.party.id] = partyPeriodGain(model, s, key);
+  return out;
+}
 const PS_SECONDARY_OPTIONS = [
   { value: 'pnl', label: 'Winst € + %' },
   { value: 'value', label: 'Waarde & aandeel' },
@@ -227,46 +261,47 @@ function psRange(dates, period) {
   return { ...r, key };
 }
 
-function psPeriodOptions(dates) {
-  return PERIODS.map(p => {
+function psPeriodOptions(dates, list = PERIODS) {
+  return list.map(p => {
     const en = periodRange(dates, p.key).enabled;
     return { value: p.key, label: p.label, disabled: !en, title: en ? undefined : 'Te weinig data', testId: `period-${p.key}` };
   });
 }
 
-// 1–5 shortcuts for the period (desktop, not while typing).
+// 1–7 shortcuts for the period (desktop, not while typing).
 function usePsPeriodKeys(app, enabled) {
   useEffect(() => {
     if (!enabled) return undefined;
     const onKey = e => {
       if (e.ctrlKey || e.metaKey || e.altKey || psTyping(e) || app.overlayOpen) return;
-      const i = '12345'.indexOf(e.key);
+      const i = '1234567'.indexOf(e.key);
       if (i < 0) return;
-      const key = PERIODS[i].key;
+      const key = PS_GAIN_PERIODS[i].key;
       if (!periodRange(app.model.series.dates, key).enabled) return;
-      app.setPrefs({ period: key });
+      app.setPrefs({ positionsPeriod: key });
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [enabled, app]);
 }
 
-function psSortValue(s, key, totalValue, todayIso) {
+function psSortValue(s, key, totalValue, todayIso, gains) {
+  const g = gains ? gains[s.party.id] : undefined;
   switch (key) {
     case 'name': return (s.party.name || '').toLowerCase();
-    case 'pnl': return s.pnl || 0;
-    case 'pnlPct': return s.invested > 0 ? s.pnlPct : -Infinity;
+    case 'pnl': return gains ? (g ? g.gain : -Infinity) : (s.pnl || 0);
+    case 'pnlPct': return gains ? (g && g.pct != null ? g.pct : -Infinity) : (s.invested > 0 ? s.pnlPct : -Infinity);
     case 'share': return totalValue > 0 ? (s.currentValueEur || 0) / totalValue : 0;
     case 'cagr': { const c = cagrOf(s, todayIso).pct; return c == null ? -Infinity : c; }
     default: return s.currentValueEur || 0;
   }
 }
 
-function psSortSummaries(list, sort, totalValue, valueOf) {
+function psSortSummaries(list, sort, totalValue, valueOf, gains) {
   const key = (sort && sort.key) || 'value';
   const dir = (sort && sort.dir) === 'asc' ? 1 : -1;
   const today = todayIsoLocal();
-  const val = s => (valueOf && (key === 'value' || key === 'share') ? valueOf(s) : psSortValue(s, key, totalValue, today));
+  const val = s => (valueOf && (key === 'value' || key === 'share') ? valueOf(s) : psSortValue(s, key, totalValue, today, gains));
   return list.slice().sort((a, b) => {
     const ia = psIncluded(a.party), ib = psIncluded(b.party);
     if (ia !== ib) return ia ? -1 : 1;          // excluded last within a group
@@ -338,9 +373,12 @@ function PsSortTh({ label, k, sort, onSort, num = true, style }) {
 function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHeight, className, style }) {
   const { model, prefs, spots } = app;
   const compact = variant === 'compact';
-  const per = period || prefs.period;
+  // Volledige tabel (Posities): één periodekeuze voor winstkolommen én trend.
+  const gk = compact ? 'ALL' : psGainKey(model, prefs);
+  const per = compact ? (period || prefs.period) : (gk === 'ALL' ? 'ALL' : gk);
   const r = psRange(model.series.dates, per);
-  const perLabel = (PERIODS.find(p => p.key === r.key) || {}).label || '';
+  const perLabel = ([...PERIODS, ...PS_GAIN_PERIODS].find(p => p.key === r.key) || {}).label || '';
+  const gains = useMemo(() => (gk === 'ALL' ? null : psGainMap(model, gk)), [model, gk]);
   const grouped = compact || prefs.positionsGrouping !== 'none';
   const sort = prefs.positionsSort || { key: 'value', dir: 'desc' };
   const collapsed = new Set(prefs.collapsedGroups || []);
@@ -352,19 +390,25 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const asOf = asOfIndex != null && asOfIndex >= 0 && asOfIndex < model.series.dates.length ? asOfIndex : null;
   const at = useMemo(() => (asOf != null ? holdingsAt(model, asOf) : null), [model, asOf]);
   const valueOf = s => (at ? (at[s.party.id] ? at[s.party.id].value : null) : s.currentValueEur);
-  const pnlOf = s => (at ? (at[s.party.id] ? at[s.party.id].pnl : null) : s.pnl);
+  const pnlOf = s => (at ? (at[s.party.id] ? at[s.party.id].pnl : null)
+    : gains ? (gains[s.party.id] ? gains[s.party.id].gain : null) : s.pnl);
+  const pctOf = s => (gains ? (gains[s.party.id] ? gains[s.party.id].pct : null) : (s.invested > 0 ? s.pnlPct : null));
+  const totalGain = gains && !at ? sumPeriodGains(model.included.map(s => gains[s.party.id])) : null;
   const totalValue = at
     ? model.included.reduce((a, s) => a + (valueOf(s) || 0), 0)
     : model.totals.value;
   const totalPnl = at
     ? model.included.reduce((a, s) => a + (pnlOf(s) || 0), 0)
-    : model.totals.pnl;
+    : totalGain ? totalGain.gain : model.totals.pnl;
+  const totalPct = totalGain ? totalGain.pct : model.totals.pnlPct;
 
   const groups = psGroupOpen(model, grouped).map(g => {
     const inc = g.rows.filter(s => psIncluded(s.party));
     const value = inc.reduce((a, s) => a + (valueOf(s) || 0), 0);
     const pnl = inc.reduce((a, s) => a + (pnlOf(s) || 0), 0);
-    return { ...g, value, pnl, share: totalValue > 0 ? value / totalValue * 100 : 0, rows: psSortSummaries(g.rows, sort, totalValue, at ? valueOf : null) };
+    const gsum = gains && !at ? sumPeriodGains(inc.map(s => gains[s.party.id])) : null;
+    return { ...g, value, pnl, pct: gsum ? gsum.pct : null, share: totalValue > 0 ? value / totalValue * 100 : 0,
+      rows: psSortSummaries(g.rows, sort, totalValue, at ? valueOf : null, at ? null : gains) };
   });
   const anyGoal = !compact && model.summaries.some(s => +s.party.goal > 0);
 
@@ -446,7 +490,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
         <td className="num ps-muted">{share == null ? '—' : fmtPct(share, { decimals: 1, sign: false })}</td>
         <td className="num ps-muted"><PsMoney value={s.invested} /></td>
         <td className="num"><span className={psCx('ps-val', psTone(pn))}>{pn == null ? '—' : <PsMoney value={pn} sign />}</span></td>
-        <td className={psCx('num', psTone(pn))}>{s.invested > 0 ? fmtPct(s.pnlPct, { decimals: 1 }) : '—'}</td>
+        <td className={psCx('num', psTone(pn))}>{pctOf(s) != null ? fmtPct(pctOf(s), { decimals: 1 }) : '—'}</td>
         <td className="num" title={cg.pct == null ? 'minder dan 1 jaar historie' : `CAGR ${cg.years.toFixed(1).replace('.', ',')} j`}>
           {cg.pct == null ? <span className="ps-subtle">—</span> : <span className={psTone(cg.pct)}>{fmtPct(cg.pct, { decimals: 1 })} p.j.</span>}
         </td>
@@ -495,7 +539,8 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
         <td className="num ps-muted">{fmtPct(g.share, { decimals: 1, sign: false })}</td>
         <td />
         <td className="num"><span className={psCx('ps-val', psTone(g.pnl))}><PsMoney value={g.pnl} sign /></span></td>
-        <td colSpan={colCount - 7} />
+        <td className={psCx('num', psTone(g.pnl))}>{gains && g.pct != null ? fmtPct(g.pct, { decimals: 1 }) : ''}</td>
+        <td colSpan={colCount - 8} />
       </>
     );
     return <tr key={'g-' + g.key} className="ps-group">{cells}</tr>;
@@ -530,8 +575,8 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
       <PsSortTh label="Waarde" k="value" sort={sort} onSort={onSort} />
       <PsSortTh label="Aandeel" k="share" sort={sort} onSort={onSort} />
       <th scope="col" className="num">Ingelegd</th>
-      <PsSortTh label="Winst €" k="pnl" sort={sort} onSort={onSort} />
-      <PsSortTh label="Winst %" k="pnlPct" sort={sort} onSort={onSort} />
+      <PsSortTh label={psGainLabel(gk) + ' €'} k="pnl" sort={sort} onSort={onSort} />
+      <PsSortTh label={psGainLabel(gk) + ' %'} k="pnlPct" sort={sort} onSort={onSort} />
       <PsSortTh label="Per jaar" k="cagr" sort={sort} onSort={onSort} />
       {anyGoal && <th scope="col" className="num">Doel</th>}
       <th scope="col">Trend {perLabel}</th>
@@ -590,7 +635,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
                   <td className="num">100%</td>
                   <td className="num"><PsMoney value={model.totals.invested} /></td>
                   <td className="num"><span className={psCx('ps-val', psTone(totalPnl))}><PsMoney value={totalPnl} sign /></span></td>
-                  <td className={psCx('num', psTone(totalPnl))}>{model.totals.pnlPct == null ? '—' : fmtPct(model.totals.pnlPct, { decimals: 1 })}</td>
+                  <td className={psCx('num', psTone(totalPnl))}>{totalPct == null ? '—' : fmtPct(totalPct, { decimals: 1 })}</td>
                   <td colSpan={colCount - 8} />
                 </>
               )}
@@ -599,7 +644,9 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
         </table>
       </div>
       <div className="ps-ht__note">
-        <span>Winst per positie is incl. gerealiseerd resultaat</span>
+        <span>{gains
+          ? `${psGainLabel(gk)}: ${(PS_GAIN_PERIODS.find(p => p.key === gk) || {}).context}, exclusief stortingen en opnames · % = simple Dietz`
+          : 'Winst per positie is incl. gerealiseerd resultaat'}</span>
         {!compact && model.summaries.some(s => !psIncluded(s.party)) && <span>Partijen met 'niet in totaal' tellen niet mee in subtotalen en totaal.</span>}
       </div>
     </div>
@@ -609,9 +656,14 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
 // ===================================================================
 // HoldingsList (mobile)
 // ===================================================================
-function psSecondary(s, mode, totalValue, privacy) {
+function psSecondary(s, mode, totalValue, privacy, g) {
   const p = s.party;
   const inc = psIncluded(p);
+  if (g !== undefined && (mode === 'pnl' || mode === 'pnlPct')) {
+    if (!g) return <span className="ps-lrow__sec">—</span>;
+    if (mode === 'pnlPct') return <span className={psCx('ps-lrow__sec', psTone(g.gain))}>{g.pct != null ? fmtPct(g.pct, { decimals: 1 }) : '—'}</span>;
+    return <span className="ps-lrow__sec"><Delta value={g.gain} pct={g.pct} size="sm" /></span>;
+  }
   switch (mode) {
     case 'value': return <span className="ps-lrow__sec">{inc && totalValue > 0 ? fmtPct(s.currentValueEur / totalValue * 100, { decimals: 1, sign: false }) + ' aandeel' : 'niet in totaal'}</span>;
     case 'qty': return <span className="ps-lrow__sec">{holdingQtyText(s)}</span>;
@@ -626,7 +678,7 @@ function psSecondary(s, mode, totalValue, privacy) {
   }
 }
 
-function PsListRow({ app, s, closed = false, empty = false, totalValue, mode }) {
+function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, gain }) {
   const p = s.party;
   const privacy = !!app.prefs.privacy;
   const inc = psIncluded(p);
@@ -644,7 +696,7 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode }) 
         <span className="ps-lrow__val"><Money value={s.currentValueEur} /></span>
         {closed ? <span className={psCx('ps-lrow__sec', psTone(s.pnl))}>{privacy ? '€ •••••' : fmtMoney(s.pnl, { sign: true })}</span>
           : empty ? <span className="ps-lrow__sec">—</span>
-          : psSecondary(s, mode, totalValue, privacy)}
+          : psSecondary(s, mode, totalValue, privacy, gain)}
       </span>
     </button>
   );
@@ -657,13 +709,17 @@ function HoldingsList({ app, variant = 'overview' }) {
   const sort = page ? (prefs.positionsSort || { key: 'value', dir: 'desc' }) : { key: 'value', dir: 'desc' };
   const mode = prefs.positionsSecondary || 'pnl';
   const totalValue = model.totals.value;
+  const gk = page ? psGainKey(model, prefs) : 'ALL';
+  const gains = useMemo(() => (gk === 'ALL' ? null : psGainMap(model, gk)), [model, gk]);
+  const gainOf = s => (gains ? (gains[s.party.id] || null) : undefined);
   const [closedOpen, setClosedOpen] = useState(false);
   const [emptyOpen, setEmptyOpen] = useState(false);
   const collapsed = new Set(prefs.collapsedGroups || []);
   const groups = psGroupOpen(model, grouped).map(g => {
     const inc = g.rows.filter(s => psIncluded(s.party));
     const value = inc.reduce((a, s) => a + (s.currentValueEur || 0), 0);
-    return { ...g, value, share: totalValue > 0 ? value / totalValue * 100 : 0, rows: psSortSummaries(g.rows, sort, totalValue) };
+    const gsum = gains ? sumPeriodGains(inc.map(s => gains[s.party.id])) : null;
+    return { ...g, value, gsum, share: totalValue > 0 ? value / totalValue * 100 : 0, rows: psSortSummaries(g.rows, sort, totalValue, null, gains) };
   });
   const toggleGroup = key => {
     const next = collapsed.has(key) ? [...collapsed].filter(k => k !== key) : [...collapsed, key];
@@ -682,11 +738,12 @@ function HoldingsList({ app, variant = 'overview' }) {
                 <Swatch color={g.color} size={10} />
                 <span className="ps-lgroup__label">{g.label}</span>
                 <span className="num">{g.share > 0 && g.share < 0.1 ? '<0,1%' : fmtPct(g.share, { decimals: 1, sign: false })}</span>
+                {g.gsum && <span className={psCx('ps-lgroup__gain', psTone(g.gsum.gain))}>{privacy ? '€ •••••' : fmtMoney(g.gsum.gain, { sign: true })}</span>}
                 <span className="ps-lgroup__val"><Money value={g.value} /></span>
                 <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={14} style={{ color: 'var(--fg-subtle)' }} />
               </button>
             )}
-            {isOpen && g.rows.map(s => <PsListRow key={s.party.id} app={app} s={s} totalValue={totalValue} mode={mode} />)}
+            {isOpen && g.rows.map(s => <PsListRow key={s.party.id} app={app} s={s} totalValue={totalValue} mode={mode} gain={gainOf(s)} />)}
           </React.Fragment>
         );
       })}
@@ -721,7 +778,9 @@ function HoldingsList({ app, variant = 'overview' }) {
           <Icon name="chevron-right" size={16} style={{ color: 'var(--fg-subtle)' }} />
         </button>
       )}
-      <div className="ps-lnote">Winst per positie is inclusief gerealiseerde winst.</div>
+      <div className="ps-lnote">{gains
+        ? `${psGainLabel(gk)} (${(PS_GAIN_PERIODS.find(p => p.key === gk) || {}).context}) is exclusief stortingen en opnames.`
+        : 'Winst per positie is inclusief gerealiseerde winst.'}</div>
     </div>
   );
 }
@@ -856,6 +915,21 @@ function PsPartyBody({ app, s }) {
             : <><Delta value={shown - shownNet} size="md" /><span>winst op die datum</span></>}
         </div>
       </div>
+      {!s.external && (
+        <dl className="ps-pgains" data-testid="party-period-gains">
+          {[['1D', 'Vandaag'], ['1W', 'Week'], ['1M', 'Maand'], ['1J', 'Jaar']].map(([k, lbl]) => {
+            const g = partyPeriodGain(model, s, k);
+            const ctx = (PS_GAIN_PERIODS.find(x => x.key === k) || {}).context;
+            return (
+              <div key={k} title={`Winst ${ctx}, exclusief stortingen en opnames`}>
+                <dt>{lbl}</dt>
+                <dd className={g ? psTone(g.gain) : 'ps-subtle'}>{!g ? '—' : privacy ? '€ •••••' : fmtMoney(g.gain, { sign: true })}
+                  <small>{g && g.pct != null ? fmtPct(g.pct, { decimals: 1 }) : '—'}</small></dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
       {hasChart && (
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}
@@ -1261,7 +1335,8 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
 function PsStackCard({ app }) {
   const { model, prefs, state } = app;
   const privacy = !!prefs.privacy;
-  const r = psRange(model.series.dates, prefs.period);
+  const sk = psGainKey(model, prefs);
+  const r = psRange(model.series.dates, ['1D', '1W'].includes(sk) ? '1M' : sk);
   const ids = model.included.map(s => s.party.id).filter(id => model.chartIds.includes(id));
   const layers = useMemo(() => {
     if (r.i1 < 0) return [];
@@ -1336,6 +1411,8 @@ function PsMobile({ app }) {
   const sort = prefs.positionsSort || { key: 'value', dir: 'desc' };
   const secLabel = (PS_SECONDARY_OPTIONS.find(o => o.value === (prefs.positionsSecondary || 'pnl')) || PS_SECONDARY_OPTIONS[0]).label;
   const segments = model.classes.map(c => ({ key: c.key, label: c.label, color: c.color, value: c.value }));
+  const gk = psGainKey(model, prefs);
+  const tg = gk === 'ALL' ? null : sumPeriodGains(model.included.map(s => partyPeriodGain(model, s, gk)));
   return (
     <div className="ps-page">
       <div className="ps-mhead">
@@ -1352,13 +1429,15 @@ function PsMobile({ app }) {
           options={[{ value: 'class', label: 'Categorieën' }, { value: 'none', label: 'Partijen' }]} />
         <Chip onClick={() => setSheet('secondary')}>Toon: {secLabel} ▾</Chip>
       </div>
+      <Segmented size="sm" pill full ariaLabel="Periode voor winst" value={gk} onChange={k => app.setPrefs({ positionsPeriod: k })}
+        options={psPeriodOptions(model.series.dates, PS_GAIN_PERIODS).map(o => (o.value === 'ALL' ? { ...o, disabled: false } : o))} />
       <Card>
         <div className="ps-mtotal">
           <div className="ps-mtotal__row">
             <span className="ps-mtotal__val"><Money value={t.value} /></span>
-            <Delta value={t.pnl} pct={t.pnlPct} size="sm" />
+            {tg ? <Delta value={tg.gain} pct={tg.pct} size="sm" /> : <Delta value={t.pnl} pct={t.pnlPct} size="sm" />}
           </div>
-          <div className="ps-mtotal__meta">Totaal · {model.included.filter(s => !isClosedSummary(s) && s.transactions.length).length} partijen in totaal</div>
+          <div className="ps-mtotal__meta">{tg ? psGainLabel(gk) + ' · ' : ''}Totaal · {model.included.filter(s => !isClosedSummary(s) && s.transactions.length).length} partijen in totaal</div>
           <AllocationBar segments={segments} height={14} privacy={!!prefs.privacy} ariaLabel="Verdeling per categorie" />
         </div>
       </Card>
@@ -1384,7 +1463,7 @@ function PsDesktop({ app }) {
   const { model, prefs, route } = app;
   usePsPeriodKeys(app, true);
   const t = model.totals;
-  const r = psRange(model.series.dates, prefs.period);
+  const gk = psGainKey(model, prefs);
   const partyId = route && route.params && route.params.partyId;
   return (
     <div className="ps-page">
@@ -1404,8 +1483,9 @@ function PsDesktop({ app }) {
         </div>
       </div>
       <div className="ps-controls">
-        <Segmented ariaLabel="Periode voor trend" value={r.key} onChange={k => app.setPrefs({ period: k })} options={psPeriodOptions(model.series.dates)} />
-        <span className="ps-foot-note">bepaalt de trend-kolom</span>
+        <Segmented ariaLabel="Periode voor winst en trend" value={gk} onChange={k => app.setPrefs({ positionsPeriod: k })}
+          options={psPeriodOptions(model.series.dates, PS_GAIN_PERIODS).map(o => (o.value === 'ALL' ? { ...o, disabled: false } : o))} />
+        <span className="ps-foot-note">bepaalt winst- en trendkolom · Alles = totale winst</span>
       </div>
       <Card padding={0}>
         <HoldingsTable app={app} variant="full" />
