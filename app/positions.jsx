@@ -97,6 +97,9 @@ injectStyles('positions', `
 .ps-lfold__main { flex: 1; display: flex; flex-direction: column; }
 .ps-lfold__title { font-weight: 600; font-size: 15px; }
 .ps-lfold__sub { font-size: 13px; color: var(--fg-muted); }
+.ps-pchips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.ps-pchips::-webkit-scrollbar { display: none; }
+.ps-pchips > .chip { flex: 1 0 auto; justify-content: center; height: 30px; padding: 0 10px; font-size: 12.5px; border-style: solid; border-color: var(--border); }
 .ps-lnote { font-size: 13px; line-height: 18px; color: var(--fg-subtle); padding: 8px 0 2px; }
 .ps-mtotal { display: flex; flex-direction: column; gap: 10px; }
 .ps-mtotal__row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -374,7 +377,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const { model, prefs, spots } = app;
   const compact = variant === 'compact';
   // Volledige tabel (Posities): één periodekeuze voor winstkolommen én trend.
-  const gk = compact ? 'ALL' : psGainKey(model, prefs);
+  const gk = psGainKey(model, prefs);
   const per = compact ? (period || prefs.period) : (gk === 'ALL' ? 'ALL' : gk);
   const r = psRange(model.series.dates, per);
   const perLabel = ([...PERIODS, ...PS_GAIN_PERIODS].find(p => p.key === r.key) || {}).label || '';
@@ -471,7 +474,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
             {pn == null ? '—' : (
               <span className="ps-pnl">
                 <span className={psCx('ps-val', psTone(pn))}><PsMoney value={pn} sign /></span>
-                {!at && s.invested > 0 && <small className={psTone(pn)}>{fmtPct(s.pnlPct, { decimals: 1 })}</small>}
+                {!at && pctOf(s) != null && <small className={psTone(pn)}>{fmtPct(pctOf(s), { decimals: 1 })}</small>}
               </span>
             )}
           </td>
@@ -565,7 +568,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
       <PsSortTh label="Positie" k="name" sort={sort} onSort={onSort} num={false} />
       <th scope="col" style={{ width: 92 }}>Trend {perLabel}</th>
       <PsSortTh style={{ width: at ? 118 : 88 }} label={at ? `Waarde op ${fmtDateShort(model.series.dates[asOf])}` : 'Waarde'} k="value" sort={sort} onSort={onSort} />
-      <PsSortTh style={{ width: 96 }} label="Winst" k="pnl" sort={sort} onSort={onSort} />
+      <PsSortTh style={{ width: 104 }} label={at ? 'Winst' : psGainLabel(gk)} k="pnl" sort={sort} onSort={onSort} />
     </tr>
   ) : (
     <tr>
@@ -653,6 +656,24 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   );
 }
 
+// Gedeelde periodekeuze voor winst (Posities + Overzicht; pref positionsPeriod per apparaat).
+function HoldingsPeriodPicker({ app, variant = 'seg', className }) {
+  const gk = psGainKey(app.model, app.prefs);
+  const opts = psPeriodOptions(app.model.series.dates, PS_GAIN_PERIODS).map(o => (o.value === 'ALL' ? Object.assign({}, o, { disabled: false }) : o));
+  const set = k => app.setPrefs({ positionsPeriod: k });
+  if (variant === 'chips') {
+    return (
+      <div className={psCx('ps-pchips', className)} role="group" aria-label="Periode voor winst">
+        {opts.map(o => (
+          <Chip key={o.value} active={o.value === gk} disabled={o.disabled} title={o.title} data-testid={'gain-' + o.testId}
+            onClick={() => set(o.value)}>{o.label}</Chip>
+        ))}
+      </div>
+    );
+  }
+  return <Segmented size="sm" className={className} ariaLabel="Periode voor winst" value={gk} onChange={set} options={opts} />;
+}
+
 // ===================================================================
 // HoldingsList (mobile)
 // ===================================================================
@@ -707,9 +728,10 @@ function HoldingsList({ app, variant = 'overview' }) {
   const page = variant === 'page';
   const grouped = !page || prefs.positionsGrouping !== 'none';
   const sort = page ? (prefs.positionsSort || { key: 'value', dir: 'desc' }) : { key: 'value', dir: 'desc' };
-  const mode = prefs.positionsSecondary || 'pnl';
+  // Overzicht toont altijd winst (volgt de gedeelde periodekeuze); Posities volgt 'Toon'.
+  const mode = page ? (prefs.positionsSecondary || 'pnl') : 'pnl';
   const totalValue = model.totals.value;
-  const gk = page ? psGainKey(model, prefs) : 'ALL';
+  const gk = psGainKey(model, prefs);
   const gains = useMemo(() => (gk === 'ALL' ? null : psGainMap(model, gk)), [model, gk]);
   const gainOf = s => (gains ? (gains[s.party.id] || null) : undefined);
   const [closedOpen, setClosedOpen] = useState(false);
@@ -1503,4 +1525,4 @@ function PositiesScreen({ app }) {
   return app.isMobile ? <PsMobile app={app} /> : <PsDesktop app={app} />;
 }
 
-Object.assign(window, { PositiesScreen, HoldingsTable, HoldingsList, PartyPanel, PartyForm });
+Object.assign(window, { PositiesScreen, HoldingsTable, HoldingsList, HoldingsPeriodPicker, PartyPanel, PartyForm });

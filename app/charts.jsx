@@ -15,14 +15,19 @@ injectStyles('charts', `
 .ch-xlab--start { transform: none; }
 .ch-xlab--end { transform: translateX(-100%); }
 .ch-xaxis--dim .ch-xlab { opacity: .3; }
-.ch-flag { position: absolute; top: 2px; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font: 550 11px/14px var(--font); white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.ch-flag { position: absolute; top: 2px; padding: 2px 8px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-ink); box-shadow: 0 2px 8px rgb(0 0 0 / .14); font: 550 11px/14px var(--font); white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
 .ch-flag--l { transform: none; }
 .ch-flag--r { transform: translateX(-100%); }
-.ch-cross { position: absolute; top: 0; width: 1px; margin-left: -0.5px; background: var(--accent); pointer-events: none; }
+.ch-root { --ch-line: var(--accent); }
+.ch-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; opacity: .8; }
+.ch-line { fill: none; stroke: var(--ch-line); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
+.ch-glow { fill: none; stroke: var(--ch-line); stroke-width: 7; stroke-linejoin: round; stroke-linecap: round; opacity: .12; }
+.ch-step { fill: none; stroke: var(--fg-subtle); stroke-width: 1.25; stroke-dasharray: 3 3; opacity: .75; }
+.ch-cross { position: absolute; top: 0; width: 1px; margin-left: -0.5px; background: linear-gradient(to bottom, transparent, var(--ch-line) 18%, var(--ch-line) 82%, transparent); pointer-events: none; }
 .ch-dim { position: absolute; top: 0; right: 0; background: color-mix(in srgb, var(--surface) 58%, transparent); pointer-events: none; }
-.ch-beacon { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
-.ch-end { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--fg); box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
-.ch-end--live::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--fg); opacity: 0; animation: ch-pulse 2.4s var(--ease) infinite; }
+.ch-beacon { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px color-mix(in srgb, var(--ch-line) 18%, transparent); pointer-events: none; }
+.ch-end { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--ch-line); box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px color-mix(in srgb, var(--ch-line) 20%, transparent); pointer-events: none; }
+.ch-end--live::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--ch-line); opacity: 0; animation: ch-pulse 2.4s var(--ease) infinite; }
 @keyframes ch-pulse { 0% { transform: scale(.6); opacity: .55; } 70% { transform: scale(1.8); opacity: 0; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .ch-end--live::after { display: none; } }
 .ch-marker { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; padding: 0; border: 0; background: none; display: flex; align-items: center; justify-content: center; cursor: default; z-index: 1; }
@@ -157,6 +162,36 @@ function chPath(xs, ys) {
   return d;
 }
 
+// Monotone cubic (Fritsch–Carlson) per aaneengesloten segment: vloeiend zonder overshoot.
+function chSmoothPath(xs, ys) {
+  let d = '';
+  let seg = [];
+  const flush = () => {
+    const m = seg.length;
+    if (!m) return;
+    if (m < 3) { seg.forEach((p, k) => { d += (k ? 'L' : 'M') + p[0].toFixed(2) + ' ' + p[1].toFixed(2); }); seg = []; return; }
+    const dx = [], sl = [], t = new Array(m);
+    for (let k = 0; k < m - 1; k++) { dx[k] = seg[k + 1][0] - seg[k][0]; sl[k] = dx[k] ? (seg[k + 1][1] - seg[k][1]) / dx[k] : 0; }
+    t[0] = sl[0]; t[m - 1] = sl[m - 2];
+    for (let k = 1; k < m - 1; k++) t[k] = sl[k - 1] * sl[k] <= 0 ? 0 : (3 * (dx[k - 1] + dx[k])) / ((2 * dx[k] + dx[k - 1]) / sl[k - 1] + (dx[k] + 2 * dx[k - 1]) / sl[k]);
+    d += 'M' + seg[0][0].toFixed(2) + ' ' + seg[0][1].toFixed(2);
+    for (let k = 0; k < m - 1; k++) {
+      const h = dx[k] / 3;
+      d += 'C' + (seg[k][0] + h).toFixed(2) + ' ' + (seg[k][1] + t[k] * h).toFixed(2) + ' '
+        + (seg[k + 1][0] - h).toFixed(2) + ' ' + (seg[k + 1][1] - t[k + 1] * h).toFixed(2) + ' '
+        + seg[k + 1][0].toFixed(2) + ' ' + seg[k + 1][1].toFixed(2);
+    }
+    seg = [];
+  };
+  for (let k = 0; k < xs.length; k++) {
+    const y = ys[k];
+    if (y == null || !Number.isFinite(y)) { flush(); continue; }
+    seg.push([xs[k], y]);
+  }
+  flush();
+  return d;
+}
+
 function chStepPoints(xs, ys) {
   const pts = [];
   for (let k = 0; k < xs.length; k++) {
@@ -230,11 +265,13 @@ function PerformanceChart({
     const xs = idx.map(x);
     const yp = idx.map(i => (primary[i] == null || !Number.isFinite(primary[i]) ? null : y(primary[i])));
     const ys = showSecondary ? idx.map(i => (secondary[i] == null ? null : y(secondary[i]))) : null;
-    const line = chPath(xs, yp);
+    const line = chSmoothPath(xs, yp);
     const out = { nt, y, x, line, xs, yp };
     const firstX = xs[yp.findIndex(v => v != null)];
     let lastK = yp.length - 1; while (lastK >= 0 && yp[lastK] == null) lastK--;
     const lastX = xs[lastK];
+    // Verloopvlak onder de waardelijn (alleen bij één doorlopend segment).
+    if (kind === 'money' && line && line.indexOf('M', 1) < 0) out.area = line + 'L' + lastX.toFixed(2) + ' ' + H + 'L' + firstX.toFixed(2) + ' ' + H + 'Z';
     const fwd = xs.map((xx, k) => [xx, yp[k]]).filter(p => p[1] != null);
     if (showSecondary) {
       const step = chStepPoints(xs, ys);
@@ -375,16 +412,23 @@ function PerformanceChart({
           <defs>
             {g.clipAbove && <clipPath id={`${uid}-a`}><polygon points={g.clipAbove} /></clipPath>}
             {g.clipBelow && <clipPath id={`${uid}-b`}><polygon points={g.clipBelow} /></clipPath>}
+            <linearGradient id={`${uid}-g`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0.26 }} />
+              <stop offset="60%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0.07 }} />
+              <stop offset="100%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0 }} />
+            </linearGradient>
           </defs>
           {g.nt.ticks.map(t => (
-            <line key={t} x1="0" x2="1000" y1={g.y(t)} y2={g.y(t)} style={{ stroke: kind === 'pct' && t === 0 ? 'var(--border-strong)' : 'var(--border)', strokeWidth: 1 }} />
+            <line key={t} x1="0" x2="1000" y1={g.y(t)} y2={g.y(t)} className="ch-grid"
+              style={kind === 'pct' && t === 0 ? { stroke: 'var(--border-strong)', strokeDasharray: 'none' } : undefined} />
           ))}
           <g key={rangeKey} className="ch-fade">
-            {g.wash && <polygon points={g.wash} style={{ fill: 'var(--wash-inleg)' }} />}
-            {g.band && g.clipAbove && <polygon points={g.band} clipPath={`url(#${uid}-a)`} style={{ fill: 'var(--gain-fill)', fillOpacity: 0.16 }} />}
-            {g.band && g.clipBelow && <polygon points={g.band} clipPath={`url(#${uid}-b)`} style={{ fill: 'var(--loss-fill)', fillOpacity: 0.2 }} />}
-            {g.stepLine && <path d={g.stepLine} style={{ fill: 'none', stroke: 'var(--fg-subtle)', strokeWidth: 1.5 }} />}
-            <path d={g.line} style={{ fill: 'none', stroke: 'var(--fg)', strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' }} />
+            {g.area && <path d={g.area} style={{ fill: `url(#${uid}-g)` }} />}
+            {g.band && g.clipBelow && <polygon points={g.band} clipPath={`url(#${uid}-b)`} style={{ fill: 'var(--loss-fill)', fillOpacity: 0.16 }} />}
+            {g.band && g.clipAbove && kind === 'pct' && <polygon points={g.band} clipPath={`url(#${uid}-a)`} style={{ fill: 'var(--gain-fill)', fillOpacity: 0.14 }} />}
+            {g.stepLine && <path d={g.stepLine} className="ch-step" />}
+            <path d={g.line} className="ch-glow" />
+            <path d={g.line} className="ch-line" />
           </g>
         </svg>
         {/* markers */}
@@ -408,7 +452,7 @@ function PerformanceChart({
             <span className="ch-dim" style={{ left: `${pctX(cur)}%`, height: H }} />
             <span className="ch-cross" style={{ left: `${pctX(cur)}%`, height: H }} />
             {curSecondary != null && <span className="ch-beacon" style={{ left: `${pctX(cur)}%`, top: `${pctY(curSecondary)}%`, background: 'var(--fg-subtle)' }} />}
-            {curPrimary != null && <span className="ch-beacon" style={{ left: `${pctX(cur)}%`, top: `${pctY(curPrimary)}%`, background: 'var(--fg)' }} />}
+            {curPrimary != null && <span className="ch-beacon" style={{ left: `${pctX(cur)}%`, top: `${pctY(curPrimary)}%`, background: 'var(--ch-line)' }} />}
           </>
         )}
       </div>

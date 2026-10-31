@@ -6,12 +6,25 @@ injectStyles('overzicht', `
 .ov-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .ov-left { flex: 7 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .ov-right { flex: 5 1 380px; min-width: 0; display: flex; flex-direction: column; }
-.ov-right > .card { flex: 1 1 0; height: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.ov-right--stacked > .card { flex: none; height: auto; }
-.ov-pos__body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.ov-pos__body > .ps-ht { flex: 1; min-height: 0; }
-.ov-pos__body > .ps-ht > .ps-ht__scroll { flex: 1; }
-.ov-right--stacked .ov-pos__body > .ps-ht > .ps-ht__scroll { max-height: 640px; }
+.ov-right > .ov-hold { flex: 1 1 0; height: 0; min-height: 0; display: flex; flex-direction: column; }
+.ov-right--stacked > .ov-hold { flex: none; height: auto; }
+.ov-hold > .ps-ht { flex: 1; min-height: 0; }
+.ov-hold > .ps-ht > .ps-ht__scroll { flex: 1; }
+.ov-right--stacked .ov-hold > .ps-ht > .ps-ht__scroll { max-height: 640px; }
+
+/* Bezittingen zonder kaart: randloos, rijen gescheiden door haarlijnen */
+.ov-hold { min-width: 0; display: flex; flex-direction: column; }
+.ov-hold__head { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 0 0 10px; }
+.ov-hold__title { margin: 0; font: 650 18px/24px var(--font); letter-spacing: -0.006em; color: var(--fg); }
+.ov-hold__meta { font-size: 12.5px; color: var(--fg-muted); }
+.ov-hold__head .ov-link { margin-left: auto; }
+.ov-hold .ps-ht th:first-child, .ov-hold .ps-ht td:first-child { padding-left: 4px; }
+.ov-hold .ps-ht th:last-child, .ov-hold .ps-ht td:last-child { padding-right: 4px; }
+.ov-hold .ps-ht th { border-bottom-color: var(--border); }
+.ov-hold .ps-group td { height: 34px; }
+.ov-hold .ps-ht tfoot td { border-top-color: var(--border); }
+.ov-hold .ps-ht__note { padding: 10px 4px 0; border-top: 0; }
+.ov-hold .ps-row:hover td, .ov-hold .ps-row:focus-visible td { background: var(--surface-2); }
 .ov-row2 { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .ov-row2 > .ov-verdeling { flex: 4 1 300px; }
 .ov-row2 > .ov-attn { flex: 3 1 260px; }
@@ -89,9 +102,13 @@ injectStyles('overzicht', `
 
 /* Mobile */
 .ov-m { display: flex; flex-direction: column; gap: 20px; padding: 12px 16px 8px; min-width: 0; }
-.ov-m__hero { display: flex; flex-direction: column; gap: 6px; }
-.ov-m__hero .ov-hero { font-size: 52px; line-height: 54px; letter-spacing: -0.036em; margin: 2px 0 2px; }
-.ov-m__chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--r-pill); border: 0; background: var(--surface-2); color: var(--fg-muted); font: 500 12.5px/1 var(--font); cursor: pointer; position: relative; }
+.ov-m__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-top: 4px; }
+.ov-m__lhs { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding-top: 6px; }
+.ov-m__rhs { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; text-align: right; }
+.ov-m__hero .ov-hero { font-size: 34px; line-height: 38px; letter-spacing: -0.03em; margin: 0; }
+.ov-m__hero .ov-deltarow { justify-content: flex-end; min-height: 18px; }
+.ov-m__ctx { font-size: 12px; line-height: 16px; color: var(--fg-subtle); }
+.ov-m__chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: var(--r-pill); border: 0; background: var(--surface-2); color: var(--fg-muted); font: 500 12.5px/1 var(--font); cursor: pointer; position: relative; }
 .ov-m__chip::after { content: ''; position: absolute; inset: -8px -4px; }
 .ov-m__cap { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .ov-m__legend { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--fg-muted); }
@@ -122,6 +139,17 @@ injectStyles('overzicht', `
 .ov-small { font-size: 13px; line-height: 18px; color: var(--fg-muted); }
 .ov-small b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 .ov-caption { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg-subtle); margin: 8px 0 4px; }
+.ov-hold--m { margin: 0 -16px; }
+.ov-hold--m .ov-hold__head { padding: 0 16px 10px; }
+.ov-hold--m .ps-pchips { padding: 0 16px 12px; }
+.ov-hold--m .ov-hold__alloc { padding: 0 16px 6px; }
+.ov-hold--m .ov-caption { margin: 8px 0 0; }
+.ov-hold--m .ps-list { border-bottom: 1px solid var(--border); }
+.ov-hold--m .ps-lgroup { padding: 14px 16px 6px; min-height: 40px; border-top: 1px solid var(--border); }
+.ov-hold--m .ps-lrow { padding: 8px 16px; border-radius: 0; border-top: 1px solid var(--border); min-height: 64px; }
+.ov-hold--m .ps-lgroup + .ps-lrow { border-top: 0; }
+.ov-hold--m .ps-lfold { padding: 8px 16px; margin-top: 0; }
+.ov-hold--m .ps-lnote { padding: 10px 16px; border-top: 1px solid var(--border); }
 .ov-mfoot { text-align: center; font-size: 12.5px; line-height: 18px; color: var(--fg-subtle); padding: 0 16px; }
 
 @media (max-width: 767.98px) {
@@ -561,10 +589,15 @@ function OvPrestatiesCard({ app, pf }) {
 function OvPositiesCard({ app, pinIndex }) {
   const t = app.model.totals;
   return (
-    <Card className="ov-pos" title="Posities" meta={`${t.openCount} open · ${t.closedCount} gesloten`} padding={0} bodyClassName="ov-pos__body"
-      actions={<button type="button" className="ov-link" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="arrow-right" size={12} /></button>}>
+    <section className="ov-hold" aria-labelledby="ov-hold-title" data-testid="ov-holdings">
+      <div className="ov-hold__head">
+        <h2 className="ov-hold__title" id="ov-hold-title">Bezittingen</h2>
+        <span className="ov-hold__meta">{t.openCount} open · {t.closedCount} gesloten</span>
+        {window.HoldingsPeriodPicker && pinIndex == null ? <HoldingsPeriodPicker app={app} /> : null}
+        <button type="button" className="ov-link" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="arrow-right" size={12} /></button>
+      </div>
       {window.HoldingsTable ? <HoldingsTable app={app} variant="compact" asOfIndex={pinIndex} /> : null}
-    </Card>
+    </section>
   );
 }
 
@@ -651,17 +684,17 @@ function OvDesktop({ app }) {
   }, []);
   const items = useMemo(() => ovAttentionItems(app), [app.model, app.state.targetAllocation, app.syncStatus, app.spotStatus, app.spots]);
   const pinIndex = pf.pinned ? pf.ci : null;
-  const showVerd = on('allocation'), showAttn = on('attention');
-  const row3 = [on('monthly_inleg') && <OvMonthlyCard key="m" app={app} />, on('returns') && <OvResultCard key="r" app={app} />, on('activity_feed') && <OvActivityCard key="a" app={app} />].filter(Boolean);
+  const showVerd = on('allocation');
+  const row3 = [on('monthly_inleg') && <OvMonthlyCard key="m" app={app} />, on('returns') && <OvResultCard key="r" app={app} />, on('activity_feed') && <OvActivityCard key="a" app={app} />,
+    on('attention') && <OvAttentionCard key="att" app={app} items={items} />].filter(Boolean);
   return (
     <div className="ov-desk">
       <div className="ov-top" ref={topRef}>
         <div className="ov-left">
           <OvPrestatiesCard app={app} pf={pf} />
-          {(showVerd || showAttn) && (
+          {showVerd && (
             <div className="ov-row2">
-              {showVerd && <OvVerdelingCard app={app} pinIndex={pinIndex} />}
-              {showAttn && <OvAttentionCard app={app} items={items} />}
+              <OvVerdelingCard app={app} pinIndex={pinIndex} />
             </div>
           )}
         </div>
@@ -760,34 +793,32 @@ function OvMobile({ app }) {
   return (
     <div className="ov-m">
       <section className="ov-m__hero" aria-label="Totale waarde">
-        <div className="ov-label">{label}</div>
-        <OvHeroValue value={pf.heroValue} privacy={privacy} testId="hero-value" />
-        <div className="ov-deltarow" data-testid="hero-delta">
-          <Delta value={pf.deltaGain} pct={pf.deltaPct} size="md" context={mobileCtx} />
+        <div className="ov-m__lhs">
+          <div className="ov-label">{label}</div>
+          <button type="button" className="ov-m__chip" onClick={() => setExplain(true)}>
+            {pf.r.all && pf.ci == null ? 'op inleg' : 'excl. stortingen'} <Icon name="info" size={13} />
+          </button>
         </div>
-        <button type="button" className="ov-m__chip" onClick={() => setExplain(true)}>
-          {pf.r.all && pf.ci == null ? 'op inleg' : 'excl. stortingen'} <Icon name="info" size={14} />
-        </button>
-        <div className="ov-m__cap">
-          <CapitalBar invested={Math.max(0, pf.heroNet)} gain={pf.heroWinst} height={8} privacy={privacy} />
-          <div className="ov-m__legend">
-            <span><Swatch color="var(--cap-inleg)" size={10} />Netto ingelegd <b>{privacy ? '€ •••••' : fmtMoney(pf.heroNet)}</b></span>
-            <span><Swatch color={pf.heroWinst < 0 ? 'var(--loss-fill)' : 'var(--gain-fill)'} size={10} />{pf.heroWinst < 0 ? 'Verlies' : 'Totale winst'} <b className={pf.heroWinst < 0 ? 'ov-loss' : 'ov-gain'}>{privacy ? '€ •••••' : fmtMoney(pf.heroWinst, { sign: true })}</b></span>
+        <div className="ov-m__rhs">
+          <OvHeroValue value={pf.heroValue} privacy={privacy} testId="hero-value" />
+          <div className="ov-deltarow" data-testid="hero-delta">
+            <Delta value={pf.deltaGain} pct={pf.deltaPct} size="sm" />
           </div>
+          <div className="ov-m__ctx">{mobileCtx}</div>
         </div>
       </section>
 
       <div>
         <div className="ov-m__chart">
           <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-            kind={pf.mode === 'return' ? 'pct' : 'money'} height={200}
+            kind={pf.mode === 'return' ? 'pct' : 'money'} height={164}
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} onCursor={pf.onCursor}
             ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : 'Waarde en netto ingelegd over de periode'}
             valueText={pf.valueText} privacy={privacy}
             emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
         </div>
-        <div className="ov-m__periods" style={{ marginTop: 10 }}>
+        <div className="ov-m__periods" style={{ marginTop: 8 }}>
           <Segmented pill full ariaLabel="Periode" value={pf.periodKey} onChange={k => app.setPrefs({ period: k })} options={pf.periodOptions} />
           <IconButton icon="trending-up" label="Rendement tonen" pressed={pf.mode === 'return'}
             onClick={() => app.setPrefs({ chartMode: pf.mode === 'return' ? 'value' : 'return' })} />
@@ -805,19 +836,22 @@ function OvMobile({ app }) {
           <span className="ov-quick__well"><Icon name="refresh-cw" size={20} /></span>Koersen</button>
       </nav>
 
-      <OvVoorJou app={app} items={items} />
-
       {on('party_grid') && (
-        <Card title="Bezittingen" meta={`${t.openCount} posities`}
-          actions={<button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="chevron-right" size={14} /></button>}>
+        <section className="ov-hold ov-hold--m" aria-labelledby="ov-mhold-title" data-testid="ov-holdings">
+          <div className="ov-hold__head">
+            <h2 className="ov-hold__title" id="ov-mhold-title">Bezittingen</h2>
+            <span className="ov-hold__meta">{t.openCount} posities</span>
+            <button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="chevron-right" size={14} /></button>
+          </div>
+          {window.HoldingsPeriodPicker ? <HoldingsPeriodPicker app={app} variant="chips" /> : null}
           {on('allocation') && segs.length > 0 && (
-            <>
-              <AllocationBar segments={segs} height={14} privacy={privacy} ariaLabel="Verdeling per categorie" onSegmentClick={() => app.navigate('/plan/verdeling')} />
+            <div className="ov-hold__alloc">
+              <AllocationBar segments={segs} height={10} privacy={privacy} ariaLabel="Verdeling per categorie" onSegmentClick={() => app.navigate('/plan/verdeling')} />
               <div className="ov-caption"><span>Verdeling per categorie</span>{targetsText && <span>{targetsText}</span>}</div>
-            </>
+            </div>
           )}
           {window.HoldingsList ? <HoldingsList app={app} variant="overview" /> : null}
-        </Card>
+        </section>
       )}
 
       {on('activity_feed') && (
@@ -827,6 +861,8 @@ function OvMobile({ app }) {
             : <EmptyState icon="receipt" title="Nog geen transacties" />}
         </Card>
       )}
+
+      <OvVoorJou app={app} items={items} />
 
       <div className="ov-mfoot">
         {synced ? `Gesynchroniseerd om ${fmtTime(synced.toISOString())} · ` : ''}{t.txCount} transacties{t.firstTxDate ? ` sinds ${fmtDateLong(t.firstTxDate)}` : ''}
