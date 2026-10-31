@@ -150,6 +150,8 @@ injectStyles('overzicht', `
 .ov-hold--m .ps-lgroup + .ps-lrow { border-top: 0; }
 .ov-hold--m .ps-lfold { padding: 8px 16px; margin-top: 0; }
 .ov-hold--m .ps-lnote { padding: 10px 16px; border-top: 1px solid var(--border); }
+.ov-act--m .tr-actlist { border-bottom: 1px solid var(--border); }
+.ov-act--m .tr-act { padding: 10px 16px; min-height: 64px; border-radius: 0; border-top: 1px solid var(--border); }
 .ov-mfoot { text-align: center; font-size: 12.5px; line-height: 18px; color: var(--fg-subtle); padding: 0 16px; }
 
 @media (max-width: 767.98px) {
@@ -855,11 +857,14 @@ function OvMobile({ app }) {
       )}
 
       {on('activity_feed') && (
-        <Card title="Recente activiteit"
-          actions={<button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/transacties')}>{t.txCount} transacties <Icon name="chevron-right" size={14} /></button>}>
+        <section className="ov-hold ov-hold--m ov-act--m" aria-labelledby="ov-mact-title" data-testid="ov-activity">
+          <div className="ov-hold__head">
+            <h2 className="ov-hold__title" id="ov-mact-title">Recente activiteit</h2>
+            <button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/transacties')}>{t.txCount} transacties <Icon name="chevron-right" size={14} /></button>
+          </div>
           {recent.length ? (window.TxList ? <TxList app={app} txs={recent} variant="activity" limit={5} /> : null)
             : <EmptyState icon="receipt" title="Nog geen transacties" />}
-        </Card>
+        </section>
       )}
 
       <OvVoorJou app={app} items={items} />

@@ -9,7 +9,10 @@ injectStyles('charts', `
 .ch-fade { animation: ch-fade var(--d-2) var(--ease); }
 @keyframes ch-fade { from { opacity: .3; } to { opacity: 1; } }
 .ch-ylab { position: absolute; right: 0; width: 48px; transform: translateY(-50%); text-align: right; font: 500 11px/14px var(--font); letter-spacing: .01em; color: var(--fg-subtle); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
-.ch-ylab--in { right: 4px; width: auto; transform: translateY(calc(-100% - 3px)); }
+.ch-ylab--in { right: auto; left: 12px; width: auto; text-align: left; padding: 0 5px; border-radius: 5px; font-size: 10.5px; background: color-mix(in srgb, var(--surface) 82%, transparent); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); z-index: 1; }
+.ch-root--compact .ch-svg { clip-path: inset(-12px -20px -12px -16px); }
+.ch-root--compact .ch-line { stroke-width: 2.6; }
+.ch-root--compact .ch-glow { stroke-width: 8; opacity: .1; }
 .ch-xaxis { position: absolute; left: 0; height: 22px; pointer-events: none; }
 .ch-xlab { position: absolute; top: 5px; transform: translateX(-50%); font: 500 11px/14px var(--font); letter-spacing: .01em; color: var(--fg-subtle); white-space: nowrap; transition: opacity var(--d-1) var(--ease); }
 .ch-xlab--start { transform: none; }
@@ -244,7 +247,8 @@ function PerformanceChart({
   const touchRef = useRef(null);
   const n = dates ? dates.length : 0;
   const H = height;
-  const gutter = compact ? 0 : 48;
+  const gutter = compact ? 20 : 48;
+  const padL = compact ? 16 : 0;
   const hasData = n >= 2 && primary && primary.filter(v => v != null && Number.isFinite(v)).length >= 2;
   const showSecondary = kind === 'money' && Array.isArray(secondary) && secondary.length === n;
 
@@ -261,7 +265,8 @@ function PerformanceChart({
     const nt = chNiceTicks(lo, hi, 4);
     const y = v => H - (v - nt.lo) / (nt.hi - nt.lo || 1) * H;
     const x = i => (n > 1 ? i / (n - 1) * 1000 : 0);
-    const idx = chSampleIdx(n, 500);
+    // Compact: minder punten zodat de monotone kubische curve dagstappen gelijkmatig afrondt (geen overshoot).
+    const idx = chSampleIdx(n, compact ? 48 : 500);
     const xs = idx.map(x);
     const yp = idx.map(i => (primary[i] == null || !Number.isFinite(primary[i]) ? null : y(primary[i])));
     const ys = showSecondary ? idx.map(i => (secondary[i] == null ? null : y(secondary[i]))) : null;
@@ -271,7 +276,14 @@ function PerformanceChart({
     let lastK = yp.length - 1; while (lastK >= 0 && yp[lastK] == null) lastK--;
     const lastX = xs[lastK];
     // Verloopvlak onder de waardelijn (alleen bij één doorlopend segment).
-    if (kind === 'money' && line && line.indexOf('M', 1) < 0) out.area = line + 'L' + lastX.toFixed(2) + ' ' + H + 'L' + firstX.toFixed(2) + ' ' + H + 'Z';
+    if (kind === 'money' && line && line.indexOf('M', 1) < 0) {
+      // Compact: vlak loopt door tot de schermranden (plot zelf is ingesprongen).
+      const ext = compact ? 120 : 0;
+      const fy = yp.find(v => v != null), ly = yp[lastK];
+      const ax0 = firstX - ext, ax1 = lastX + ext;
+      out.area = (ext ? 'M' + ax0.toFixed(2) + ' ' + fy.toFixed(2) + 'L' + line.slice(1) + 'L' + ax1.toFixed(2) + ' ' + ly.toFixed(2) : line)
+        + 'L' + ax1.toFixed(2) + ' ' + H + 'L' + ax0.toFixed(2) + ' ' + H + 'Z';
+    }
     const fwd = xs.map((xx, k) => [xx, yp[k]]).filter(p => p[1] != null);
     if (showSecondary) {
       const step = chStepPoints(xs, ys);
@@ -380,7 +392,7 @@ function PerformanceChart({
   const vt = (valueText || defaultValueText)(vtIndex);
 
   const rootStyle = { height: H + 22, ...style };
-  const plotStyle = { right: gutter, height: H };
+  const plotStyle = { left: padL, right: gutter, height: H };
   if (!hasData) {
     return (
       <div className={chCx('ch-root', className)} style={rootStyle} data-testid={testId} role="img" aria-label={`${ariaLabel}: ${emptyText}`}>
@@ -398,9 +410,9 @@ function PerformanceChart({
   const flagSide = cur == null ? '' : (cur / (n - 1) < 0.08 ? 'l' : cur / (n - 1) > 0.92 ? 'r' : '');
 
   return (
-    <div className={chCx('ch-root', className)} style={rootStyle} data-testid={testId}>
+    <div className={chCx('ch-root', compact && 'ch-root--compact', className)} style={rootStyle} data-testid={testId}>
       {/* y labels */}
-      {g.nt.ticks.map(t => (
+      {g.nt.ticks.filter(t => !compact || ((kind === 'pct' || t > g.nt.lo) && !g.yp.some((v, k) => v != null && g.xs[k] < 190 && Math.abs(v - g.y(t)) < 13))).map(t => (
         <div key={t} className={chCx('ch-ylab', compact && 'ch-ylab--in')} style={{ top: `${(g.y(t) / H) * H}px` }}>{tickLabel(t)}</div>
       ))}
       <div ref={plotRef} className="ch-plot" style={plotStyle}
@@ -419,7 +431,7 @@ function PerformanceChart({
             </linearGradient>
           </defs>
           {g.nt.ticks.map(t => (
-            <line key={t} x1="0" x2="1000" y1={g.y(t)} y2={g.y(t)} className="ch-grid"
+            <line key={t} x1={compact ? -120 : 0} x2={compact ? 1120 : 1000} y1={g.y(t)} y2={g.y(t)} className="ch-grid"
               style={kind === 'pct' && t === 0 ? { stroke: 'var(--border-strong)', strokeDasharray: 'none' } : undefined} />
           ))}
           <g key={rangeKey} className="ch-fade">
@@ -457,7 +469,7 @@ function PerformanceChart({
         )}
       </div>
       {/* x axis */}
-      <div className={chCx('ch-xaxis', cur != null && 'ch-xaxis--dim')} style={{ top: H, right: gutter }} aria-hidden="true">
+      <div className={chCx('ch-xaxis', cur != null && 'ch-xaxis--dim')} style={{ top: H, left: padL, right: gutter }} aria-hidden="true">
         {compact ? (
           <>
             <span className="ch-xlab ch-xlab--start" style={{ left: 0 }}>{fmtDateShort(dates[0], dates[n - 1])}</span>
