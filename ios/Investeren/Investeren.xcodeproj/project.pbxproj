@@ -271,6 +271,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				CODE_SIGN_ENTITLEMENTS = InvesterenWidget/InvesterenWidget.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = nl.dogterom.investeren.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -291,6 +292,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				CODE_SIGN_ENTITLEMENTS = InvesterenWidget/InvesterenWidget.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = nl.dogterom.investeren.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
