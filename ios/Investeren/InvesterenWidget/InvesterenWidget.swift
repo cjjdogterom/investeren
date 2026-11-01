@@ -243,11 +243,57 @@ struct RectangularView: View {
     }
 }
 
+struct LockedView: View {
+    @Environment(\.widgetFamily) private var family
+    var body: some View {
+        switch family {
+        case .accessoryInline:
+            Label("Investeren", systemImage: "lock.fill")
+        case .accessoryRectangular:
+            VStack(alignment: .leading, spacing: 1) {
+                Label("Investeren", systemImage: "lock.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .widgetAccentable()
+                Text("Ontgrendel voor je saldo")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        default:
+            VStack(alignment: .leading, spacing: 6) {
+                Caps(text: "Totale waarde")
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+                Spacer(minLength: 0)
+                Text("Ontgrendel je iPhone om je saldo te zien")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.muted)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
 struct InvesterenWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.redactionReasons) private var redaction
     let entry: PortfolioEntry
 
     var body: some View {
+        Group {
+            // Vergrendeld vraagt iOS om een versie zonder privégegevens.
+            if redaction.contains(.privacy) {
+                LockedView()
+            } else {
+                content.privacySensitive()
+            }
+        }
+        .containerBackground(for: .widget) { Palette.bg }
+    }
+
+    @ViewBuilder private var content: some View {
         Group {
             if let s = entry.snapshot {
                 switch family {
@@ -266,7 +312,6 @@ struct InvesterenWidgetView: View {
                 }
             }
         }
-        .containerBackground(for: .widget) { Palette.bg }
     }
 }
 
