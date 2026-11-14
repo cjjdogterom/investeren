@@ -455,7 +455,7 @@ function StT212({ app }) {
           {saved && <Button variant="ghost" onClick={() => app.updateTweaks(tw => ({ ...tw, t212Sleutel: '' }))}>Ontkoppelen</Button>}
         </div>
         {saved && (
-          <div className={'st-status ' + (liveErr || ts.error ? 'st-status--err' : 'st-status--ok')} aria-live="polite">
+          <div className={'st-status ' + (liveErr || ts.error ? 'st-status--err' : 'st-status--ok')} aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
             {liveErr ? '⚠ ' + liveErr
               : live ? `✓ Live: ${fmtEur(live.account.total, { decimals: 2 })} · ${(live.positions || []).length} posities · ${(live.pies || []).length} pies · ${fmtTime(live.fetchedAt)}`
               : 'Ophalen…'}

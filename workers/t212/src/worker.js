@@ -40,18 +40,32 @@ function authVariants(env) {
   return v;
 }
 let memAuth = null;
+let authPromise = null;
+async function probe(cand) {
+  for (let i = 0; i < 4; i++) {
+    const r = await fetch(cand.host + "/api/v0/equity/account/summary", { headers: { Authorization: cand.auth, accept: "application/json" } });
+    if (r.status !== 429) return r.status;
+    const reset = +r.headers.get("x-ratelimit-reset") || 0;
+    await sleep(Math.min(10000, Math.max(1500, reset * 1000 - Date.now() + 250)));
+  }
+  return 429;
+}
 async function resolveAuth(env) {
   if (memAuth) return memAuth;
-  const variants = authVariants(env);
-  const known = await env.CACHE.get("auth");
-  const hit = variants.find(x => x.id === known);
-  if (hit) return (memAuth = hit);
-  for (const cand of variants) {
-    const r = await fetch(cand.host + "/api/v0/equity/account/summary", { headers: { Authorization: cand.auth, accept: "application/json" } });
-    if (r.status === 429) await sleep(5500);
-    if (r.ok || r.status === 403) { await env.CACHE.put("auth", cand.id); return (memAuth = cand); }
-  }
-  throw new Error("Trading 212 weigert de sleutel (401) in alle varianten. Maak een nieuwe API-sleutel en draai koppel.sh opnieuw.");
+  if (authPromise) return authPromise;
+  authPromise = (async () => {
+    const variants = authVariants(env);
+    const known = await env.CACHE.get("auth");
+    const hit = variants.find(x => x.id === known);
+    if (hit) return (memAuth = hit);
+    for (const cand of variants) {
+      const st = await probe(cand);
+      if (st === 200 || st === 403) { await env.CACHE.put("auth", cand.id); return (memAuth = cand); }
+      if (st === 429) throw new Error("Trading 212: te veel verzoeken, probeer het zo opnieuw");
+    }
+    throw new Error("Trading 212 weigert de sleutel (401) in alle varianten. Maak een nieuwe API-sleutel en draai koppel.sh opnieuw.");
+  })().finally(() => { authPromise = null; });
+  return authPromise;
 }
 
 function t212Client(env) {
