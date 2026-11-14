@@ -25,10 +25,38 @@ function sameKey(a, b) {
   return d === 0;
 }
 
+// Welke combinatie van omgeving en auth-vorm werkt, wordt één keer bepaald en onthouden (KV 'auth', geen geheimen).
+// Nieuw: Basic base64(key:secret). Legacy: de sleutel zelf in de Authorization-header.
+function authVariants(env) {
+  const key = (env.T212_KEY || "").trim(), secret = (env.T212_SECRET || "").trim();
+  const v = [];
+  const pref = HOSTS[env.T212_OMGEVING] ? env.T212_OMGEVING : "live";
+  for (const omg of [pref, pref === "live" ? "demo" : "live"]) {
+    if (key && secret) v.push({ id: `${omg}:basic`, host: HOSTS[omg], auth: "Basic " + btoa(`${key}:${secret}`) });
+    if (key && secret) v.push({ id: `${omg}:basic-omgedraaid`, host: HOSTS[omg], auth: "Basic " + btoa(`${secret}:${key}`) });
+    if (key) v.push({ id: `${omg}:legacy-key`, host: HOSTS[omg], auth: key });
+    if (secret) v.push({ id: `${omg}:legacy-secret`, host: HOSTS[omg], auth: secret });
+  }
+  return v;
+}
+let memAuth = null;
+async function resolveAuth(env) {
+  if (memAuth) return memAuth;
+  const variants = authVariants(env);
+  const known = await env.CACHE.get("auth");
+  const hit = variants.find(x => x.id === known);
+  if (hit) return (memAuth = hit);
+  for (const cand of variants) {
+    const r = await fetch(cand.host + "/api/v0/equity/account/summary", { headers: { Authorization: cand.auth, accept: "application/json" } });
+    if (r.status === 429) await sleep(5500);
+    if (r.ok || r.status === 403) { await env.CACHE.put("auth", cand.id); return (memAuth = cand); }
+  }
+  throw new Error("Trading 212 weigert de sleutel (401) in alle varianten. Maak een nieuwe API-sleutel en draai koppel.sh opnieuw.");
+}
+
 function t212Client(env) {
-  const host = HOSTS[env.T212_OMGEVING] || HOSTS.live;
-  const auth = "Basic " + btoa(`${env.T212_KEY}:${env.T212_SECRET}`);
   return async function get(path) {
+    const { host, auth } = await resolveAuth(env);
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await fetch(host + path, { headers: { Authorization: auth, accept: "application/json" } });
       if (res.status === 429 && attempt === 0) {
@@ -36,7 +64,7 @@ function t212Client(env) {
         await sleep(Math.min(30000, Math.max(1000, reset * 1000 - Date.now() + 250)));
         continue;
       }
-      if (res.status === 401) throw new Error("Trading 212 weigert de sleutel (401). Controleer API-sleutel en secret.");
+      if (res.status === 401) { memAuth = null; await env.CACHE.delete("auth"); throw new Error("Trading 212 weigert de sleutel (401). Controleer API-sleutel en secret."); }
       if (res.status === 403) throw new Error(`Sleutel mist een recht voor ${path.split("?")[0]} (403). Geef leesrechten voor dit onderdeel.`);
       if (!res.ok) throw new Error(`Trading 212 gaf ${res.status} voor ${path.split("?")[0]}`);
       return res.json();
@@ -240,7 +268,7 @@ export default {
     try {
       if (url.pathname === "/snapshot") {
         const [live, pies] = await Promise.all([liveSnapshot(env), cachedPies(env, ctx, force).catch(e => ({ pies: [], error: e.message }))]);
-        return json({ ...live, pies: pies.pies, piesFetchedAt: pies.fetchedAt || null, piesError: pies.error || null, omgeving: env.T212_OMGEVING || "live" });
+        return json({ ...live, pies: pies.pies, piesFetchedAt: pies.fetchedAt || null, piesError: pies.error || null, verbinding: memAuth ? memAuth.id : null });
       }
       if (url.pathname === "/geschiedenis") return json(await cachedHistory(env, force));
       return json({ error: "Onbekend pad. Gebruik /snapshot of /geschiedenis" }, 404);
