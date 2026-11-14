@@ -65,6 +65,44 @@ function findPrice(history, asset, date) {
   return result;
 }
 
+// ── Trading 212 met aandelen (zelfde rekenwijze als t212StockState in app/data.jsx) ──
+const STOCK_API_URL = 'https://koersen.financieel-chris.workers.dev';
+const normTicker = v => String(v || '').trim().toUpperCase();
+const isStockTx = t => t && t.party === 'trading212' && t.instrument && (t.type === 'koop' || t.type === 'verkoop');
+const stockGross = t => { const q = +t.quantity || 0, px = +t.unitPriceEur || 0; return q > 0 && px > 0 ? q * px : (+t.amountEur || 0); };
+function t212StockState(txs, date) {
+  const sorted = txs.filter(t => t.party === 'trading212' && t.date <= date).sort((a, b) => a.date.localeCompare(b.date));
+  const first = sorted.find(isStockTx);
+  if (!first) return null;
+  let anchor = null;
+  for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null) anchor = t;
+  let cash = anchor ? +anchor.valueEur || 0 : 0, contributed = cash;
+  const holdings = {};
+  const pay = a => { cash -= a; if (cash < 0) { contributed += -cash; cash = 0; } };
+  for (const t of sorted) {
+    if (anchor && t.date <= anchor.date) continue;
+    const fee = +t.feeEur || 0;
+    if (t.type === 'inleg') { cash += +t.amountEur || 0; contributed += +t.amountEur || 0; }
+    else if (t.type === 'opname') { contributed -= +t.amountEur || 0; cash = Math.max(0, cash - (+t.amountEur || 0)); }
+    else if (t.type === 'koop') {
+      if (!isStockTx(t)) { cash += stockGross(t); contributed += stockGross(t); continue; }
+      const h = holdings[normTicker(t.instrument)] || (holdings[normTicker(t.instrument)] = { qty: 0, cost: 0 });
+      h.qty += +t.quantity || 0; h.cost += stockGross(t) + fee; pay(stockGross(t) + fee);
+    } else if (t.type === 'verkoop' && isStockTx(t)) {
+      const h = holdings[normTicker(t.instrument)] || (holdings[normTicker(t.instrument)] = { qty: 0, cost: 0 });
+      const sold = Math.min(+t.quantity || 0, h.qty);
+      h.cost -= h.qty > 0 ? h.cost * (sold / h.qty) : 0; h.qty -= sold; cash += stockGross(t) - fee;
+    } else if (['dividend', 'cashback', 'rente'].includes(t.type)) cash += stockGross(t);
+    else if (t.type === 'kosten') pay(+t.amountEur || 0);
+  }
+  return { holdings, cash, contributed };
+}
+async function fetchStockQuotes(symbols) {
+  if (!symbols.length) return {};
+  const j = await fetchJson(`${STOCK_API_URL}/koers?s=${encodeURIComponent(symbols.join(','))}&range=5d`);
+  return j.quotes || {};
+}
+
 function daysBetween(a, b) {
   const start = new Date(`${a}T00:00:00Z`);
   const end = new Date(`${b}T00:00:00Z`);
@@ -360,6 +398,7 @@ function rowToTx(r) {
     // Overboeking (crypto tussen posten): instrument = doel-sub-holding, value_eur = netwerkkosten in coin.
     valueEur: r.type === 'overboeking' || r.value_eur == null ? null : +r.value_eur,
     toParty: r.type === 'overboeking' ? (r.instrument || null) : undefined,
+    instrument: r.type !== 'overboeking' ? (r.instrument || null) : undefined,
     feeQty: r.type === 'overboeking' && r.value_eur != null ? +r.value_eur : undefined,
   };
 }
@@ -539,6 +578,18 @@ function calculatePortfolioValue(date, transactions, history, parties = PARTIES,
   let invested = 0;
   for (const p of includedParties) {
     const s = state[p.id];
+    const st = p.id === 'trading212' ? t212StockState(txByParty[p.id] || [], date) : null;
+    if (st) {
+      let v = st.cash;
+      for (const [sym, h] of Object.entries(st.holdings)) {
+        if (!(h.qty > 0)) continue;
+        const px = findPrice(history, 'stock:' + sym, date);
+        v += px != null ? h.qty * px : h.cost;
+      }
+      total += v;
+      invested += st.contributed;
+      continue;
+    }
     const unitValuations = unitValuationsByParty[p.id] || [];
     const totalValuations = totalValuationsByParty[p.id] || [];
     const avgCostPx = s.qty > 0 ? s.cost / s.qty : null;
@@ -614,10 +665,13 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const [metals, crypto, meesman] = await Promise.allSettled([
+    const stockSymbols = await supabaseFetchAll('transactions?select=instrument&party=eq.trading212&type=in.(koop,verkoop)&instrument=not.is.null')
+      .then(rows => [...new Set(rows.map(r => normTicker(r.instrument)).filter(Boolean))]).catch(() => []);
+    const [metals, crypto, meesman, stocks] = await Promise.allSettled([
       fetchSpotPrices(),
       fetchCryptoPrices(),
       fetchMeesmanPrice(),
+      fetchStockQuotes(stockSymbols),
     ]);
     const date = todayIso();
     const now = new Date().toISOString();
@@ -644,6 +698,12 @@ module.exports = async function handler(req, res) {
         source: meesman.value.warning ? `meesman.nl (${meesman.value.warning})` : 'investing.com',
         updated_at: now,
       });
+    }
+
+    if (stocks.status === 'fulfilled') {
+      for (const [sym, q] of Object.entries(stocks.value)) {
+        if (q && q.priceEur > 0) rows.push({ asset: 'stock:' + sym, date, nav: +(+q.priceEur).toFixed(6), source: 'koersen-worker (Yahoo)', updated_at: now });
+      }
     }
 
     if (!rows.length) {

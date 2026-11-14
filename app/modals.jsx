@@ -36,6 +36,19 @@ injectStyles('modals', `
 .md-detail-amt.is-income { color: var(--gain); }
 .md-detail-amt.is-muted { color: var(--fg-muted); }
 .md-party { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.md-stock { display: grid; gap: 8px; }
+.md-stock__list { display: grid; border: 1px solid var(--border); border-radius: var(--r-2); overflow: hidden; }
+.md-stock__opt { display: grid; grid-template-columns: minmax(72px, max-content) 1fr auto; gap: 10px; align-items: baseline; padding: 9px 12px;
+  border: 0; border-top: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.md-stock__opt:first-child { border-top: 0; }
+.md-stock__opt:hover, .md-stock__opt:focus-visible { background: var(--surface-2); }
+.md-stock__sym { font-weight: 650; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.md-stock__name { font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-stock__ex { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+.md-stock__sel { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--r-2); background: var(--surface-2); }
+.md-stock__sel > div { flex: 1; min-width: 0; }
+.md-stock__meta { font-size: 12.5px; color: var(--fg-muted); }
+.md-stock__msg { font-size: 12.5px; color: var(--fg-muted); }
 @media (max-width: 767.98px) {
   .md-type { min-height: 72px; }
   .md-dl { font-size: 15px; }
@@ -63,6 +76,7 @@ function mdNum(v) {
 
 function mdNeeds(type, party) {
   const unit = party ? party.unit : null;
+  if (party && party.id === STOCK_PARTY_ID && (type === 'dividend' || type === 'cashback')) return ['amountEur'];
   switch (type) {
     case 'inleg': case 'rente': case 'kosten': return ['amountEur'];
     case 'opname': return mdUnitBased(party) ? ['quantity'] : ['amountEur'];
@@ -127,6 +141,65 @@ function mdBlank(initial, preset, today, allParties) {
 
 function mdTypeIcon(type) { return (TX_TYPE_META[type] && TX_TYPE_META[type].icon) || 'circle-plus'; }
 
+// Aandeel/ETF zoeken (Yahoo Finance via de koersen-worker). Kiezen zet het Yahoo-symbool in het formulier.
+function MdStockPicker({ id, value, name, recent, onPick, error }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState({ loading: false, error: null, items: [] });
+  const [editing, setEditing] = useState(!value);
+  useEffect(() => { setEditing(!value); }, [value]);
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setRes({ loading: false, error: null, items: [] }); return; }
+    let alive = true;
+    setRes(r => ({ ...r, loading: true, error: null }));
+    const t = setTimeout(() => {
+      searchStocks(term)
+        .then(items => { if (alive) setRes({ loading: false, error: null, items }); })
+        .catch(e => { if (alive) setRes({ loading: false, error: (e && e.message) || 'Zoeken mislukt', items: [] }); });
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+
+  if (value && !editing) {
+    return (
+      <div className="md-stock__sel">
+        <div>
+          <div className="md-stock__sym">{value}</div>
+          {name && name !== value && <div className="md-stock__meta">{name}</div>}
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => { setQ(''); setEditing(true); }}>Wijzig</Button>
+      </div>
+    );
+  }
+  const pick = item => { onPick(item); setQ(''); setEditing(false); };
+  return (
+    <div className="md-stock">
+      {recent.length > 0 && !q && (
+        <div className="md-chips" style={{ marginBottom: 0 }}>
+          {recent.map(r => <Chip key={r.symbol} active={value === r.symbol} onClick={() => pick(r)}>{r.symbol}</Chip>)}
+        </div>
+      )}
+      <Input id={id} type="search" value={q} autoComplete="off" placeholder="Zoek op naam of ticker, bijv. Apple of VWCE"
+        aria-invalid={error ? true : undefined} onChange={e => setQ(e.target.value)} />
+      {res.loading && <div className="md-stock__msg" role="status">Zoeken…</div>}
+      {res.error && <div className="md-note" role="alert"><Icon name="info" size={14} />{res.error}</div>}
+      {!res.loading && !res.error && q.trim() && !res.items.length && <div className="md-stock__msg">Niets gevonden voor “{q.trim()}”.</div>}
+      {res.items.length > 0 && (
+        <div className="md-stock__list" role="listbox" aria-label="Zoekresultaten">
+          {res.items.map(it => (
+            <button key={it.symbol} type="button" role="option" aria-selected={value === it.symbol} className="md-stock__opt" onClick={() => pick(it)}>
+              <span className="md-stock__sym">{it.symbol}</span>
+              <span className="md-stock__name">{it.name}</span>
+              <span className="md-stock__ex">{[it.exchange, it.type].filter(Boolean).join(' · ')}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {value && <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Houd {value}</Button>}
+    </div>
+  );
+}
+
 function TransactionSheet({ app, open, preset, initial, onClose }) {
   const parties = (app && app.model && app.model.parties) || [];
   const allParties = (app && app.model && app.model.allParties) || parties;
@@ -161,6 +234,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     setStep(initial || (preset && preset.type) ? 2 : 1);
     setTypeNote(null);
     setTried(false);
+    setPickedName(null);
     setFeeOpen(!!(initial && +initial.feeEur > 0));
   }, [open, preset, initial]); // eslint-disable-line
 
@@ -227,20 +301,34 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isMixed = mdIsMixed(party);
-  const isGoldOrder = isMixed && ['koop', 'verkoop'].includes(form.type);
+  const isT212 = !!(party && party.id === STOCK_PARTY_ID);
+  const isStockOrder = isT212 && ['koop', 'verkoop'].includes(form.type);
+  // Orderwaarde ↔ prijs per stuk: goud/zilver en aandelen (fractioneel kopen op bedrag).
+  const isGoldOrder = (isMixed || isStockOrder) && ['koop', 'verkoop'].includes(form.type);
   const calcPx = (q, ov) => { const qty = parseNlNumber(q) || 0, val = parseNlNumber(ov) || 0; return qty > 0 && val > 0 ? +(val / qty).toFixed(6) : null; };
+  // Aandelen: de koers is leidend; aantal en orderwaarde rekenen elkaar uit (fractioneel kopen op bedrag).
+  const stockLink = (n, from) => {
+    const px = parseNlNumber(n.unitPriceEur) || 0;
+    if (!(px > 0)) return n;
+    if (from === 'qty') { const q = parseNlNumber(n.quantity) || 0; n.orderValueEur = q > 0 ? mdNum(+(q * px).toFixed(2)) : ''; }
+    else { const ov = parseNlNumber(n.orderValueEur) || 0; if (ov > 0) n.quantity = mdNum(+(ov / px).toFixed(6)); else if (from === 'px') stockLink(n, 'qty'); }
+    return n;
+  };
   const setQuantity = v => setForm(f => {
     const n = { ...f, quantity: v };
+    if (isStockOrder) return stockLink(n, 'qty');
     if (isGoldOrder && f.orderValueEur !== '') { const px = calcPx(v, f.orderValueEur); if (px != null) n.unitPriceEur = mdNum(px); }
     return n;
   });
   const setOrderValue = v => setForm(f => {
     const n = { ...f, orderValueEur: v };
+    if (isStockOrder) return stockLink(n, 'ov');
     const px = calcPx(f.quantity, v); if (px != null) n.unitPriceEur = mdNum(px);
     return n;
   });
   const setUnitPrice = v => setForm(f => {
     const n = { ...f, unitPriceEur: v };
+    if (isStockOrder) return stockLink(n, 'px');
     if (isGoldOrder && f.quantity !== '') {
       const tot = (parseNlNumber(f.quantity) || 0) * (parseNlNumber(v) || 0);
       n.orderValueEur = tot > 0 ? mdNum(+tot.toFixed(2)) : '';
@@ -250,7 +338,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
 
   const needs = mdNeeds(form.type, party);
   const unitLabel = mdFormUnitLabel(form, party);
-  const calculatedPx = isGoldOrder ? calcPx(form.quantity, form.orderValueEur) : null;
+  const calculatedPx = isGoldOrder && !isStockOrder ? calcPx(form.quantity, form.orderValueEur) : null;
   const parsed = {
     amountEur: parseNlNumber(form.amountEur),
     quantity: parseNlNumber(form.quantity),
@@ -284,15 +372,36 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     if (form.feeQty !== '' && (feeQtyN == null || feeQtyN < 0)) errors.feeQty = 'Vul geldige netwerkkosten in';
   }
   if (isPost && !party) errors.coin = 'Deze post heeft geen sub-holding voor deze coin';
+  if (isStockOrder && !form.instrument.trim()) errors.instrument = 'Kies een aandeel of ETF';
   const baseValid = !!(form.party && form.type && /^\d{4}-\d{2}-\d{2}$/.test(form.date || ''));
   const valid = baseValid && Object.keys(errors).length === 0;
   const reason = !form.party ? 'Kies een partij' : !form.date ? 'Kies een datum' : Object.values(errors)[0] || null;
   const errFor = k => (errors[k] && (tried || (form[k] !== '' && form[k] != null))) ? errors[k] : null;
 
-  const t212Instruments = React.useMemo(() => {
-    const names = ((app && app.state && app.state.transactions) || []).filter(t => t.party === 'trading212' && t.instrument).map(t => t.instrument);
-    return [...new Set(names)].sort();
+  const stockNames = (app && app.tweaks && app.tweaks.stockNames) || {};
+  const stockQuotes = (app && app.stockQuotes) || {};
+  const [pickedName, setPickedName] = useState(null);
+  const recentStocks = React.useMemo(() => {
+    const txs = ((app && app.state && app.state.transactions) || []).filter(isStockTx).sort((a, b) => b.date.localeCompare(a.date));
+    return [...new Set(txs.map(t => normalizeTicker(t.instrument)))].slice(0, 8).map(symbol => ({ symbol, name: stockNames[symbol] }));
   }, [app && app.state && app.state.transactions]); // eslint-disable-line
+  const instrSym = normalizeTicker(form.instrument);
+  const instrName = pickedName || stockNames[instrSym] || (stockQuotes[instrSym] && stockQuotes[instrSym].name) || null;
+  // Koers op de boekingsdatum (voor prijs-suggestie); live koers als het vandaag is.
+  const [pickQuote, setPickQuote] = useState(null);
+  useEffect(() => {
+    if (!isStockOrder || !instrSym) { setPickQuote(null); return; }
+    if (stockQuotes[instrSym] && (stockQuotes[instrSym].history || []).length) { setPickQuote(stockQuotes[instrSym]); return; }
+    let alive = true;
+    fetch(`${STOCK_API_URL}/koers?s=${encodeURIComponent(instrSym)}&range=2y`).then(r => r.json())
+      .then(j => { if (alive) setPickQuote((j && j.quotes && j.quotes[instrSym]) || null); }).catch(() => { if (alive) setPickQuote(null); });
+    return () => { alive = false; };
+  }, [isStockOrder, instrSym]); // eslint-disable-line
+  const quotePx = pickQuote ? stockPriceAt(pickQuote, form.date) : null;
+  const pickStock = item => {
+    setPickedName(item.name || null);
+    setForm(f => ({ ...f, instrument: item.symbol }));
+  };
 
   const submit = () => {
     setTried(true);
@@ -304,7 +413,10 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
       if (feeQtyN > 0) tx.feeQty = feeQtyN;
     }
     if (form.note.trim()) tx.note = form.note.trim();
-    if (showInstrument && form.instrument.trim()) tx.instrument = form.instrument.trim();
+    if (showInstrument && form.instrument.trim()) tx.instrument = isT212 ? normalizeTicker(form.instrument) : form.instrument.trim();
+    if (isT212 && tx.instrument && instrName && stockNames[tx.instrument] !== instrName && app.updateTweaks) {
+      app.updateTweaks(tw => ({ ...tw, stockNames: { ...(tw.stockNames || {}), [tx.instrument]: instrName } }));
+    }
     if (showMetal) {
       tx.metalType = form.metalType;
       if (form.metalType === 'zilver') tx.silverUnit = form.silverUnit; else tx.goldUnit = form.goldUnit;
@@ -337,6 +449,14 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
       return <>Geboekt bij {fromName}: <b className="num">{fmtQty(avail, coin, { decimals: 8 })}</b>
         {moved != null && <> · kostprijs mee ≈ <b className="num">{fmtMoney(moved, { decimals: 2 })}</b></>}
         {out > avail + 1e-12 && <> · <span style={{ color: 'var(--warn)' }}>meer dan geboekt</span></>}</>;
+    }
+    if (isStockOrder && form.type === 'koop' && orderValue > 0) {
+      const sm = app.model && app.model.byId && app.model.byId[party.id];
+      const cash = sm && sm.stocks ? sm.stocks.cash : 0;
+      const total = orderValue + feeEur;
+      const short = total - cash;
+      return <>Orderbedrag <b className="num">{fmtMoney(total, { decimals: 2 })}</b>
+        {short > 0.005 ? <> · <b className="num">{fmtMoney(short, { decimals: 2 })}</b> telt als inleg</> : <> · uit kas ({fmtMoney(cash, { decimals: 2 })})</>}</>;
     }
     if (['koop', 'verkoop', 'cashback'].includes(form.type) && orderValue > 0) {
       return <>Orderbedrag <b className="num">{fmtMoney(orderValue, { decimals: 2 })}</b>
@@ -422,7 +542,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           {typeNote && <div className="md-note" role="status"><Icon name="info" size={14} />{typeNote}</div>}
 
           <Field label={isTransfer ? 'Van' : 'Partij'} htmlFor={`${ids}-party`}
-            hint={party && party.unit === 'bundle' ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
+            hint={party && party.unit === 'bundle' && party.id !== STOCK_PARTY_ID ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
             {recent.length > 0 && (
               <div className="md-chips">
                 {recent.map(p => (
@@ -463,16 +583,13 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           </Field>
 
           {showInstrument && (
-            <Field label="Instrument (aandeel / ETF)" htmlFor={`${ids}-instr`} hint="Eerder gebruikte instrumenten verschijnen als suggesties.">
-              <Input id={`${ids}-instr`} list={`${ids}-instr-list`} value={form.instrument} placeholder="bijv. VWCE, AAPL, VOO…"
-                onChange={e => set('instrument', e.target.value)} />
-              <datalist id={`${ids}-instr-list`}>{t212Instruments.map(n => <option key={n} value={n} />)}</datalist>
-              {t212Instruments.length > 0 && (
-                <div className="md-chips" style={{ marginTop: 8, marginBottom: 0 }}>
-                  {t212Instruments.filter(n => !form.instrument || n.toLowerCase().includes(form.instrument.toLowerCase())).slice(0, 8).map(n => (
-                    <Chip key={n} active={form.instrument === n} onClick={() => set('instrument', n)}>{n}</Chip>
-                  ))}
-                </div>
+            <Field label={isStockOrder ? 'Aandeel / ETF' : 'Aandeel / ETF (optioneel)'} htmlFor={`${ids}-instr`} error={tried ? errors.instrument : null}
+              hint={quotePx != null ? `Koers ${form.date >= today ? 'nu' : 'op ' + fmtDateShort(form.date)}: ${fmtMoney(quotePx, { decimals: 2 })}${pickQuote && pickQuote.currency && pickQuote.currency !== 'EUR' ? ' (omgerekend uit ' + pickQuote.currency + ')' : ''}` : 'De koers wordt daarna automatisch opgehaald.'}>
+              <MdStockPicker id={`${ids}-instr`} value={instrSym} name={instrName} recent={recentStocks} onPick={pickStock} error={tried ? errors.instrument : null} />
+              {isStockOrder && quotePx != null && !(parseNlNumber(form.unitPriceEur) > 0) && (
+                <button type="button" className="md-addlink" style={{ marginTop: 8 }} onClick={() => setUnitPrice(mdNum(+quotePx.toFixed(4)))}>
+                  <Icon name="circle-plus" size={14} />Gebruik {fmtMoney(quotePx, { decimals: 2 })} als prijs per aandeel
+                </button>
               )}
             </Field>
           )}
@@ -501,9 +618,9 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
             </Field>
           )}
 
-          {['koop', 'verkoop', 'cashback', 'dividend'].includes(form.type) && (
+          {['koop', 'verkoop', 'cashback', 'dividend'].includes(form.type) && !(isT212 && ['cashback', 'dividend'].includes(form.type)) && (
             <div className="md-row2">
-              <Field label={`Aantal (${unitLabel})`} htmlFor={`${ids}-qty`} error={errFor('quantity')}>
+              <Field label={isT212 ? 'Aantal aandelen' : `Aantal (${unitLabel})`} htmlFor={`${ids}-qty`} error={errFor('quantity')}>
                 <MoneyInput id={`${ids}-qty`} prefix="" value={form.quantity} onChange={setQuantity} placeholder="0" />
               </Field>
               {isGoldOrder && (
@@ -511,7 +628,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
                   <MoneyInput id={`${ids}-ov`} value={form.orderValueEur} onChange={setOrderValue} placeholder="0,00" />
                 </Field>
               )}
-              <Field label={`Prijs per ${unitLabel} (€)`} htmlFor={`${ids}-px`} error={errFor('unitPriceEur')}>
+              <Field label={`Prijs per ${isT212 ? 'aandeel' : unitLabel} (€)`} htmlFor={`${ids}-px`} error={errFor('unitPriceEur')}>
                 <MoneyInput id={`${ids}-px`} value={form.unitPriceEur} onChange={setUnitPrice} placeholder="0,00" />
               </Field>
             </div>
@@ -625,7 +742,8 @@ function TxDetailSheet({ app, open, txId, onClose }) {
   if (has(tx.valueEur)) rows.push(['Totale waarde', <Money value={+tx.valueEur} decimals={2} />]);
   if (tx.note) rows.push(['Notitie', tx.note, true]);
   if (tx.updatedAt) rows.push(['Laatst gewijzigd', `${fmtDateLong(String(tx.updatedAt).slice(0, 10))} · ${fmtTime(tx.updatedAt)}`]);
-  if (tx._t212Id) rows.push(['Bron', 'Geïmporteerd uit Trading 212']);
+  if (tx._t212Id && pieIdOfTx(tx)) rows.push(['Pie', tx.note && tx.note.startsWith('Pie ') ? tx.note.slice(4) : 'Trading 212-pie']);
+  else if (tx._t212Id) rows.push(['Bron', 'Geïmporteerd uit Trading 212']);
 
   const footer = (
     <div className="md-foot">
@@ -662,4 +780,4 @@ function MdAmount({ info, className }) {
 }
 function mdCx(...p) { return p.filter(Boolean).join(' '); }
 
-Object.assign(window, { TransactionSheet, TxDetailSheet });
+Object.assign(window, { TransactionSheet, TxDetailSheet, MdStockPicker });

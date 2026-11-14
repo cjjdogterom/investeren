@@ -597,10 +597,194 @@ function transferCostMap(transactions) {
 
 // Valuation for a party — tracks goud/zilver quantities separately for goldrepublic.
 // ctx.transferCost: optioneel vooraf berekende transferCostMap (nodig als `transactions` een deelselectie is).
+// ----- Trading 212: aandelen per ticker (Yahoo-symbool in t.instrument) -----
+// Koersen komen van de eigen koersen-worker (Yahoo Finance, omgerekend naar EUR).
+const STOCK_API_URL = 'https://koersen.financieel-chris.workers.dev';
+const STOCK_PARTY_ID = 'trading212';
+// Zoek aandelen/ETF's op naam of ticker (Yahoo Finance via de worker).
+async function searchStocks(q) {
+  const res = await fetch(`${STOCK_API_URL}/zoek?q=${encodeURIComponent(q)}`);
+  const j = await res.json().catch(() => null);
+  if (!res.ok || !j) throw new Error((j && j.error) || `Zoeken gaf ${res.status}`);
+  return j.results || [];
+}
+function normalizeTicker(v) { return String(v || '').trim().toUpperCase(); }
+function isStockTx(t) { return !!t && t.party === STOCK_PARTY_ID && !!t.instrument && (t.type === 'koop' || t.type === 'verkoop'); }
+function stockSymbolsOf(transactions) {
+  return [...new Set((transactions || []).filter(isStockTx).map(t => normalizeTicker(t.instrument)))].sort();
+}
+function stockTxGross(t) {
+  const qty = +t.quantity || 0, px = +t.unitPriceEur || 0;
+  return qty > 0 && px > 0 ? qty * px : (+t.amountEur || 0);
+}
+// EUR-koers van een ticker op een datum: laatste slot ≤ datum, vandaag/later de live koers.
+function stockPriceAt(quote, date, todayIso = todayIsoLocal()) {
+  if (!quote) return null;
+  if (!date || date >= todayIso) return quote.priceEur ?? null;
+  const h = quote.history || [];
+  let v = null;
+  for (let i = 0; i < h.length && h[i].date <= date; i++) v = h[i].eur;
+  return v;
+}
+
+// Kas + posities per ticker op basis van de boekingen (optioneel t/m `date`).
+// Een waardering vóór de eerste aandelenkoop is het startsaldo; latere waarderingen tellen niet
+// (de koersen zijn leidend). Koop je meer dan er aan kas is, dan telt het tekort als inleg.
+// Invariant: kas + kostprijs posities = netto inleg + gerealiseerd resultaat.
+function t212StockState(txs, date = null) {
+  const sorted = (txs || []).filter(t => t.party === STOCK_PARTY_ID && (!date || t.date <= date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const first = sorted.find(isStockTx);
+  if (!first) return null;
+  let anchor = null;
+  for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null && t.valueEur !== '') anchor = t;
+  let cash = anchor ? +anchor.valueEur || 0 : 0;
+  let contributed = cash, realized = 0, realizedCost = 0, realizedProceeds = 0;
+  let income = 0, dividends = 0, cashback = 0, fees = 0;
+  const holdings = {};
+  const pay = amt => { cash -= amt; if (cash < 0) { contributed += -cash; cash = 0; } };
+  for (const t of sorted) {
+    if (anchor && t.date <= anchor.date) continue;
+    const fee = +t.feeEur || 0;
+    switch (t.type) {
+      case 'inleg': { const a = +t.amountEur || 0; cash += a; contributed += a; break; }
+      case 'opname': { const a = +t.amountEur || 0; contributed -= a; cash = Math.max(0, cash - a); break; }
+      case 'koop': {
+        const gross = stockTxGross(t);
+        if (!isStockTx(t)) { cash += gross; contributed += gross; break; }
+        const sym = normalizeTicker(t.instrument);
+        const h = holdings[sym] || (holdings[sym] = { symbol: sym, quantity: 0, cost: 0, firstDate: t.date });
+        h.quantity += +t.quantity || 0;
+        h.cost += gross + fee;
+        fees += fee;
+        pay(gross + fee);
+        break;
+      }
+      case 'verkoop': {
+        if (!isStockTx(t)) break;
+        const sym = normalizeTicker(t.instrument);
+        const h = holdings[sym] || (holdings[sym] = { symbol: sym, quantity: 0, cost: 0, firstDate: t.date });
+        const sold = Math.min(+t.quantity || 0, h.quantity);
+        const soldCost = h.quantity > 0 ? h.cost * (sold / h.quantity) : 0;
+        const proceeds = stockTxGross(t) - fee;
+        h.quantity -= sold; h.cost = Math.max(0, h.cost - soldCost);
+        if (h.quantity < 1e-9) { h.quantity = 0; h.cost = 0; }
+        realized += proceeds - soldCost; realizedCost += soldCost; realizedProceeds += proceeds;
+        fees += fee;
+        cash += proceeds;
+        break;
+      }
+      case 'dividend': case 'cashback': case 'rente': {
+        const a = stockTxGross(t);
+        cash += a; realized += a; income += a;
+        if (t.type === 'dividend') dividends += a;
+        if (t.type === 'cashback') cashback += a;
+        break;
+      }
+      case 'kosten': { const a = +t.amountEur || 0; realized -= a; fees += a; pay(a); break; }
+      default: break;
+    }
+  }
+  return { holdings, cash, contributed, realized, realizedCost, realizedProceeds, income, dividends, cashback, fees, startDate: first.date };
+}
+
+// Waarde van de aandelenstand op een datum met de koersen uit `quotes` (geen koers → kostprijs).
+function t212StockValue(st, quotes, date, todayIso = todayIsoLocal()) {
+  let value = st.cash;
+  for (const h of Object.values(st.holdings)) {
+    if (!(h.quantity > 0)) continue;
+    const px = stockPriceAt(quotes && quotes[h.symbol], date, todayIso);
+    value += px != null ? h.quantity * px : h.cost;
+  }
+  return value;
+}
+
+// ----- Trading 212-pies: nagebootste pies met doelverdeling -----
+// Pie-definities staan in tweaks.t212Pies: [{ id, name, slices: [{ symbol, name, weight }] }] (weight in %).
+// Boekingen van een pie dragen _t212Id = 'pie:<pieId>:<batch>' zodat ze aan de pie gekoppeld blijven.
+function pieIdOfTx(t) { const m = /^pie:([^:]+):/.exec((t && t._t212Id) || ''); return m ? m[1] : null; }
+function summarizePies(pies, transactions, quotes = {}) {
+  return (pies || []).map(pie => {
+    const txs = (transactions || []).filter(t => isStockTx(t) && pieIdOfTx(t) === pie.id).sort((a, b) => a.date.localeCompare(b.date));
+    const hold = {};
+    let realized = 0, realizedCost = 0, deposited = 0, withdrawn = 0;
+    for (const t of txs) {
+      const sym = normalizeTicker(t.instrument);
+      const h = hold[sym] || (hold[sym] = { qty: 0, cost: 0 });
+      const gross = stockTxGross(t), fee = +t.feeEur || 0;
+      if (t.type === 'koop') { h.qty += +t.quantity || 0; h.cost += gross + fee; deposited += gross + fee; }
+      else {
+        const sold = Math.min(+t.quantity || 0, h.qty);
+        const soldCost = h.qty > 0 ? h.cost * (sold / h.qty) : 0;
+        h.qty -= sold; h.cost = Math.max(0, h.cost - soldCost);
+        if (h.qty < 1e-9) { h.qty = 0; h.cost = 0; }
+        realized += gross - fee - soldCost; realizedCost += soldCost; withdrawn += gross - fee;
+      }
+    }
+    const targets = Object.fromEntries((pie.slices || []).map(sl => [normalizeTicker(sl.symbol), sl]));
+    const syms = [...new Set([...Object.keys(targets), ...Object.keys(hold).filter(k => hold[k].qty > 0)])];
+    const slices = syms.map(sym => {
+      const h = hold[sym] || { qty: 0, cost: 0 };
+      const q = quotes[sym];
+      const price = q && q.priceEur != null ? q.priceEur : null;
+      const value = h.qty > 0 ? (price != null ? h.qty * price : h.cost) : 0;
+      return { symbol: sym, name: (targets[sym] && targets[sym].name) || (q && q.name) || sym, target: targets[sym] ? +targets[sym].weight || 0 : 0,
+        quantity: h.qty, cost: h.cost, value, price, pnl: value - h.cost, hasQuote: price != null };
+    });
+    const value = slices.reduce((a, x) => a + x.value, 0);
+    const cost = slices.reduce((a, x) => a + x.cost, 0);
+    slices.forEach(x => { x.actual = value > 0 ? x.value / value * 100 : 0; });
+    const pnl = value - cost + realized;
+    const base = cost + realizedCost;
+    return { pie, slices, value, cost, realized, pnl, pnlPct: base > 0 ? pnl / base * 100 : null,
+      deposited, withdrawn, txCount: txs.length, lastDate: txs.length ? txs[txs.length - 1].date : null };
+  });
+}
+
+function summarizeT212Stocks(party, txs, st, spots) {
+  const quotes = (spots && spots.stockQuotes) || {};
+  const names = (spots && spots.stockNames) || {};
+  const positions = Object.values(st.holdings).filter(h => h.quantity > 0).map(h => {
+    const q = quotes[h.symbol] || null;
+    const price = q && q.priceEur != null ? q.priceEur : null;
+    const value = price != null ? h.quantity * price : h.cost;
+    const pnl = value - h.cost;
+    const dayChange = q && price != null && q.previousCloseEur != null ? h.quantity * (price - q.previousCloseEur) : null;
+    return {
+      symbol: h.symbol, name: (q && q.name) || names[h.symbol] || h.symbol, quantity: h.quantity,
+      cost: h.cost, avgCost: h.quantity > 0 ? h.cost / h.quantity : null, priceEur: price,
+      currency: q ? q.currency : null, exchange: q ? q.exchange : null, marketTime: q ? q.marketTime : null,
+      value, pnl, pnlPct: h.cost > 0 ? (pnl / h.cost) * 100 : 0, dayChange, hasQuote: price != null,
+    };
+  }).sort((a, b) => b.value - a.value);
+  const currentValueEur = st.cash + positions.reduce((a, x) => a + x.value, 0);
+  const costBasis = st.cash + positions.reduce((a, x) => a + x.cost, 0);
+  const invested = costBasis + st.realizedCost;
+  const pnl = currentValueEur - costBasis + st.realized;
+  const lastTx = txs.length ? txs[txs.length - 1] : null;
+  return {
+    party, transactions: txs,
+    quantity: costBasis, costBasis, avgCost: null,
+    currentUnitPrice: null, currentValueEur,
+    invested,
+    lastValuationDate: null,
+    totalDividend: st.dividends, totalFees: st.fees, totalIncome: st.income,
+    totalCashback: st.cashback, netCashIn: st.contributed,
+    realizedCostBasis: st.realizedCost, realizedProceeds: st.realizedProceeds, realizedPnl: st.realized,
+    pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
+    bookedQuantity: null, chainCheckedAt: null,
+    stocks: { positions, cash: st.cash, missingQuotes: positions.filter(x => !x.hasQuote).map(x => x.symbol), lastTxDate: lastTx && lastTx.date },
+  };
+}
+
 function summarizeParty(party, transactions, spots, ctx) {
   const txs = transactions
     .filter(t => txTouchesParty(t, party.id))
     .sort((a, b) => a.date.localeCompare(b.date));
+  if (party.id === STOCK_PARTY_ID) {
+    const st = t212StockState(txs);
+    if (st) return summarizeT212Stocks(party, txs, st, spots);
+  }
   const hasTransfers = txs.some(t => t.type === 'overboeking');
   const transferCost = hasTransfers ? ((ctx && ctx.transferCost) || transferCostMap(transactions)) : {};
 
@@ -836,6 +1020,17 @@ function buildPartyTimeSeries(transactions, parties, spots) {
   let ti = 0;
   let iso = sorted[0].date;
   const endIso = todayIsoLocal();
+  // Trading 212 met aandelen: stand per boekingsdatum cachen, waarde per dag met historische koers.
+  const t212Txs = txByParty[STOCK_PARTY_ID] || [];
+  const t212First = t212Txs.find(isStockTx);
+  const t212Cache = new Map();
+  const stockState = day => {
+    if (!t212First || day < t212First.date) return null;
+    let key = null;
+    for (const t of t212Txs) { if (t.date <= day) key = t.date; else break; }
+    if (!t212Cache.has(key)) t212Cache.set(key, t212StockState(t212Txs, key));
+    return t212Cache.get(key);
+  };
   while (iso <= endIso) {
     while (ti < sorted.length && sorted[ti].date <= iso) {
       const t = sorted[ti];
@@ -976,6 +1171,12 @@ function buildPartyTimeSeries(transactions, parties, spots) {
           const manualPx = weeklyInterpolatedValue(unitValuations, iso, avgCostPx);
           v = s.qty * (histPx ?? manualPx ?? spots[p.spotKey] ?? 0);
         }
+      } else if (p.id === STOCK_PARTY_ID && stockState(iso)) {
+        const st = stockState(iso);
+        v = t212StockValue(st, spots.stockQuotes, iso, endIso);
+        byParty[p.id].push(v);
+        tot += v; inv += st.contributed;
+        continue;
       } else if (p.unit === 'bundle') {
         v = bundleWeeklyInterpolatedValue(txByParty[p.id] || [], iso);
       } else if (p.unit === 'eur') {
@@ -1391,9 +1592,18 @@ function holdingQtyText(s) {
   }
 }
 
+// "AAPL · VWCE.DE · €12 kas" — korte regel onder Trading 212 als er aandelen zijn.
+function stockSummaryText(s) {
+  const pos = s.stocks.positions;
+  const names = pos.slice(0, 3).map(x => x.symbol).join(' · ') + (pos.length > 3 ? ` +${pos.length - 3}` : '');
+  const cash = s.stocks.cash >= 0.005 ? `${fmtMoney(s.stocks.cash, { decimals: 2 })} kas` : '';
+  return [names || 'Geen posities', cash].filter(Boolean).join(' · ');
+}
+
 function holdingPriceText(s, spots = {}) {
   const p = s.party, px = s.currentUnitPrice;
   if (s.external && s.external.kind === 'financieelOver') return 'Live · Financieel Systeem';
+  if (s.stocks) return stockSummaryText(s);
   switch (dtUnitKind(p)) {
     case 'part': {
       const date = (p.id === 'meesman' ? dtLastHistDate(spots.meesmanNavHistory) : null) || s.lastValuationDate;
@@ -1414,6 +1624,7 @@ function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
   if (s.external && s.external.kind === 'financieelOver') {
     return { text: p.subtitle || financieelOverSubtitle(s.external.financieelOver), staleDays: s.external.staleDays };
   }
+  if (s.stocks) return { text: stockSummaryText(s), staleDays: null };
   const kind = dtUnitKind(p);
   switch (kind) {
     case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
@@ -1497,6 +1708,7 @@ function allowedTxTypes(party) {
   return TX_TYPES.map(t => t.key).filter(k => {
     if (k === 'overboeking') return !!(party && party.unit === 'crypto' && party.postId);
     if (k === 'cashback' && !(party && party.id === 'trading212')) return false;
+    if (party && party.id === STOCK_PARTY_ID) return k !== 'rente';
     if (party && party.unit === 'bundle' && ['koop', 'verkoop', 'cashback', 'dividend', 'rente'].includes(k)) return false;
     return true;
   });
@@ -2208,6 +2420,7 @@ function computePension(inputs, currentValue) {
 
 
 Object.assign(window, {
+  STOCK_API_URL, STOCK_PARTY_ID, searchStocks, pieIdOfTx, summarizePies, stockTxGross, normalizeTicker, isStockTx, stockSymbolsOf, stockPriceAt, t212StockState, t212StockValue, stockSummaryText,
   STORAGE_KEY, todayIsoLocal, addDaysIso, daysBetween, txCashAmount,
   bundleSnapshotAtDate, bundleValuations, bundleWeeklyInterpolatedValue, weeklyInterpolatedValue,
   unitValuationPoints, totalValuationPoints,

@@ -137,6 +137,30 @@ injectStyles('positions', `
 .ps-coin__val { font: 600 14px/20px var(--font); }
 .ps-coin__chain { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--fg-muted); }
 .ps-coin__warn { color: var(--warn); display: inline-flex; align-items: center; gap: 4px; }
+.ps-stk__tick { width: 32px; height: 32px; border-radius: var(--r-2); background: var(--surface-2); display: grid; place-items: center; font: 650 10.5px/1 var(--font); letter-spacing: -0.01em; color: var(--fg-muted); overflow: hidden; }
+.ps-stk__foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--fg-muted); }
+.ps-pies { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-2); overflow: hidden; }
+.ps-pie + .ps-pie { border-top: 1px solid var(--border); }
+.ps-pie__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; width: 100%; padding: 10px 12px;
+  border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.ps-pie__head:hover { background: var(--surface-2); }
+.ps-pie__ring { width: 32px; height: 32px; border-radius: 50%; }
+.ps-pie__body { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ps-pie__acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ps-pie__sl { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; font-size: 12.5px; }
+.ps-pie__sl + .ps-pie__sl { padding-top: 8px; border-top: 1px solid var(--border); }
+.ps-pie__bars { grid-column: 2 / -1; display: grid; gap: 3px; }
+.ps-pie__bar { height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.ps-pie__bar > span { display: block; height: 100%; border-radius: 2px; }
+.ps-pie__bar--target > span { opacity: .35; }
+.pe-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px auto; gap: 8px; align-items: center; }
+.pe-row + .pe-row { margin-top: 8px; }
+.pe-sum { font-size: 12.5px; color: var(--fg-muted); display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.pe-sum.is-bad { color: var(--warn); }
+.pe-prev { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pe-prev td { padding: 6px 0; border-top: 1px solid var(--border); }
+.pe-prev td + td { text-align: right; padding-left: 10px; }
+.pe-prev tr:first-child td { border-top: 0; }
 .ps-pgoal { display: flex; flex-direction: column; gap: 6px; }
 .ps-pgoal__row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--fg-muted); }
 .ps-pgoal__track { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
@@ -851,6 +875,274 @@ function PsHoldingStrip({ s, spots }) {
 }
 
 // Per-coin uitsplitsing van een crypto-post (Finst / Wallet), incl. on-chain status voor self-custody.
+// ── Trading 212-pies: nabootsen, inleggen/opnemen en volgen ──
+const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#64748b'];
+function pieGradient(slices, key) {
+  let at = 0;
+  const parts = slices.filter(x => x[key] > 0).map((x, i) => { const from = at; at += x[key]; return `${PIE_COLORS[i % PIE_COLORS.length]} ${from}% ${at}%`; });
+  return parts.length ? `conic-gradient(${parts.join(', ')}${at < 99.9 ? `, var(--surface-3) ${at}% 100%` : ''})` : 'var(--surface-3)';
+}
+
+function PsPies({ app }) {
+  const privacy = !!(app.prefs && app.prefs.privacy);
+  const pies = (app.tweaks && app.tweaks.t212Pies) || [];
+  const list = useMemo(() => summarizePies(pies, (app.state && app.state.transactions) || [], app.stockQuotes || {}), [pies, app.state, app.stockQuotes]);
+  const [open, setOpen] = useState(null);
+  const [edit, setEdit] = useState(null);   // null | 'new' | pie
+  const [money, setMoney] = useState(null); // { pie, mode }
+  return (
+    <div data-testid="t212-pies">
+      <div className="ps-sec-head" style={{ marginBottom: 8 }}>
+        <h3 className="ps-sec-title">Pies ({pies.length})</h3>
+        <button type="button" className="ps-link" onClick={() => setEdit('new')}><Icon name="plus" size={12} /> Nieuwe pie</button>
+      </div>
+      {list.length === 0 ? (
+        <p className="ps-subtle" style={{ fontSize: 13, margin: 0 }}>Maak je Trading 212-pie na met dezelfde aandelen en percentages. Een inleg wordt dan automatisch over alle aandelen verdeeld.</p>
+      ) : (
+        <div className="ps-pies">
+          {list.map(ps => {
+            const isOpen = open === ps.pie.id;
+            const shown = ps.slices.filter(x => x.target > 0 || x.quantity > 0);
+            return (
+              <div className="ps-pie" key={ps.pie.id} data-testid={'pie-' + ps.pie.id}>
+                <button type="button" className="ps-pie__head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : ps.pie.id)}>
+                  <span className="ps-pie__ring" aria-hidden="true" style={{ background: pieGradient(shown, ps.value > 0 ? 'actual' : 'target') }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="ps-coin__name">{ps.pie.name}</div>
+                    <div className="ps-coin__sub">{shown.length} {shown.length === 1 ? 'aandeel' : 'aandelen'}{ps.value > 0 ? ` · ingelegd ${privacy ? '€ •••••' : fmtMoney(ps.cost)}` : ' · nog niets ingelegd'}</div>
+                  </div>
+                  <div className="ps-coin__end">
+                    <span className="ps-coin__val"><Money value={ps.value} /></span>
+                    {ps.txCount > 0 && <span className={psTone(ps.pnl)} style={{ fontSize: 12.5 }}>{privacy ? '€ •••••' : fmtMoney(ps.pnl, { sign: true })}{ps.pnlPct != null ? ' · ' + fmtPct(ps.pnlPct, { decimals: 1 }) : ''}</span>}
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="ps-pie__body">
+                    <div className="ps-pie__acts">
+                      <Button size="sm" variant="primary" icon="plus" onClick={() => setMoney({ pie: ps.pie, mode: 'in' })}>Inleggen</Button>
+                      <Button size="sm" variant="secondary" icon="minus" disabled={!(ps.value > 0)} onClick={() => setMoney({ pie: ps.pie, mode: 'uit' })}>Opnemen</Button>
+                      <Button size="sm" variant="ghost" icon="pencil" onClick={() => setEdit(ps.pie)}>Bewerken</Button>
+                    </div>
+                    <div>
+                      {shown.map((x, i) => (
+                        <div className="ps-pie__sl" key={x.symbol}>
+                          <span className="ps-und__dot" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                          <span style={{ minWidth: 0 }}><b style={{ fontWeight: 600 }}>{x.symbol}</b> <span className="ps-subtle">{x.name !== x.symbol ? x.name : ''}</span></span>
+                          <span className="num" style={{ textAlign: 'right' }}>{x.quantity > 0 ? (privacy ? '€ •••••' : fmtMoney(x.value, { decimals: 2 })) : '—'}</span>
+                          <div className="ps-pie__bars" title={`Doel ${fmtPct(x.target, { decimals: 1, sign: false })} · nu ${fmtPct(x.actual, { decimals: 1, sign: false })}`}>
+                            <div className="ps-pie__bar ps-pie__bar--target"><span style={{ width: Math.min(100, x.target) + '%', background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
+                            <div className="ps-pie__bar"><span style={{ width: Math.min(100, x.actual) + '%', background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
+                            <span className="ps-subtle" style={{ fontSize: 11.5 }}>Doel {fmtPct(x.target, { decimals: 1, sign: false })} · nu {fmtPct(x.actual, { decimals: 1, sign: false })}
+                              {x.quantity > 0 && <> · <span className={psTone(x.pnl)}>{privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true, decimals: 2 })}</span></>}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {edit && <PieEditSheet app={app} pie={edit === 'new' ? null : edit} onClose={() => setEdit(null)} />}
+      {money && <PieMoneySheet app={app} pie={money.pie} mode={money.mode} summary={list.find(x => x.pie.id === money.pie.id)} onClose={() => setMoney(null)} />}
+    </div>
+  );
+}
+
+function PieEditSheet({ app, pie, onClose }) {
+  const [name, setName] = useState(pie ? pie.name : '');
+  const [slices, setSlices] = useState(() => (pie ? pie.slices : []).map(x => ({ ...x, weight: String(x.weight).replace('.', ',') })));
+  const [tried, setTried] = useState(false);
+  const total = slices.reduce((a, x) => a + (parseNlNumber(x.weight) || 0), 0);
+  const okTotal = Math.abs(total - 100) < 0.05;
+  const errors = !name.trim() ? 'Geef de pie een naam' : !slices.length ? 'Voeg minstens één aandeel toe'
+    : slices.some(x => !(parseNlNumber(x.weight) > 0)) ? 'Elk aandeel heeft een percentage nodig' : !okTotal ? 'De percentages moeten samen 100% zijn' : null;
+  const addSlice = it => setSlices(list => list.some(x => x.symbol === it.symbol) ? list : [...list, { symbol: it.symbol, name: it.name || it.symbol, weight: '' }]);
+  const equal = () => setSlices(list => {
+    const n = list.length; if (!n) return list;
+    const base = Math.floor(10000 / n) / 100;
+    return list.map((x, i) => ({ ...x, weight: String(i === 0 ? +(100 - base * (n - 1)).toFixed(2) : base).replace('.', ',') }));
+  });
+  const save = () => {
+    setTried(true);
+    if (errors) return;
+    const next = { id: pie ? pie.id : 'pie_' + Math.random().toString(36).slice(2, 9), name: name.trim(), createdAt: pie ? pie.createdAt : new Date().toISOString(),
+      slices: slices.map(x => ({ symbol: normalizeTicker(x.symbol), name: x.name, weight: +(parseNlNumber(x.weight)).toFixed(2) })) };
+    app.updateTweaks(tw => {
+      const names = { ...(tw.stockNames || {}) };
+      next.slices.forEach(x => { if (x.name && x.name !== x.symbol) names[x.symbol] = x.name; });
+      const list = (tw.t212Pies || []).filter(x => x.id !== next.id);
+      return { ...tw, stockNames: names, t212Pies: pie ? (tw.t212Pies || []).map(x => x.id === next.id ? next : x) : [...list, next] };
+    });
+    if (app.refreshStocks) app.refreshStocks({ symbols: next.slices.map(x => x.symbol) });
+    app.toast && app.toast(pie ? 'Pie opgeslagen' : 'Pie aangemaakt');
+    onClose();
+  };
+  const remove = async () => {
+    const res = await app.confirm({ title: `Pie "${pie.name}" verwijderen?`, body: 'Alleen de pie verdwijnt. De gekochte aandelen en hun transacties blijven gewoon bij Trading 212 staan.', confirmLabel: 'Verwijderen' });
+    if (!res || !res.ok) return;
+    app.updateTweaks(tw => ({ ...tw, t212Pies: (tw.t212Pies || []).filter(x => x.id !== pie.id) }));
+    onClose();
+  };
+  return (
+    <Sheet open onClose={onClose} testId="pie-edit" width={520} title={pie ? 'Pie bewerken' : 'Nieuwe pie'} subtitle="Dezelfde aandelen en percentages als in je Trading 212-pie."
+      footer={<div className="md-foot">
+        {pie && <Button variant="ghost" onClick={remove}>Verwijderen</Button>}
+        <span className="md-foot__reason">{tried ? errors : ''}</span>
+        <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+        <Button variant="primary" onClick={save} data-testid="pie-save">Opslaan</Button>
+      </div>}>
+      <div className="md-form">
+        <Field label="Naam" htmlFor="pie-name"><Input id="pie-name" value={name} placeholder="bijv. Dividend Pie" onChange={e => setName(e.target.value)} /></Field>
+        <Field label="Aandelen in de pie" hint={slices.length ? null : 'Zoek en kies de aandelen of ETF’s uit je pie.'}>
+          {slices.map((x, i) => (
+            <div className="pe-row" key={x.symbol}>
+              <div style={{ minWidth: 0 }}><div className="md-stock__sym">{x.symbol}</div><div className="md-stock__meta" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.name}</div></div>
+              <MoneyInput prefix="" suffix="%" value={x.weight} placeholder="0" ariaLabel={`Percentage ${x.symbol}`}
+                onChange={v => setSlices(list => list.map((y, j) => j === i ? { ...y, weight: v } : y))} />
+              <IconButton icon="x" label={`${x.symbol} verwijderen`} size="sm" onClick={() => setSlices(list => list.filter((_, j) => j !== i))} />
+            </div>
+          ))}
+          {slices.length > 0 && (
+            <div className={'pe-sum' + (okTotal ? '' : ' is-bad')}>
+              <span>Totaal {fmtPct(total, { decimals: 2, sign: false })}{okTotal ? '' : ' (moet 100% zijn)'}</span>
+              <button type="button" className="md-addlink" onClick={equal}>Gelijk verdelen</button>
+            </div>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <MdStockPicker id="pie-add" value="" name="" recent={[]} onPick={addSlice} />
+          </div>
+        </Field>
+      </div>
+    </Sheet>
+  );
+}
+
+function PieMoneySheet({ app, pie, mode, summary, onClose }) {
+  const today = todayIsoLocal();
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(today);
+  const [tried, setTried] = useState(false);
+  const quotes = app.stockQuotes || {};
+  const isIn = mode === 'in';
+  useEffect(() => { if (app.refreshStocks) app.refreshStocks({ symbols: pie.slices.map(x => normalizeTicker(x.symbol)) }); }, []); // eslint-disable-line
+  const amt = parseNlNumber(amount) || 0;
+  const rows = isIn
+    ? pie.slices.map(x => {
+        const sym = normalizeTicker(x.symbol);
+        const px = stockPriceAt(quotes[sym], date, today);
+        const eur = amt * (+x.weight || 0) / 100;
+        return { symbol: sym, eur, px, qty: px ? eur / px : null };
+      })
+    : ((summary && summary.slices) || []).filter(x => x.quantity > 0).map(x => {
+        const px = stockPriceAt(quotes[x.symbol], date, today);
+        const frac = summary.value > 0 ? Math.min(1, amt / summary.value) : 0;
+        const qty = x.quantity * frac;
+        return { symbol: x.symbol, eur: px ? qty * px : 0, px, qty };
+      });
+  const missing = rows.filter(r => !r.px).map(r => r.symbol);
+  const maxOut = summary ? summary.value : 0;
+  const error = !(amt > 0) ? 'Vul een bedrag in' : missing.length ? `Nog geen koers voor ${missing.join(', ')}` : (!isIn && amt > maxOut + 0.005) ? `Maximaal ${fmtMoney(maxOut, { decimals: 2 })}` : null;
+  const submit = () => {
+    setTried(true);
+    if (error) return;
+    const batch = Math.random().toString(36).slice(2, 8);
+    const txs = rows.filter(r => r.qty > 0).map(r => ({
+      id: makeId(), party: STOCK_PARTY_ID, type: isIn ? 'koop' : 'verkoop', date, instrument: r.symbol,
+      quantity: +r.qty.toFixed(8), unitPriceEur: +r.px.toFixed(6), amountEur: +r.eur.toFixed(2),
+      note: `Pie ${pie.name}`, _t212Id: `pie:${pie.id}:${batch}`,
+    }));
+    app.saveTxs(txs, isIn ? `${fmtMoney(amt, { decimals: 2 })} ingelegd in ${pie.name}` : `${fmtMoney(amt, { decimals: 2 })} opgenomen uit ${pie.name}`);
+    onClose();
+  };
+  return (
+    <Sheet open onClose={onClose} testId="pie-money" width={480} title={isIn ? `Inleggen in ${pie.name}` : `Opnemen uit ${pie.name}`}
+      subtitle={isIn ? 'Het bedrag wordt volgens de pie-percentages over de aandelen verdeeld.' : 'Er wordt naar verhouding uit elk aandeel verkocht.'}
+      footer={<div className="md-foot">
+        <span className="md-foot__reason">{tried || amt > 0 ? error : ''}</span>
+        <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+        <Button variant="primary" onClick={submit} data-testid="pie-money-submit">{isIn ? 'Inleggen' : 'Opnemen'}</Button>
+      </div>}>
+      <div className="md-form">
+        <Field label="Bedrag (€)" htmlFor="pie-amt" hint={!isIn && maxOut > 0 ? `Waarde nu ${fmtMoney(maxOut, { decimals: 2 })}` : null}>
+          <MoneyInput id="pie-amt" large value={amount} onChange={setAmount} placeholder="0,00" />
+        </Field>
+        <Field label="Datum" htmlFor="pie-date">
+          <div className="md-chips">
+            <Chip active={date === today} onClick={() => setDate(today)}>Vandaag</Chip>
+            <Chip active={date === addDaysIso(today, -1)} onClick={() => setDate(addDaysIso(today, -1))}>Gisteren</Chip>
+          </div>
+          <Input id="pie-date" type="date" value={date} max={today} onChange={e => setDate(e.target.value)} />
+        </Field>
+        {amt > 0 && (
+          <div>
+            <div className="ps-sec-head" style={{ marginBottom: 4 }}><h3 className="ps-sec-title">Verdeling</h3><span className="ps-subtle" style={{ fontSize: 12 }}>koers {date >= today ? 'nu' : 'op ' + fmtDateShort(date)}</span></div>
+            <table className="pe-prev"><tbody>
+              {rows.map(r => (
+                <tr key={r.symbol}>
+                  <td><b style={{ fontWeight: 600 }}>{r.symbol}</b></td>
+                  <td>{r.px ? fmtQty(r.qty, '', { decimals: 4 }).trim() + ' × ' + fmtMoney(r.px, { decimals: 2 }) : <span style={{ color: 'var(--warn)' }}>geen koers</span>}</td>
+                  <td>{fmtMoney(r.eur, { decimals: 2 })}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
+// Trading 212: posities per ticker met live koers (koersen-worker) en de vrije kas.
+function PsStockPositions({ app, s }) {
+  const privacy = !!(app.prefs && app.prefs.privacy);
+  const st = s.stocks;
+  const status = app.stockStatus || {};
+  const fetchedAt = Object.values(app.stockQuotes || {}).map(q => q.fetchedAt).filter(Boolean).sort().pop();
+  return (
+    <div>
+      <div className="ps-sec-head" style={{ marginBottom: 8 }}>
+        <h3 className="ps-sec-title">Aandelen ({st.positions.length})</h3>
+        <button type="button" className="ps-link" disabled={!!status.loading} onClick={() => app.refreshStocks && app.refreshStocks({ force: true })}>
+          <Icon name={status.loading ? 'loader' : 'refresh-cw'} size={12} /> {status.loading ? 'Ophalen…' : 'Ververs koersen'}
+        </button>
+      </div>
+      <div className="ps-coins" data-testid="stock-positions">
+        {st.positions.map(x => (
+          <div className="ps-coin" key={x.symbol} data-testid={'stock-' + x.symbol}>
+            <span className="ps-stk__tick" aria-hidden="true">{x.symbol.replace(/\..*$/, '').slice(0, 4)}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="ps-coin__name">{x.name}</div>
+              <div className="ps-coin__sub">
+                {x.symbol} · {fmtQty(x.quantity, '', { decimals: x.quantity % 1 === 0 ? 0 : 4 }).trim()} × {x.hasQuote ? fmtMoney(x.priceEur, { decimals: 2 }) : 'geen koers'}
+                {x.dayChange != null && Math.abs(x.dayChange) >= 0.005 && <> · <span className={psTone(x.dayChange)}>{privacy ? '€ •••••' : fmtMoney(x.dayChange, { sign: true, decimals: 2 })} vandaag</span></>}
+              </div>
+            </div>
+            <div className="ps-coin__end">
+              <span className="ps-coin__val"><Money value={x.value} /></span>
+              <span className={psTone(x.pnl)} style={{ fontSize: 12.5 }}>{privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true })} · {fmtPct(x.pnlPct, { decimals: 1 })}</span>
+            </div>
+            {!x.hasQuote && <div className="ps-coin__chain"><span className="ps-coin__warn"><Icon name="circle-alert" size={12} />Nog geen koers; gewaardeerd tegen kostprijs</span></div>}
+          </div>
+        ))}
+        {st.cash >= 0.005 && (
+          <div className="ps-coin" data-testid="stock-cash">
+            <span className="ps-stk__tick" aria-hidden="true"><Icon name="wallet" size={14} /></span>
+            <div style={{ minWidth: 0 }}><div className="ps-coin__name">Vrije kas</div><div className="ps-coin__sub">Niet belegd saldo bij Trading 212</div></div>
+            <div className="ps-coin__end"><span className="ps-coin__val"><Money value={st.cash} /></span></div>
+          </div>
+        )}
+      </div>
+      <div className="ps-stk__foot">
+        <span>Koersen via Yahoo Finance, omgerekend naar euro{fetchedAt ? ` · ${fmtRelDay(fetchedAt.slice(0, 10))} ${fmtTime(fetchedAt)}` : ''}</span>
+        {status.error && <span className="ps-coin__warn"><Icon name="circle-alert" size={12} />{status.error}</span>}
+      </div>
+    </div>
+  );
+}
+
 function PsPostCoins({ app, s }) {
   const privacy = !!(app.prefs && app.prefs.privacy);
   const leaves = s.leaves || [];
@@ -973,7 +1265,8 @@ function PsPartyBody({ app, s }) {
           ? <div><dt>Via cashback</dt><dd><Money value={s.totalCashback || 0} /></dd></div>
           : <div><dt>Dividend en rente</dt><dd><Money value={s.totalIncome || 0} /></dd></div>}
       </dl>
-      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
+      {isT212 && <PsPies app={app} />}
+      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
       {gp && (
         <div className="ps-pgoal">
           <div className="ps-pgoal__row"><span>Doel</span><span className="num">{fmtPct(gp.pct, { decimals: 0, sign: false })} · {privacy && !['gram', 'ounce'].includes(p.unit) ? '€ •••••' : gp.label}</span></div>

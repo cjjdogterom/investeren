@@ -461,6 +461,22 @@ async function fetchChainBalance(coin, address) {
   throw new Error(`Onbekende coin ${coin}`);
 }
 
+// ── Aandelenkoersen (Trading 212) via de eigen koersen-worker ──
+// Cache per apparaat: { [SYMBOOL]: { priceEur, previousCloseEur, name, currency, exchange, marketTime, history } }.
+const STOCK_CACHE_KEY = 'investeringen-stocks-v1';
+const STOCK_REFRESH_MS = 10 * 60 * 1000;
+function loadStockCache() {
+  try { const v = JSON.parse(localStorage.getItem(STOCK_CACHE_KEY)); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+  catch (e) { return {}; }
+}
+async function fetchStockQuotes(symbols, range = '2y') {
+  const timeout = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined;
+  const res = await fetch(`${STOCK_API_URL}/koers?s=${encodeURIComponent(symbols.join(','))}&range=${range}`, { cache: 'no-store', signal: timeout });
+  const j = await res.json().catch(() => null);
+  if (!res.ok || !j) throw new Error((j && j.error) || `Koersen-dienst gaf ${res.status}`);
+  return j;
+}
+
 // Cache van on-chain saldi: per apparaat (niet gesynchroniseerd), zodat de app direct een waarde heeft.
 const CHAIN_CACHE_KEY = 'investeringen-chain-v1';
 const CHAIN_REFRESH_MS = 5 * 60 * 1000;
@@ -1142,6 +1158,11 @@ function App() {
   const chainTargetsRef = React.useRef([]);
   const refreshChainRef = React.useRef(null);
   React.useEffect(() => { try { localStorage.setItem(CHAIN_CACHE_KEY, JSON.stringify(chainBalances)); } catch (e) { /* ignore */ } }, [chainBalances]);
+  const [stockQuotes, setStockQuotes] = React.useState(loadStockCache);
+  const [stockStatus, setStockStatus] = React.useState({ loading: false, error: null, fetchedAt: null });
+  const stockQuotesRef = React.useRef(stockQuotes);
+  stockQuotesRef.current = stockQuotes;
+  React.useEffect(() => { try { localStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(stockQuotes)); } catch (e) { /* ignore */ } }, [stockQuotes]);
   const [t212Status, setT212Status] = React.useState({ loading: false, error: null, imported: 0, done: false });
   const [importMsg, setImportMsg]   = React.useState(null);
   const [supabaseConfig, setSupabaseConfig] = React.useState(loadSupabaseConfig);
@@ -1510,6 +1531,7 @@ function App() {
     setSpotStatus(s => ({ ...s, loading: true, error: null }));
     // On-chain wallet-saldi mee verversen (automatisch hooguit elke 5 min, handmatig altijd).
     if (refreshChainRef.current) refreshChainRef.current({ force: manual });
+    if (refreshStocksRef.current) refreshStocksRef.current({ force: manual });
 
     let serverRefreshFailed = false;
     if (manual || autoServerRefresh) {
@@ -1859,7 +1881,9 @@ function App() {
     ethHistory:            state.ethHistory    || [],
     paxgHistory:           state.paxgHistory   || [],
     chainBalances:         chainBalances || {},
-  }), [spotsKey]); // eslint-disable-line
+    stockQuotes:           stockQuotes || {},
+    stockNames:            tweaks.stockNames || {},
+  }), [spotsKey, stockQuotes, tweaks.stockNames]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.
@@ -1916,6 +1940,47 @@ function App() {
   }, []);
   refreshChainRef.current = refreshChain;
   React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
+
+  // ── Aandelenkoersen voor alle tickers in Trading 212-boekingen ──
+  const stockSymbols = React.useMemo(() => stockSymbolsOf(state.transactions), [state.transactions]);
+  const stockSig = stockSymbols.join(',');
+  const refreshStocks = React.useCallback(async ({ force = false, symbols } = {}) => {
+    const list = symbols || stockSig.split(',').filter(Boolean);
+    if (!list.length) return;
+    const cache = stockQuotesRef.current || {};
+    const now = Date.now();
+    const due = list.filter(sym => force || !cache[sym] || now - (Date.parse(cache[sym].fetchedAt || '') || 0) > STOCK_REFRESH_MS);
+    if (!due.length) return;
+    setStockStatus(st => ({ ...st, loading: true, error: null }));
+    try {
+      const j = await fetchStockQuotes(due);
+      const fetchedAt = j.fetchedAt || new Date().toISOString();
+      setStockQuotes(prev => {
+        const next = { ...prev };
+        for (const [sym, q] of Object.entries(j.quotes || {})) next[sym] = { ...q, fetchedAt };
+        return next;
+      });
+      const errs = Object.entries(j.errors || {}).map(([sym, m]) => `${sym}: ${m}`);
+      setStockStatus({ loading: false, error: errs.length ? errs.join(' · ') : null, fetchedAt });
+      // Dagkoers vastleggen zodat de dagwaarden (server) de aandelen ook kunnen waarderen.
+      const client = getSupabaseClient(supabaseConfig);
+      if (client) {
+        const today = new Date().toISOString().slice(0, 10);
+        const rows = Object.entries(j.quotes || {}).filter(([, q]) => q.priceEur > 0)
+          .map(([sym, q]) => ({ asset: 'stock:' + sym, date: today, nav: +(+q.priceEur).toFixed(6), source: 'koersen-worker' }));
+        if (rows.length) supabaseUpsertAssetPriceRows(client, rows).catch(e => console.warn('[koersen] opslaan mislukt:', e.message));
+      }
+    } catch (e) {
+      setStockStatus(st => ({ ...st, loading: false, error: (e && e.name === 'TimeoutError') ? 'Time-out bij ophalen koersen' : ((e && e.message) || 'Koersen ophalen mislukt') }));
+    }
+  }, [stockSig, supabaseConfig]); // eslint-disable-line
+  const refreshStocksRef = React.useRef(refreshStocks);
+  refreshStocksRef.current = refreshStocks;
+  React.useEffect(() => {
+    refreshStocks();
+    const id = setInterval(() => refreshStocksRef.current(), STOCK_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [stockSig]); // eslint-disable-line
   // Oude fin-over-boekingen (Vrij op rekening) tellen nergens mee: de post is live gewaardeerd.
   const valTxs = React.useMemo(() => {
     const all = state.transactions || [];
@@ -2099,6 +2164,27 @@ function App() {
     }
   }, [setSyncedState, setPrefs, toast]);
 
+  // Meerdere boekingen tegelijk (bv. inleg in een pie = één koop per aandeel), met één melding.
+  const saveTxs = React.useCallback((list, message) => {
+    const txs = (list || []).filter(t => t && t.id);
+    if (!txs.length) return;
+    const updatedAt = new Date().toISOString();
+    const stamped = txs.map(t => ({ ...t, updatedAt }));
+    const ids = new Set(stamped.map(t => t.id));
+    setSyncedState(s => {
+      const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
+      ids.forEach(id => { delete deletedTransactionIds[id]; });
+      return { ...s, transactions: [...s.transactions.filter(t => !ids.has(t.id)), ...stamped], deletedTransactionIds };
+    });
+    toast(message || `${stamped.length} transacties toegevoegd`, { action: { label: 'Ongedaan maken', onClick: () => {
+      setSyncedState(s => {
+        const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
+        ids.forEach(id => { deletedTransactionIds[id] = new Date().toISOString(); });
+        return { ...s, transactions: s.transactions.filter(t => !ids.has(t.id)), deletedTransactionIds };
+      });
+    } } });
+  }, [setSyncedState, toast]);
+
   const deleteTx = React.useCallback(async (id, { confirm = true, toast: showToast = true } = {}) => {
     const tx = (stateRef.current.transactions || []).find(t => t.id === id);
     if (!tx) return false;
@@ -2213,17 +2299,19 @@ function App() {
     state: viewState, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
+    stockQuotes, stockStatus, refreshStocks,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
-    saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
+    saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
     overlayOpen: overlay !== null, confirm: confirmFn, toast,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
+    stockQuotes, stockStatus, refreshStocks,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
-    saveTx, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
+    saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
 
   // Sidebar-tellers
