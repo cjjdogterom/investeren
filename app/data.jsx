@@ -638,12 +638,40 @@ function stockPriceAt(quote, date, todayIso = todayIsoLocal()) {
 // Invariant: kas + kostprijs posities = netto inleg + gerealiseerd resultaat.
 // opts.start (ISO): alleen rendement vanaf die dag. De stand van de dag ervoor (kas + posities tegen de
 // slotkoers) wordt het startbedrag; kostprijs per positie = marktwaarde op dat moment, resultaat begint op 0.
+// Stand bij de start, teruggerekend vanaf de live stand van Trading 212 min alles vanaf de startdatum.
+// Betrouwbaarder dan jaren historie vooruitrekenen (niet elke kasbeweging zit in de API).
+function t212Opening(apiTxs, live, start) {
+  const a = live.account || {};
+  let cash = (a.free || 0) + (a.inPies || 0) + (a.reserved || 0);
+  const qty = {}, avg = {};
+  for (const x of live.positions || []) {
+    qty[x.symbol] = (qty[x.symbol] || 0) + (+x.quantity || 0);
+    if (x.quantity > 0) avg[x.symbol] = x.cost / x.quantity;
+  }
+  for (const t of apiTxs) {
+    if (t.date < start) continue;
+    const fee = +t.feeEur || 0;
+    if (t.type === 'inleg') cash -= +t.amountEur || 0;
+    else if (t.type === 'opname') cash += +t.amountEur || 0;
+    else if (t.type === 'koop') { cash += stockTxGross(t) + fee; if (t.instrument) qty[normalizeTicker(t.instrument)] = (qty[normalizeTicker(t.instrument)] || 0) - (+t.quantity || 0); }
+    else if (t.type === 'verkoop') { cash -= stockTxGross(t) - fee; if (t.instrument) qty[normalizeTicker(t.instrument)] = (qty[normalizeTicker(t.instrument)] || 0) + (+t.quantity || 0); }
+    else if (['dividend', 'rente', 'cashback'].includes(t.type)) cash -= stockTxGross(t);
+    else if (t.type === 'kosten') cash += +t.amountEur || 0;
+  }
+  Object.keys(qty).forEach(k => { if (!(qty[k] > 1e-7)) delete qty[k]; });
+  return { cash: Math.max(0, cash), qty, avg };
+}
+// Binnen één dag: eerst geld erin, dan kopen, verkopen, inkomsten, kosten en als laatste opnames.
+const T212_DAY_ORDER = { inleg: 0, koop: 1, verkoop: 2, dividend: 3, rente: 3, cashback: 3, kosten: 4, opname: 5 };
+
 function t212StockState(txs, date = null, opts = {}) {
   const start = opts.start || null, quotes = opts.quotes || {};
   if (start && date && date < start) return null;
   const linked = t212Linked(txs);
   const sorted = (txs || []).filter(t => t.party === STOCK_PARTY_ID && (!date || t.date <= date) && (!linked || isT212ApiTx(t)))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date) || ((T212_DAY_ORDER[a.type] ?? 9) - (T212_DAY_ORDER[b.type] ?? 9)));
+  const opening = start && linked && opts.live && opts.live.account
+    ? t212Opening((txs || []).filter(isT212ApiTx), opts.live, start) : null;
   const first = linked ? sorted[0] : sorted.find(isStockTx);
   if (!first) return null;
   let anchor = null;
@@ -657,6 +685,11 @@ function t212StockState(txs, date = null, opts = {}) {
   const reset = () => {
     didReset = true;
     const before = addDaysIso(start, -1);
+    if (opening) {
+      cash = opening.cash;
+      Object.keys(holdings).forEach(k => { delete holdings[k]; });
+      for (const [sym, q] of Object.entries(opening.qty)) holdings[sym] = { symbol: sym, quantity: q, cost: q * (opening.avg[sym] || 0), firstDate: start };
+    }
     for (const h of Object.values(holdings)) {
       const px = h.quantity > 0 ? stockPriceAt(quotes[h.symbol], before) : null;
       if (px != null) h.cost = h.quantity * px;
@@ -777,7 +810,7 @@ function t212StateAt(txs, first, day, opts, cache) {
   return cache.get(ck);
 }
 
-function t212Opts(spots) { return { start: (spots && spots.t212Start) || null, quotes: (spots && spots.stockQuotes) || {} }; }
+function t212Opts(spots) { return { start: (spots && spots.t212Start) || null, quotes: (spots && spots.stockQuotes) || {}, live: (spots && spots.t212Live) || null }; }
 
 function summarizeT212Live(party, txs, st, live, quotes) {
   const a = live.account;
@@ -816,7 +849,7 @@ function summarizeT212Live(party, txs, st, live, quotes) {
     realizedCostBasis: base.realizedCost, realizedProceeds: base.realizedProceeds, realizedPnl: base.realized,
     pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
     bookedQuantity: null, chainCheckedAt: null,
-    stocks: { positions, cash, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [] },
+    stocks: { positions, cash, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [], startDate: st && st.startDate },
   };
 }
 
@@ -854,7 +887,7 @@ function summarizeT212Stocks(party, txs, st, spots) {
     realizedCostBasis: st.realizedCost, realizedProceeds: st.realizedProceeds, realizedPnl: st.realized,
     pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
     bookedQuantity: null, chainCheckedAt: null,
-    stocks: { positions, cash: st.cash, missingQuotes: positions.filter(x => !x.hasQuote).map(x => x.symbol), lastTxDate: lastTx && lastTx.date },
+    stocks: { positions, cash: st.cash, startDate: st.startDate, missingQuotes: positions.filter(x => !x.hasQuote).map(x => x.symbol), lastTxDate: lastTx && lastTx.date },
   };
 }
 
@@ -1740,7 +1773,7 @@ function goalProgress(s) {
 }
 
 function cagrOf(s, todayIso = todayIsoLocal()) {
-  const first = s.transactions && s.transactions.length ? s.transactions[0].date : null;
+  const first = (s.stocks && s.stocks.startDate) || (s.transactions && s.transactions.length ? s.transactions[0].date : null);
   if (!first) return { pct: null, years: 0 };
   const years = Math.max(1 / 12, daysBetween(first, todayIso) / 365.25);
   const value = +s.currentValueEur || 0, invested = +s.invested || 0;
