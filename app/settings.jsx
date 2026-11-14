@@ -7,7 +7,7 @@ const ST_SECTIONS = [
   { key: 'wallet',      label: 'Wallet',         icon: 'wallet',             desc: 'Coinbase Wallet alleen-lezen koppelen' },
   { key: 'financieel',  label: 'Financieel',     icon: 'wallet',             desc: 'Vrij op rekening uit je Financieel Systeem' },
   { key: 'sync',        label: 'Synchronisatie', icon: 'cloud',              desc: 'Supabase-koppeling' },
-  { key: 't212',        label: 'Trading 212',    icon: 'download',           desc: 'Stortingen en waarde importeren' },
+  { key: 't212',        label: 'Trading 212',    icon: 'link',               desc: 'Live koppeling met je account' },
   { key: 'partijen',    label: 'Partijen',       icon: 'layers',             desc: 'Partijen beheren en toevoegen' },
   { key: 'gegevens',    label: 'Gegevens',       icon: 'arrow-down-to-line', desc: 'Exporteren en importeren' },
   { key: 'gevarenzone', label: 'Gevarenzone',    icon: 'triangle-alert',     desc: 'Verwijderen en terugzetten' },
@@ -434,30 +434,41 @@ function StSync({ app }) {
 }
 
 function StT212({ app }) {
+  const saved = app.tweaks?.t212Sleutel || '';
+  const [val, setVal] = React.useState(saved);
+  React.useEffect(() => { setVal(saved); }, [saved]);
   const ts = app.t212Status || {};
-  const mode = app.tweaks?.t212Mode || 'live';
+  const live = app.t212Live;
+  const liveErr = app.t212LiveError;
   return (
     <Card title="Trading 212">
       <div className="st-stack">
-        <div className="st-row st-row--between">
-          <span className="st-label">Modus</span>
-          <Segmented options={[{ value: 'live', label: 'Live' }, { value: 'demo', label: 'Paper' }]} value={mode}
-            onChange={v => app.updateTweaks(tw => ({ ...tw, t212Mode: v }))} ariaLabel="Trading 212-modus" />
-        </div>
+        <p className="st-note">Koppelt je Trading 212-account (alleen lezen) via je eigen beveiligde koppeling op Cloudflare. De app haalt dan live je waarde, posities, kas en pies op en neemt je stortingen, orders en dividenden automatisch over. Handmatige Trading 212-boekingen tellen daarna niet meer mee.</p>
+        <label className="st-label" htmlFor="st-t212-key">Deelsleutel</label>
+        <Input id="st-t212-key" type="password" autoComplete="off" value={val} placeholder="Plak hier de deelsleutel uit koppel.sh"
+          onChange={e => setVal(e.target.value.trim())} />
         <div className="st-row">
-          <Button variant="primary" icon={ts.loading ? 'loader' : 'download'} disabled={!app.sbOk || !!ts.loading} onClick={() => app.importT212()}>
-            {ts.loading ? 'Bezig… (kan even duren)' : 'Importeer stortingen + waarde'}
-          </Button>
-          {!app.sbOk && <span className="st-sub">Koppel eerst Supabase.</span>}
+          <Button variant="primary" icon="check" disabled={val === saved}
+            onClick={() => app.updateTweaks(tw => ({ ...tw, t212Sleutel: val }))}>Opslaan</Button>
+          {saved && <Button variant="secondary" icon={ts.loading ? 'loader' : 'refresh-cw'} disabled={!!ts.loading} onClick={() => app.importT212()}>
+            {ts.loading ? 'Bezig…' : 'Nu synchroniseren'}</Button>}
+          {saved && <Button variant="ghost" onClick={() => app.updateTweaks(tw => ({ ...tw, t212Sleutel: '' }))}>Ontkoppelen</Button>}
         </div>
-        {(ts.error || ts.done) && (
-          <div className={'st-status ' + (ts.error ? 'st-status--err' : 'st-status--ok')} aria-live="polite">
-            {ts.error ? '⚠ ' + ts.error : `✓ ${ts.imported} nieuwe storting(en) + waarde bijgewerkt${ts.note || ''}`}
+        {saved && (
+          <div className={'st-status ' + (liveErr || ts.error ? 'st-status--err' : 'st-status--ok')} aria-live="polite">
+            {liveErr ? '⚠ ' + liveErr
+              : live ? `✓ Live: ${fmtEur(live.account.total, { decimals: 2 })} · ${(live.positions || []).length} posities · ${(live.pies || []).length} pies · ${fmtTime(live.fetchedAt)}`
+              : 'Ophalen…'}
+            {ts.error && <div>⚠ Historie: {ts.error}</div>}
+            {ts.done && !ts.error && ts.counts && <div>✓ Historie: {ts.counts.cash} geldboekingen, {ts.counts.orders} orders, {ts.counts.dividends} dividenden{ts.imported || ts.updated ? ` · ${ts.imported} nieuw, ${ts.updated || 0} bijgewerkt` : ''}</div>}
+            {(ts.warnings || []).length > 0 && <div>Let op: {ts.warnings.slice(0, 3).join(' · ')}</div>}
           </div>
         )}
-        <p className="st-note">Importeert je stortingen, opnames en huidige accountwaarde via de beveiligde Supabase-proxy. Je API-key staat veilig als secret in Supabase (niet hier). Duplicaten worden overgeslagen.</p>
-        <button type="button" className="st-link" onClick={() => app.navigate('/transacties?partij=trading212')}>
-          Bekijk Trading 212-transacties <Icon name="arrow-right" size={14} />
+        {!saved && (
+          <p className="st-note">Eenmalig instellen: maak in de Trading 212-app een API-sleutel met alleen leesrechten en draai in de projectmap <code>./workers/t212/koppel.sh</code>. Dat script zet je sleutel als geheim op Cloudflare en geeft de deelsleutel die je hierboven plakt.</p>
+        )}
+        <button type="button" className="st-link" onClick={() => app.navigate('/posities/trading212')}>
+          Bekijk Trading 212 <Icon name="arrow-right" size={14} />
         </button>
       </div>
     </Card>

@@ -620,74 +620,27 @@ async function fetchMeesmanHistory() {
 }
 
 
-// Roept de Supabase Edge Function "t212-proxy" aan (server-side, geen CORS, key blijft serverside).
-// Geeft { account, transactions } terug. Vereist een gedeployde t212-proxy + T212_API_KEY secret.
-async function fetchT212Bundle(supabaseConfig, mode = 'live') {
-  if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
-    throw new Error('Supabase niet geconfigureerd');
-  }
-  const url = supabaseConfig.url.trim().replace(/\/$/, '') + '/functions/v1/t212-proxy';
-  const anon = supabaseConfig.anonKey.trim();
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': anon,
-        'Authorization': `Bearer ${anon}`,
-      },
-      body: JSON.stringify({ mode }),
-    });
-  } catch (e) {
-    throw new Error('Kan de t212-proxy niet bereiken: ' + (e.message || 'netwerkfout') + ' — is de Edge Function gedeployd?');
-  }
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 404) throw new Error('t212-proxy niet gevonden (404) — deploy de Edge Function eerst in Supabase');
-  if (!res.ok) throw new Error(data.error || `Proxy HTTP ${res.status}`);
-  return data; // { account, transactions }
+// ── Trading 212-koppeling (eigen worker, alleen-lezen; deelsleutel in tweaks.t212Sleutel) ──
+const T212_LIVE_KEY = 'investeringen-t212-v1';
+const T212_LIVE_MS = 2 * 60 * 1000;
+const T212_HIST_MS = 30 * 60 * 1000;
+function loadT212Live() {
+  try { const v = JSON.parse(localStorage.getItem(T212_LIVE_KEY)); return v && v.account ? v : null; } catch (e) { return null; }
+}
+async function fetchT212(path, sleutel, force) {
+  const timeout = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(90000) : undefined;
+  const res = await fetch(T212_API_URL + path + (force ? '?vers=1' : ''), { headers: { 'x-sleutel': sleutel }, cache: 'no-store', signal: timeout });
+  const j = await res.json().catch(() => null);
+  if (!res.ok || !j) throw new Error((j && j.error) || `Koppeling gaf ${res.status}`);
+  return j;
+}
+// Historie-item van de worker → transactie in de app (stabiel id, dedup op _t212Id).
+function t212HistToTx(h) {
+  const tx = { id: 't212_' + h.key.replace(/[^A-Za-z0-9]/g, '_'), party: 'trading212', type: h.type, date: h.date, _t212Id: h.key };
+  ['amountEur', 'quantity', 'unitPriceEur', 'feeEur', 'instrument', 'note'].forEach(k => { if (h[k] != null && h[k] !== '') tx[k] = h[k]; });
+  return tx;
 }
 
-// Storting -> inleg, opname -> opname. Dedup via T212's unieke reference-veld.
-function mapT212Transaction(t) {
-  const typeMap = { DEPOSIT: 'inleg', WITHDRAW: 'opname' };
-  const kind = typeMap[t.type];
-  if (!kind) return null; // TRANSFER/FEE/dividend tellen niet mee in de bundle
-  const ref = String(t.reference || t.id || '');
-  if (!ref) return null;
-  return {
-    id: makeId(), party: 'trading212', type: kind,
-    date: (t.dateTime || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
-    amountEur: Math.abs(+t.amount || 0),
-    note: `T212:${t.type}`, _t212Id: 'txn:' + ref,
-  };
-}
-
-// Eén waardering-transactie met de huidige accountwaarde (zet lastTotalValue van de bundle).
-function mapT212Valuation(account) {
-  if (!account) return null;
-  let value = null;
-  if (account.kind === 'summary') {
-    value = +account.data?.totalValue;
-  } else if (account.kind === 'cash') {
-    const d = account.data || {};
-    // `total` = canonieke accountwaarde (incl. pieCash/blocked). Val alleen terug
-    // op de som als `total` ontbreekt.
-    value = (d.total != null)
-      ? +d.total
-      : (+d.invested || 0) + (+d.ppl || 0) + (+d.free || 0);
-  }
-  if (!(value > 0)) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  return {
-    id: makeId(), party: 'trading212', type: 'waardering',
-    date: today, valueEur: +value.toFixed(2),
-    note: 'T212:accountwaarde', _t212Id: 'val:' + today, // 1 per dag, idempotent
-  };
-}
-
-
-// ── Routing (S1) ──────────────────────────────────────────────
 const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'financieel', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
 const SH_SECTION_TITLES = {
   weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', wallet: 'Wallet', sync: 'Synchronisatie', t212: 'Trading 212',
@@ -1164,6 +1117,10 @@ function App() {
   stockQuotesRef.current = stockQuotes;
   React.useEffect(() => { try { localStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(stockQuotes)); } catch (e) { /* ignore */ } }, [stockQuotes]);
   const [t212Status, setT212Status] = React.useState({ loading: false, error: null, imported: 0, done: false });
+  const t212Sleutel = (state.tweaks && state.tweaks.t212Sleutel) || '';
+  const [t212Live, setT212Live] = React.useState(() => (state.tweaks && state.tweaks.t212Sleutel ? loadT212Live() : null));
+  const [t212LiveError, setT212LiveError] = React.useState(null);
+  React.useEffect(() => { try { if (t212Live) localStorage.setItem(T212_LIVE_KEY, JSON.stringify(t212Live)); else localStorage.removeItem(T212_LIVE_KEY); } catch (e) { /* ignore */ } }, [t212Live]);
   const [importMsg, setImportMsg]   = React.useState(null);
   const [supabaseConfig, setSupabaseConfig] = React.useState(loadSupabaseConfig);
   const [syncStatus, setSyncStatus] = React.useState({ loading: false, error: null, syncedAt: null });
@@ -1704,47 +1661,60 @@ function App() {
     });
   }, []);
 
-  const importT212 = React.useCallback(async () => {
-    setT212Status({ loading: true, error: null, imported: 0, done: false });
+  // Historie ophalen en nieuwe boekingen toevoegen (bestaande met hetzelfde _t212Id worden bijgewerkt).
+  const syncT212History = React.useCallback(async ({ force = false, quiet = false } = {}) => {
+    if (!t212Sleutel) return;
+    setT212Status(st => ({ ...st, loading: true, error: null }));
     try {
-      const { account, transactions = [], partial = false } =
-        await fetchT212Bundle(supabaseConfig, tweaks.t212Mode || 'live');
-
-      const existingIds = new Set(state.transactions.filter(t => t._t212Id).map(t => t._t212Id));
-
-      // Stortingen -> inleg, opnames -> opname (dedup op T212 reference, idempotent).
-      const depTxs = transactions
-        .map(mapT212Transaction)
-        .filter(tx => tx && !existingIds.has(tx._t212Id));
-
-      // Huidige accountwaarde -> waardering. ALTIJD meenemen (geen dedup-guard):
-      // de kept-filter hieronder vervangt de waardering-van-vandaag, zodat een
-      // her-import de waarde ververst i.p.v. de eerste meting te bevriezen.
-      const valTx = mapT212Valuation(account);
-      const newTxs = [...depTxs];
-      if (valTx) newTxs.push(valTx);
-
-      if (newTxs.length > 0) {
-        const now = new Date().toISOString();
-        setSyncedState(s => {
-          const stamped = newTxs.map(tx => ({ ...tx, updatedAt: now }));
-          const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
-          stamped.forEach(tx => { delete deletedTransactionIds[tx.id]; });
-          // Vervang een bestaande waardering-van-vandaag zodat er max. één per dag is.
-          const valIds = new Set(stamped.filter(t => t.type === 'waardering').map(t => t._t212Id));
-          const kept = s.transactions.filter(
-            t => !(t.party === 'trading212' && t.type === 'waardering' && valIds.has(t._t212Id))
-          );
-          return { ...s, transactions: [...kept, ...stamped], deletedTransactionIds };
-        });
-      }
-      const note = partial ? ' (historie deels — draai nog eens voor de rest)' : '';
-      setT212Status({ loading: false, error: null, imported: depTxs.length, done: true, note });
-      toast(`${depTxs.length} storting(en) geïmporteerd`);
+      const h = await fetchT212('/geschiedenis', t212Sleutel, force);
+      const incoming = (h.transactions || []).map(t212HistToTx);
+      let added = 0, updated = 0;
+      const now = new Date().toISOString();
+      setSyncedState(s => {
+        const byKey = new Map(s.transactions.filter(t => t._t212Id).map(t => [t._t212Id, t]));
+        const same = (a, b) => ['type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'feeEur', 'instrument'].every(k => (a[k] ?? null) === (b[k] ?? null));
+        const changes = new Map();
+        for (const tx of incoming) {
+          const cur = byKey.get(tx._t212Id);
+          if (!cur) { changes.set(tx.id, { ...tx, updatedAt: now }); added++; }
+          else if (!same(cur, tx)) { changes.set(cur.id, { ...cur, ...tx, id: cur.id, updatedAt: now }); updated++; }
+        }
+        if (!changes.size) return s;
+        const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
+        changes.forEach((_, id) => { delete deletedTransactionIds[id]; });
+        const kept = s.transactions.map(t => changes.get(t.id) || t);
+        const fresh = [...changes.values()].filter(t => !s.transactions.some(x => x.id === t.id));
+        return { ...s, transactions: [...kept, ...fresh], deletedTransactionIds };
+      });
+      setT212Status({ loading: false, error: null, done: true, imported: added, updated, counts: h.counts, warnings: h.warnings || [], historyAt: h.fetchedAt });
+      if (!quiet && (added || updated)) toast(`Trading 212: ${added} nieuwe en ${updated} bijgewerkte boekingen`);
     } catch (e) {
-      setT212Status({ loading: false, error: e.message || 'Importfout', imported: 0, done: false });
+      setT212Status(st => ({ ...st, loading: false, error: e.message || 'Synchroniseren mislukt' }));
     }
-  }, [supabaseConfig, tweaks.t212Mode, state.transactions, setSyncedState, toast]);
+  }, [t212Sleutel, setSyncedState, toast]);
+  const refreshT212Live = React.useCallback(async ({ force = false } = {}) => {
+    if (!t212Sleutel) return;
+    try {
+      const j = await fetchT212('/snapshot', t212Sleutel, force);
+      setT212Live(j);
+      setT212LiveError(null);
+    } catch (e) {
+      setT212LiveError(e.message || 'Ophalen mislukt');
+    }
+  }, [t212Sleutel]);
+  const importT212 = React.useCallback(async () => {
+    await Promise.all([refreshT212Live({ force: true }), syncT212History({ force: true })]);
+  }, [refreshT212Live, syncT212History]);
+  React.useEffect(() => {
+    if (!t212Sleutel) { setT212Live(null); setT212LiveError(null); return; }
+    refreshT212Live();
+    syncT212History({ quiet: true });
+    const a = setInterval(() => refreshT212Live(), T212_LIVE_MS);
+    const b = setInterval(() => syncT212History({ quiet: true }), T212_HIST_MS);
+    const vis = () => { if (document.visibilityState === 'visible') refreshT212Live(); };
+    document.addEventListener('visibilitychange', vis);
+    return () => { clearInterval(a); clearInterval(b); document.removeEventListener('visibilitychange', vis); };
+  }, [t212Sleutel]); // eslint-disable-line
 
   React.useEffect(() => {
     refreshSpot();
@@ -1883,7 +1853,8 @@ function App() {
     chainBalances:         chainBalances || {},
     stockQuotes:           stockQuotes || {},
     stockNames:            tweaks.stockNames || {},
-  }), [spotsKey, stockQuotes, tweaks.stockNames]); // eslint-disable-line
+    t212Live:              t212Live,
+  }), [spotsKey, stockQuotes, tweaks.stockNames, t212Live]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.
@@ -2299,7 +2270,7 @@ function App() {
     state: viewState, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
-    stockQuotes, stockStatus, refreshStocks,
+    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
@@ -2308,7 +2279,7 @@ function App() {
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
-    stockQuotes, stockStatus, refreshStocks,
+    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,

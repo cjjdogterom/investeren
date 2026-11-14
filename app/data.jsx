@@ -608,6 +608,11 @@ async function searchStocks(q) {
   if (!res.ok || !j) throw new Error((j && j.error) || `Zoeken gaf ${res.status}`);
   return j.results || [];
 }
+// Boekingen uit de Trading 212-koppeling (historie via de API). Is de koppeling actief, dan tellen
+// alleen deze mee voor de waarde; handmatige en nagebootste-pie-boekingen blijven als notitie staan.
+const T212_API_URL = 'https://t212-koppeling.financieel-chris.workers.dev';
+function isT212ApiTx(t) { return !!t && t.party === STOCK_PARTY_ID && /^(txn|ord|div):/.test(t._t212Id || ''); }
+function t212Linked(txs) { return (txs || []).some(isT212ApiTx); }
 function normalizeTicker(v) { return String(v || '').trim().toUpperCase(); }
 function isStockTx(t) { return !!t && t.party === STOCK_PARTY_ID && !!t.instrument && (t.type === 'koop' || t.type === 'verkoop'); }
 function stockSymbolsOf(transactions) {
@@ -632,12 +637,13 @@ function stockPriceAt(quote, date, todayIso = todayIsoLocal()) {
 // (de koersen zijn leidend). Koop je meer dan er aan kas is, dan telt het tekort als inleg.
 // Invariant: kas + kostprijs posities = netto inleg + gerealiseerd resultaat.
 function t212StockState(txs, date = null) {
-  const sorted = (txs || []).filter(t => t.party === STOCK_PARTY_ID && (!date || t.date <= date))
+  const linked = t212Linked(txs);
+  const sorted = (txs || []).filter(t => t.party === STOCK_PARTY_ID && (!date || t.date <= date) && (!linked || isT212ApiTx(t)))
     .sort((a, b) => a.date.localeCompare(b.date));
-  const first = sorted.find(isStockTx);
+  const first = linked ? sorted[0] : sorted.find(isStockTx);
   if (!first) return null;
   let anchor = null;
-  for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null && t.valueEur !== '') anchor = t;
+  if (!linked) for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null && t.valueEur !== '') anchor = t;
   let cash = anchor ? +anchor.valueEur || 0 : 0;
   let contributed = cash, realized = 0, realizedCost = 0, realizedProceeds = 0;
   let income = 0, dividends = 0, cashback = 0, fees = 0;
@@ -741,9 +747,48 @@ function summarizePies(pies, transactions, quotes = {}) {
   });
 }
 
+// Gekoppeld: waarde, posities en kas komen live uit Trading 212; inleg en gerealiseerd resultaat uit de historie.
+function summarizeT212Live(party, txs, st, live, quotes) {
+  const a = live.account;
+  const cash = (a.free || 0) + (a.inPies || 0) + (a.reserved || 0);
+  const positions = (live.positions || []).filter(x => x.quantity > 0).map(x => {
+    const q = quotes[x.symbol] || null;
+    const priceEur = x.quantity > 0 ? x.value / x.quantity : null;
+    const dayChange = q && q.priceEur != null && q.previousCloseEur != null && q.priceEur > 0
+      ? x.value * (1 - q.previousCloseEur / q.priceEur) : null;
+    return {
+      symbol: x.symbol, t212Ticker: x.ticker, name: x.name, quantity: x.quantity, quantityInPies: x.quantityInPies || 0,
+      cost: x.cost, avgCost: x.quantity > 0 ? x.cost / x.quantity : null, priceEur, currency: x.currency, exchange: null,
+      nativePrice: x.currentPrice, value: x.value, pnl: x.pnl, pnlPct: x.cost > 0 ? x.pnl / x.cost * 100 : 0,
+      fxImpact: x.fxImpact, dayChange, hasQuote: true,
+    };
+  });
+  const currentValueEur = a.total != null ? a.total : cash + positions.reduce((s2, x) => s2 + x.value, 0);
+  const base = st || { contributed: currentValueEur - (a.unrealized || 0) - (a.realized || 0), realized: a.realized || 0, realizedCost: 0, realizedProceeds: 0, income: 0, dividends: 0, cashback: 0, fees: 0 };
+  // Netto ingelegd uit de historie; kostprijs zo gekozen dat kostprijs − gerealiseerd = netto ingelegd.
+  const costBasis = base.contributed + base.realized;
+  const invested = costBasis + base.realizedCost;
+  const pnl = currentValueEur - costBasis + base.realized;
+  return {
+    party, transactions: txs,
+    quantity: costBasis, costBasis, avgCost: null,
+    currentUnitPrice: null, currentValueEur,
+    invested,
+    lastValuationDate: null,
+    totalDividend: base.dividends, totalFees: base.fees, totalIncome: base.income,
+    totalCashback: base.cashback, netCashIn: base.contributed,
+    realizedCostBasis: base.realizedCost, realizedProceeds: base.realizedProceeds, realizedPnl: base.realized,
+    pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
+    bookedQuantity: null, chainCheckedAt: null,
+    stocks: { positions, cash, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [] },
+  };
+}
+
 function summarizeT212Stocks(party, txs, st, spots) {
   const quotes = (spots && spots.stockQuotes) || {};
   const names = (spots && spots.stockNames) || {};
+  const live = spots && spots.t212Live;
+  if (live && live.account && t212Linked(txs)) return summarizeT212Live(party, txs, st, live, quotes);
   const positions = Object.values(st.holdings).filter(h => h.quantity > 0).map(h => {
     const q = quotes[h.symbol] || null;
     const price = q && q.priceEur != null ? q.priceEur : null;
@@ -1022,7 +1067,8 @@ function buildPartyTimeSeries(transactions, parties, spots) {
   const endIso = todayIsoLocal();
   // Trading 212 met aandelen: stand per boekingsdatum cachen, waarde per dag met historische koers.
   const t212Txs = txByParty[STOCK_PARTY_ID] || [];
-  const t212First = t212Txs.find(isStockTx);
+  const t212IsLinked = t212Linked(t212Txs);
+  const t212First = t212IsLinked ? t212Txs.find(isT212ApiTx) : t212Txs.find(isStockTx);
   const t212Cache = new Map();
   const stockState = day => {
     if (!t212First || day < t212First.date) return null;
@@ -1171,9 +1217,14 @@ function buildPartyTimeSeries(transactions, parties, spots) {
           const manualPx = weeklyInterpolatedValue(unitValuations, iso, avgCostPx);
           v = s.qty * (histPx ?? manualPx ?? spots[p.spotKey] ?? 0);
         }
+      } else if (p.id === STOCK_PARTY_ID && t212IsLinked && !stockState(iso)) {
+        // Gekoppeld: vóór de eerste Trading 212-boeking stond er niets (handmatige boekingen tellen niet).
+        byParty[p.id].push(0);
+        continue;
       } else if (p.id === STOCK_PARTY_ID && stockState(iso)) {
         const st = stockState(iso);
-        v = t212StockValue(st, spots.stockQuotes, iso, endIso);
+        const live = spots.t212Live && spots.t212Live.account && t212Linked(t212Txs) ? spots.t212Live.account.total : null;
+        v = iso === endIso && live != null ? live : t212StockValue(st, spots.stockQuotes, iso, endIso);
         byParty[p.id].push(v);
         tot += v; inv += st.contributed;
         continue;
@@ -1812,7 +1863,8 @@ function buildFlowSeries(transactions, parties) {
   const ctx = { transferCost: transferCostMap(transactions) };
   for (const p of parties || []) {
     const arr = new Array(dates.length).fill(0);
-    const txs = sorted.filter(t => txTouchesParty(t, p.id));
+    let txs = sorted.filter(t => txTouchesParty(t, p.id));
+    if (p.id === STOCK_PARTY_ID && t212Linked(txs)) txs = txs.filter(isT212ApiTx);
     const points = [];
     const seen = new Set();
     for (const t of txs) {
@@ -2420,7 +2472,7 @@ function computePension(inputs, currentValue) {
 
 
 Object.assign(window, {
-  STOCK_API_URL, STOCK_PARTY_ID, searchStocks, pieIdOfTx, summarizePies, stockTxGross, normalizeTicker, isStockTx, stockSymbolsOf, stockPriceAt, t212StockState, t212StockValue, stockSummaryText,
+  STOCK_API_URL, STOCK_PARTY_ID, T212_API_URL, isT212ApiTx, t212Linked, searchStocks, pieIdOfTx, summarizePies, stockTxGross, normalizeTicker, isStockTx, stockSymbolsOf, stockPriceAt, t212StockState, t212StockValue, stockSummaryText,
   STORAGE_KEY, todayIsoLocal, addDaysIso, daysBetween, txCashAmount,
   bundleSnapshotAtDate, bundleValuations, bundleWeeklyInterpolatedValue, weeklyInterpolatedValue,
   unitValuationPoints, totalValuationPoints,

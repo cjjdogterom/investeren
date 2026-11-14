@@ -1,0 +1,16 @@
+name = "t212-koppeling"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+preview_urls = false
+
+# Geheimen (zet je zelf met ./koppel.sh, nooit in deze repo):
+#   T212_KEY, T212_SECRET  – Trading 212 API-sleutel (alleen leesrechten)
+#   DEELSLEUTEL            – sleutel waarmee de Investeren-app toegang krijgt
+
+[vars]
+T212_OMGEVING = "live"   # of "demo" voor een paper-account
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "36d842cf8fb643a998401923f5383dde"

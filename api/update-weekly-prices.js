@@ -70,12 +70,15 @@ const STOCK_API_URL = 'https://koersen.financieel-chris.workers.dev';
 const normTicker = v => String(v || '').trim().toUpperCase();
 const isStockTx = t => t && t.party === 'trading212' && t.instrument && (t.type === 'koop' || t.type === 'verkoop');
 const stockGross = t => { const q = +t.quantity || 0, px = +t.unitPriceEur || 0; return q > 0 && px > 0 ? q * px : (+t.amountEur || 0); };
+// Gekoppeld (boekingen uit de Trading 212-API): alleen die tellen, zonder startwaardering.
+const isApiTx = t => t && t.party === 'trading212' && /^(txn|ord|div):/.test(t._t212Id || '');
 function t212StockState(txs, date) {
-  const sorted = txs.filter(t => t.party === 'trading212' && t.date <= date).sort((a, b) => a.date.localeCompare(b.date));
-  const first = sorted.find(isStockTx);
-  if (!first) return null;
+  const linked = txs.some(isApiTx);
+  const sorted = txs.filter(t => t.party === 'trading212' && t.date <= date && (!linked || isApiTx(t))).sort((a, b) => a.date.localeCompare(b.date));
+  const first = linked ? sorted[0] : sorted.find(isStockTx);
+  if (!first) return linked ? { holdings: {}, cash: 0, contributed: 0 } : null;
   let anchor = null;
-  for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null) anchor = t;
+  if (!linked) for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null) anchor = t;
   let cash = anchor ? +anchor.valueEur || 0 : 0, contributed = cash;
   const holdings = {};
   const pay = a => { cash -= a; if (cash < 0) { contributed += -cash; cash = 0; } };
@@ -399,6 +402,7 @@ function rowToTx(r) {
     valueEur: r.type === 'overboeking' || r.value_eur == null ? null : +r.value_eur,
     toParty: r.type === 'overboeking' ? (r.instrument || null) : undefined,
     instrument: r.type !== 'overboeking' ? (r.instrument || null) : undefined,
+    _t212Id: r.t212_id || undefined,
     feeQty: r.type === 'overboeking' && r.value_eur != null ? +r.value_eur : undefined,
   };
 }

@@ -883,9 +883,81 @@ function pieGradient(slices, key) {
   return parts.length ? `conic-gradient(${parts.join(', ')}${at < 99.9 ? `, var(--surface-3) ${at}% 100%` : ''})` : 'var(--surface-3)';
 }
 
-function PsPies({ app }) {
+// Echte pies uit Trading 212 (via de koppeling): waarde, resultaat en doel- vs. huidige verdeling.
+function PsLivePies({ app }) {
+  const privacy = !!(app.prefs && app.prefs.privacy);
+  const live = app.t212Live;
+  const pies = (live && live.pies) || [];
+  const [open, setOpen] = useState(null);
+  const names = Object.fromEntries(((live && live.positions) || []).map(x => [x.ticker, x.name]));
+  if (!pies.length && !(live && live.piesError)) return null;
+  return (
+    <div data-testid="t212-live-pies">
+      <div className="ps-sec-head" style={{ marginBottom: 8 }}>
+        <h3 className="ps-sec-title">Pies ({pies.length})</h3>
+        {live.piesFetchedAt && <span className="ps-subtle" style={{ fontSize: 12 }}>bijgewerkt {fmtTime(live.piesFetchedAt)}</span>}
+      </div>
+      {live.piesError && <p className="ps-coin__warn" style={{ fontSize: 12.5, margin: '0 0 8px' }}><Icon name="circle-alert" size={12} />Pies ophalen mislukt: {live.piesError}</p>}
+      {pies.length > 0 && (
+        <div className="ps-pies">
+          {pies.map(pie => {
+            const isOpen = open === pie.id;
+            const ins = pie.instruments.slice().sort((a, b) => b.expectedShare - a.expectedShare);
+            const rows = ins.map(x => ({ ...x, target: x.expectedShare * 100, actual: x.currentShare * 100 }));
+            const value = pie.value + (pie.cash || 0);
+            return (
+              <div className="ps-pie" key={pie.id} data-testid={'live-pie-' + pie.id}>
+                <button type="button" className="ps-pie__head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : pie.id)}>
+                  <span className="ps-pie__ring" aria-hidden="true" style={{ background: pieGradient(rows, 'actual') }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="ps-coin__name">{pie.name}</div>
+                    <div className="ps-coin__sub">{ins.length} {ins.length === 1 ? 'aandeel' : 'aandelen'} · ingelegd {privacy ? '€ •••••' : fmtMoney(pie.invested)}
+                      {pie.goal ? ` · doel ${privacy ? '€ •••••' : fmtMoney(pie.goal)}` : ''}</div>
+                  </div>
+                  <div className="ps-coin__end">
+                    <span className="ps-coin__val"><Money value={value} /></span>
+                    <span className={psTone(pie.result)} style={{ fontSize: 12.5 }}>{privacy ? '€ •••••' : fmtMoney(pie.result, { sign: true })}{pie.resultCoef != null ? ' · ' + fmtPct(pie.resultCoef * 100, { decimals: 1 }) : ''}</span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="ps-pie__body">
+                    {(pie.cash > 0.005 || (pie.dividends && pie.dividends.gained > 0)) && (
+                      <div className="ps-subtle" style={{ fontSize: 12.5 }}>
+                        {pie.cash > 0.005 && <>Kas in pie {privacy ? '€ •••••' : fmtMoney(pie.cash, { decimals: 2 })}</>}
+                        {pie.cash > 0.005 && pie.dividends && pie.dividends.gained > 0 && ' · '}
+                        {pie.dividends && pie.dividends.gained > 0 && <>Dividend {privacy ? '€ •••••' : fmtMoney(pie.dividends.gained, { decimals: 2 })}{pie.dividendAction === 'REINVEST' ? ' (herbelegd)' : ''}</>}
+                      </div>
+                    )}
+                    <div>
+                      {rows.map((x, i) => (
+                        <div className="ps-pie__sl" key={x.ticker}>
+                          <span className="ps-und__dot" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                          <span style={{ minWidth: 0 }}><b style={{ fontWeight: 600 }}>{x.symbol || x.ticker}</b> <span className="ps-subtle">{names[x.ticker] || ''}</span></span>
+                          <span className="num" style={{ textAlign: 'right' }}>{privacy ? '€ •••••' : fmtMoney(x.value, { decimals: 2 })}</span>
+                          <div className="ps-pie__bars" title={`Doel ${fmtPct(x.target, { decimals: 1, sign: false })} · nu ${fmtPct(x.actual, { decimals: 1, sign: false })}`}>
+                            <div className="ps-pie__bar ps-pie__bar--target"><span style={{ width: Math.min(100, x.target) + '%', background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
+                            <div className="ps-pie__bar"><span style={{ width: Math.min(100, x.actual) + '%', background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
+                            <span className="ps-subtle" style={{ fontSize: 11.5 }}>Doel {fmtPct(x.target, { decimals: 1, sign: false })} · nu {fmtPct(x.actual, { decimals: 1, sign: false })}
+                              {' · '}{fmtQty(x.ownedQuantity, '', { decimals: 4 }).trim()} st. · <span className={psTone(x.result)}>{privacy ? '€ •••••' : fmtMoney(x.result, { sign: true, decimals: 2 })}</span></span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PsPies({ app, linked }) {
   const privacy = !!(app.prefs && app.prefs.privacy);
   const pies = (app.tweaks && app.tweaks.t212Pies) || [];
+  if (linked && !pies.length) return null;
   const list = useMemo(() => summarizePies(pies, (app.state && app.state.transactions) || [], app.stockQuotes || {}), [pies, app.state, app.stockQuotes]);
   const [open, setOpen] = useState(null);
   const [edit, setEdit] = useState(null);   // null | 'new' | pie
@@ -893,9 +965,10 @@ function PsPies({ app }) {
   return (
     <div data-testid="t212-pies">
       <div className="ps-sec-head" style={{ marginBottom: 8 }}>
-        <h3 className="ps-sec-title">Pies ({pies.length})</h3>
+        <h3 className="ps-sec-title">{linked ? 'Nagebootste pies' : 'Pies'} ({pies.length})</h3>
         <button type="button" className="ps-link" onClick={() => setEdit('new')}><Icon name="plus" size={12} /> Nieuwe pie</button>
       </div>
+      {linked && <p className="ps-subtle" style={{ fontSize: 12.5, margin: '0 0 8px' }}>Alleen ter vergelijking: met de koppeling tellen deze boekingen niet mee in je waarde.</p>}
       {list.length === 0 ? (
         <p className="ps-subtle" style={{ fontSize: 13, margin: 0 }}>Maak je Trading 212-pie na met dezelfde aandelen en percentages. Een inleg wordt dan automatisch over alle aandelen verdeeld.</p>
       ) : (
@@ -1105,7 +1178,7 @@ function PsStockPositions({ app, s }) {
     <div>
       <div className="ps-sec-head" style={{ marginBottom: 8 }}>
         <h3 className="ps-sec-title">Aandelen ({st.positions.length})</h3>
-        <button type="button" className="ps-link" disabled={!!status.loading} onClick={() => app.refreshStocks && app.refreshStocks({ force: true })}>
+        <button type="button" className="ps-link" disabled={!!status.loading} onClick={() => { if (st.live && app.refreshT212Live) app.refreshT212Live({ force: true }); if (app.refreshStocks) app.refreshStocks({ force: true }); }}>
           <Icon name={status.loading ? 'loader' : 'refresh-cw'} size={12} /> {status.loading ? 'Ophalen…' : 'Ververs koersen'}
         </button>
       </div>
@@ -1117,6 +1190,7 @@ function PsStockPositions({ app, s }) {
               <div className="ps-coin__name">{x.name}</div>
               <div className="ps-coin__sub">
                 {x.symbol} · {fmtQty(x.quantity, '', { decimals: x.quantity % 1 === 0 ? 0 : 4 }).trim()} × {x.hasQuote ? fmtMoney(x.priceEur, { decimals: 2 }) : 'geen koers'}
+                {x.quantityInPies > 0 && <> · {x.quantityInPies >= x.quantity - 1e-9 ? 'in pie' : `${fmtQty(x.quantityInPies, '', { decimals: 4 }).trim()} in pie`}</>}
                 {x.dayChange != null && Math.abs(x.dayChange) >= 0.005 && <> · <span className={psTone(x.dayChange)}>{privacy ? '€ •••••' : fmtMoney(x.dayChange, { sign: true, decimals: 2 })} vandaag</span></>}
               </div>
             </div>
@@ -1130,13 +1204,16 @@ function PsStockPositions({ app, s }) {
         {st.cash >= 0.005 && (
           <div className="ps-coin" data-testid="stock-cash">
             <span className="ps-stk__tick" aria-hidden="true"><Icon name="wallet" size={14} /></span>
-            <div style={{ minWidth: 0 }}><div className="ps-coin__name">Vrije kas</div><div className="ps-coin__sub">Niet belegd saldo bij Trading 212</div></div>
+            <div style={{ minWidth: 0 }}><div className="ps-coin__name">Vrije kas</div><div className="ps-coin__sub">{st.live && st.account && st.account.inPies > 0.005 ? `Waarvan ${fmtMoney(st.account.inPies, { decimals: 2 })} in pies` : 'Niet belegd saldo bij Trading 212'}</div></div>
             <div className="ps-coin__end"><span className="ps-coin__val"><Money value={st.cash} /></span></div>
           </div>
         )}
       </div>
       <div className="ps-stk__foot">
-        <span>Koersen via Yahoo Finance, omgerekend naar euro{fetchedAt ? ` · ${fmtRelDay(fetchedAt.slice(0, 10))} ${fmtTime(fetchedAt)}` : ''}</span>
+        {st.live
+          ? <span>Live uit Trading 212 · {fmtRelDay(st.fetchedAt.slice(0, 10))} {fmtTime(st.fetchedAt)}{app.t212LiveError ? '' : ''}</span>
+          : <span>Koersen via Yahoo Finance, omgerekend naar euro{fetchedAt ? ` · ${fmtRelDay(fetchedAt.slice(0, 10))} ${fmtTime(fetchedAt)}` : ''}</span>}
+        {st.live && app.t212LiveError && <span className="ps-coin__warn"><Icon name="circle-alert" size={12} />{app.t212LiveError} (laatste stand getoond)</span>}
         {status.error && <span className="ps-coin__warn"><Icon name="circle-alert" size={12} />{status.error}</span>}
       </div>
     </div>
@@ -1265,7 +1342,12 @@ function PsPartyBody({ app, s }) {
           ? <div><dt>Via cashback</dt><dd><Money value={s.totalCashback || 0} /></dd></div>
           : <div><dt>Dividend en rente</dt><dd><Money value={s.totalIncome || 0} /></dd></div>}
       </dl>
-      {isT212 && <PsPies app={app} />}
+      {isT212 && s.stocks && s.stocks.live && <PsLivePies app={app} />}
+      {isT212 && <PsPies app={app} linked={!!(s.stocks && s.stocks.live)} />}
+      {isT212 && s.stocks && s.stocks.live && (() => {
+        const n = (s.transactions || []).filter(t => !isT212ApiTx(t) && t.type !== 'waardering').length;
+        return n > 0 ? <p className="ps-subtle" style={{ fontSize: 12.5, margin: 0 }}>{n} handmatige of nagebootste boeking{n === 1 ? '' : 'en'} tellen niet mee; de koppeling is leidend.</p> : null;
+      })()}
       {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
       {gp && (
         <div className="ps-pgoal">
