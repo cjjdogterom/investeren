@@ -1302,7 +1302,7 @@ function PsPartyBody({ app, s }) {
         <div className="ps-pdelta">
           {ci == null
             ? <><Delta value={s.pnl} pct={s.invested > 0 ? s.pnlPct : null} size="md" />
-                <span>winst sinds start · gerealiseerd {privacy ? '€ •••••' : fmtMoney(s.realizedPnl)}</span></>
+                <span>winst sinds {isT212 && spots && spots.t212Start ? fmtDateShort(spots.t212Start) : 'start'} · gerealiseerd {privacy ? '€ •••••' : fmtMoney(s.realizedPnl)}</span></>
             : <><Delta value={shown - shownNet} size="md" /><span>winst op die datum</span></>}
         </div>
       </div>

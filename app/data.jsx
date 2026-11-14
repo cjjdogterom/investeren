@@ -636,21 +636,38 @@ function stockPriceAt(quote, date, todayIso = todayIsoLocal()) {
 // Een waardering vóór de eerste aandelenkoop is het startsaldo; latere waarderingen tellen niet
 // (de koersen zijn leidend). Koop je meer dan er aan kas is, dan telt het tekort als inleg.
 // Invariant: kas + kostprijs posities = netto inleg + gerealiseerd resultaat.
-function t212StockState(txs, date = null) {
+// opts.start (ISO): alleen rendement vanaf die dag. De stand van de dag ervoor (kas + posities tegen de
+// slotkoers) wordt het startbedrag; kostprijs per positie = marktwaarde op dat moment, resultaat begint op 0.
+function t212StockState(txs, date = null, opts = {}) {
+  const start = opts.start || null, quotes = opts.quotes || {};
+  if (start && date && date < start) return null;
   const linked = t212Linked(txs);
   const sorted = (txs || []).filter(t => t.party === STOCK_PARTY_ID && (!date || t.date <= date) && (!linked || isT212ApiTx(t)))
     .sort((a, b) => a.date.localeCompare(b.date));
   const first = linked ? sorted[0] : sorted.find(isStockTx);
   if (!first) return null;
   let anchor = null;
-  if (!linked) for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null && t.valueEur !== '') anchor = t;
+  if (!linked && !start) for (const t of sorted) if (t.type === 'waardering' && t.date < first.date && t.valueEur != null && t.valueEur !== '') anchor = t;
   let cash = anchor ? +anchor.valueEur || 0 : 0;
   let contributed = cash, realized = 0, realizedCost = 0, realizedProceeds = 0;
   let income = 0, dividends = 0, cashback = 0, fees = 0;
   const holdings = {};
   const pay = amt => { cash -= amt; if (cash < 0) { contributed += -cash; cash = 0; } };
+  let didReset = !start;
+  const reset = () => {
+    didReset = true;
+    const before = addDaysIso(start, -1);
+    for (const h of Object.values(holdings)) {
+      const px = h.quantity > 0 ? stockPriceAt(quotes[h.symbol], before) : null;
+      if (px != null) h.cost = h.quantity * px;
+      h.firstDate = start;
+    }
+    contributed = cash + Object.values(holdings).reduce((a, h) => a + h.cost, 0);
+    realized = realizedCost = realizedProceeds = income = dividends = cashback = fees = 0;
+  };
   for (const t of sorted) {
     if (anchor && t.date <= anchor.date) continue;
+    if (!didReset && t.date >= start) reset();
     const fee = +t.feeEur || 0;
     switch (t.type) {
       case 'inleg': { const a = +t.amountEur || 0; cash += a; contributed += a; break; }
@@ -691,7 +708,8 @@ function t212StockState(txs, date = null) {
       default: break;
     }
   }
-  return { holdings, cash, contributed, realized, realizedCost, realizedProceeds, income, dividends, cashback, fees, startDate: first.date };
+  if (!didReset) reset();
+  return { holdings, cash, contributed, realized, realizedCost, realizedProceeds, income, dividends, cashback, fees, startDate: start || first.date };
 }
 
 // Waarde van de aandelenstand op een datum met de koersen uit `quotes` (geen koers → kostprijs).
@@ -748,9 +766,27 @@ function summarizePies(pies, transactions, quotes = {}) {
 }
 
 // Gekoppeld: waarde, posities en kas komen live uit Trading 212; inleg en gerealiseerd resultaat uit de historie.
+// Stand op een dag, gecachet per laatste boekingsdatum (en of de startdatum al gepasseerd is).
+function t212StateAt(txs, first, day, opts, cache) {
+  if (!first) return null;
+  if (opts.start ? day < opts.start : day < first.date) return null;
+  let key = null;
+  for (const t of txs) { if (t.date <= day) key = t.date; else break; }
+  const ck = key + '|' + (opts.start && day >= opts.start ? 'na' : 'voor');
+  if (!cache.has(ck)) cache.set(ck, t212StockState(txs, opts.start && day >= opts.start ? day : key, opts));
+  return cache.get(ck);
+}
+
+function t212Opts(spots) { return { start: (spots && spots.t212Start) || null, quotes: (spots && spots.stockQuotes) || {} }; }
+
 function summarizeT212Live(party, txs, st, live, quotes) {
   const a = live.account;
   const cash = (a.free || 0) + (a.inPies || 0) + (a.reserved || 0);
+  // Met een startdatum: kostprijs per positie vanaf die dag (uit de historie), anders die van Trading 212.
+  const sinceCost = x => {
+    const h = st && st.holdings && st.holdings[x.symbol];
+    return h && h.quantity > 0 ? (h.cost / h.quantity) * x.quantity : x.cost;
+  };
   const positions = (live.positions || []).filter(x => x.quantity > 0).map(x => {
     const q = quotes[x.symbol] || null;
     const priceEur = x.quantity > 0 ? x.value / x.quantity : null;
@@ -758,8 +794,8 @@ function summarizeT212Live(party, txs, st, live, quotes) {
       ? x.value * (1 - q.previousCloseEur / q.priceEur) : null;
     return {
       symbol: x.symbol, t212Ticker: x.ticker, name: x.name, quantity: x.quantity, quantityInPies: x.quantityInPies || 0,
-      cost: x.cost, avgCost: x.quantity > 0 ? x.cost / x.quantity : null, priceEur, currency: x.currency, exchange: null,
-      nativePrice: x.currentPrice, value: x.value, pnl: x.pnl, pnlPct: x.cost > 0 ? x.pnl / x.cost * 100 : 0,
+      cost: sinceCost(x), avgCost: x.quantity > 0 ? sinceCost(x) / x.quantity : null, priceEur, currency: x.currency, exchange: null,
+      nativePrice: x.currentPrice, value: x.value, pnl: x.value - sinceCost(x), pnlPct: sinceCost(x) > 0 ? (x.value - sinceCost(x)) / sinceCost(x) * 100 : 0,
       fxImpact: x.fxImpact, dayChange, hasQuote: true,
     };
   });
@@ -788,7 +824,7 @@ function summarizeT212Stocks(party, txs, st, spots) {
   const quotes = (spots && spots.stockQuotes) || {};
   const names = (spots && spots.stockNames) || {};
   const live = spots && spots.t212Live;
-  if (live && live.account && t212Linked(txs)) return summarizeT212Live(party, txs, st, live, quotes);
+  if (live && live.account && t212Linked(txs)) return summarizeT212Live(party, txs, spots.t212Start ? st : { ...st, holdings: {} }, live, quotes);
   const positions = Object.values(st.holdings).filter(h => h.quantity > 0).map(h => {
     const q = quotes[h.symbol] || null;
     const price = q && q.priceEur != null ? q.priceEur : null;
@@ -827,7 +863,7 @@ function summarizeParty(party, transactions, spots, ctx) {
     .filter(t => txTouchesParty(t, party.id))
     .sort((a, b) => a.date.localeCompare(b.date));
   if (party.id === STOCK_PARTY_ID) {
-    const st = t212StockState(txs);
+    const st = t212StockState(txs, null, t212Opts(spots));
     if (st) return summarizeT212Stocks(party, txs, st, spots);
   }
   const hasTransfers = txs.some(t => t.type === 'overboeking');
@@ -1070,13 +1106,8 @@ function buildPartyTimeSeries(transactions, parties, spots) {
   const t212IsLinked = t212Linked(t212Txs);
   const t212First = t212IsLinked ? t212Txs.find(isT212ApiTx) : t212Txs.find(isStockTx);
   const t212Cache = new Map();
-  const stockState = day => {
-    if (!t212First || day < t212First.date) return null;
-    let key = null;
-    for (const t of t212Txs) { if (t.date <= day) key = t.date; else break; }
-    if (!t212Cache.has(key)) t212Cache.set(key, t212StockState(t212Txs, key));
-    return t212Cache.get(key);
-  };
+  const t212o = t212Opts(spots);
+  const stockState = day => t212StateAt(t212Txs, t212First, day, t212o, t212Cache);
   while (iso <= endIso) {
     while (ti < sorted.length && sorted[ti].date <= iso) {
       const t = sorted[ti];
@@ -1217,7 +1248,7 @@ function buildPartyTimeSeries(transactions, parties, spots) {
           const manualPx = weeklyInterpolatedValue(unitValuations, iso, avgCostPx);
           v = s.qty * (histPx ?? manualPx ?? spots[p.spotKey] ?? 0);
         }
-      } else if (p.id === STOCK_PARTY_ID && t212IsLinked && !stockState(iso)) {
+      } else if (p.id === STOCK_PARTY_ID && (t212IsLinked || (t212o.start && iso < t212o.start)) && !stockState(iso)) {
         // Gekoppeld: vóór de eerste Trading 212-boeking stond er niets (handmatige boekingen tellen niet).
         byParty[p.id].push(0);
         continue;
@@ -1853,7 +1884,7 @@ function dtDailyDates(startIso, endIso) {
   return out;
 }
 
-function buildFlowSeries(transactions, parties) {
+function buildFlowSeries(transactions, parties, spots = {}) {
   if (!transactions || !transactions.length) return { dates: [], netByParty: {} };
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
   const todayIso = todayIsoLocal();
@@ -1865,6 +1896,13 @@ function buildFlowSeries(transactions, parties) {
     const arr = new Array(dates.length).fill(0);
     let txs = sorted.filter(t => txTouchesParty(t, p.id));
     if (p.id === STOCK_PARTY_ID && t212Linked(txs)) txs = txs.filter(isT212ApiTx);
+    if (p.id === STOCK_PARTY_ID && spots && spots.t212Start) {
+      const o = t212Opts(spots), cache = new Map();
+      const first = txs.find(isT212ApiTx) || txs.find(isStockTx) || txs[0];
+      for (let i = 0; i < dates.length; i++) { const st = t212StateAt(txs, first, dates[i], o, cache); arr[i] = st ? st.contributed : 0; }
+      netByParty[p.id] = arr;
+      continue;
+    }
     const points = [];
     const seen = new Set();
     for (const t of txs) {

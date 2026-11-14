@@ -464,6 +464,13 @@ function StT212({ app }) {
             {(ts.warnings || []).length > 0 && <div>Let op: {ts.warnings.slice(0, 3).join(' · ')}</div>}
           </div>
         )}
+        <div className="st-row st-row--between">
+          <label className="st-label" htmlFor="st-t212-start">Rendement meten vanaf</label>
+          <Input id="st-t212-start" type="date" style={{ maxWidth: 180 }}
+            value={app.tweaks?.t212Start === undefined ? '2026-11-11' : (app.tweaks.t212Start || '')}
+            onChange={e => app.updateTweaks(tw => ({ ...tw, t212Start: e.target.value || '' }))} />
+        </div>
+        <p className="st-note">Alles vóór deze datum telt niet mee: wat je die dag had is het startbedrag, winst en rendement tellen vanaf daar. Leeg = vanaf je eerste boeking.</p>
         {!saved && (
           <p className="st-note">Eenmalig instellen: maak in de Trading 212-app een API-sleutel met alleen leesrechten en draai in de projectmap <code>./workers/t212/koppel.sh</code>. Dat script zet je sleutel als geheim op Cloudflare en geeft de deelsleutel die je hierboven plakt.</p>
         )}

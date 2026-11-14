@@ -1854,7 +1854,9 @@ function App() {
     stockQuotes:           stockQuotes || {},
     stockNames:            tweaks.stockNames || {},
     t212Live:              t212Live,
-  }), [spotsKey, stockQuotes, tweaks.stockNames, t212Live]); // eslint-disable-line
+    // Rendement Trading 212 vanaf deze datum (standaard 11-11-2026; leeg = vanaf het begin).
+    t212Start:             tweaks.t212Start === undefined ? '2026-11-11' : (tweaks.t212Start || null),
+  }), [spotsKey, stockQuotes, tweaks.stockNames, t212Live, tweaks.t212Start]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.
@@ -1959,7 +1961,7 @@ function App() {
   }, [state.transactions]);
   const viewState = React.useMemo(() => (valTxs === state.transactions ? state : { ...state, transactions: valTxs }), [state, valTxs]);
   const summaries   = React.useMemo(() => allParties.map(p => summarizeParty(p, valTxs, spots)), [valTxs, allParties, spots]);
-  const flows       = React.useMemo(() => buildFlowSeries(valTxs, allParties), [valTxs, allParties]);
+  const flows       = React.useMemo(() => buildFlowSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const valueSeries = React.useMemo(() => buildPartyTimeSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const model       = React.useMemo(
     () => buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver, financieelHistory: state.financieelHistory }),
