@@ -1,0 +1,207 @@
+import SwiftUI
+import WebKit
+import AppKit
+
+let appURL = URL(string: "https://cjjdogterom.github.io/investeren/")!
+
+/// Native macOS shell around the Investeren web app (same site as the iPhone app).
+@main
+struct InvesterenMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = WebModel()
+
+    var body: some Scene {
+        Window("Investeren", id: "main") {
+            ContentView(model: model)
+                .frame(minWidth: 420, minHeight: 560)
+        }
+        .defaultSize(width: 1180, height: 820)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: true))
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .toolbar) {
+                Button("Vernieuw") { model.reload() }.keyboardShortcut("r")
+                Button("Vernieuw zonder cache") { model.reload(hard: true) }.keyboardShortcut("r", modifiers: [.command, .shift])
+                Divider()
+                Button("Ware grootte") { model.zoom(to: 1) }.keyboardShortcut("0")
+                Button("Zoom in") { model.zoom(by: 0.1) }.keyboardShortcut("+")
+                Button("Zoom uit") { model.zoom(by: -0.1) }.keyboardShortcut("-")
+            }
+            CommandGroup(replacing: .help) {
+                Button("Open in browser") { NSWorkspace.shared.open(model.webView.url ?? appURL) }
+            }
+        }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
+struct ContentView: View {
+    @ObservedObject var model: WebModel
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack {
+            Color("Background").ignoresSafeArea()
+            WebContainer(webView: model.webView)
+                .opacity(model.hasLoaded ? 1 : 0)
+            if model.failed {
+                OfflineView(message: model.errorMessage) { model.reload() }
+            } else if !model.hasLoaded {
+                ProgressView().controlSize(.large)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { model.reload() } label: { Label("Vernieuw", systemImage: "arrow.clockwise") }
+                    .help("Vernieuw (⌘R)")
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, model.failed { model.reload() }
+        }
+    }
+}
+
+struct OfflineView: View {
+    let message: String
+    let retry: () -> Void
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wifi.slash").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
+            Text("Geen verbinding").font(.title3.weight(.semibold))
+            Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Opnieuw proberen", action: retry).buttonStyle(.borderedProminent).controlSize(.large)
+        }
+        .padding(32)
+    }
+}
+
+struct WebContainer: NSViewRepresentable {
+    let webView: WKWebView
+    func makeNSView(context: Context) -> WKWebView { webView }
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+
+final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+    @Published var hasLoaded = false
+    @Published var failed = false
+    @Published var errorMessage = ""
+    let webView: WKWebView
+
+    override init() {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()          // persistent localStorage / IndexedDB
+        config.preferences.isElementFullscreenEnabled = true
+        webView = WKWebView(frame: .zero, configuration: config)
+        super.init()
+        webView.underPageBackgroundColor = NSColor(named: "Background")
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsMagnification = true
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.load(URLRequest(url: appURL))
+        // Refresh when the app comes back to the foreground after a while (data stays current).
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            if self.failed { self.reload() }
+        }
+    }
+
+    func reload(hard: Bool = false) {
+        failed = false
+        if webView.url == nil || webView.url?.absoluteString == "about:blank" {
+            webView.load(URLRequest(url: appURL, cachePolicy: .reloadRevalidatingCacheData))
+        } else if hard {
+            webView.reloadFromOrigin()
+        } else {
+            webView.reload()
+        }
+    }
+
+    func zoom(to value: CGFloat) { webView.pageZoom = value }
+    func zoom(by delta: CGFloat) { webView.pageZoom = min(2, max(0.5, webView.pageZoom + delta)) }
+
+    private func isInternal(_ url: URL) -> Bool {
+        url.host == appURL.host && url.path.hasPrefix("/investeren")
+    }
+
+    // MARK: Navigation
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url else { return decisionHandler(.allow) }
+        let scheme = url.scheme?.lowercased() ?? ""
+        if ["about", "blob", "data", "javascript"].contains(scheme) { return decisionHandler(.allow) }
+        let isMainFrame = action.targetFrame?.isMainFrame ?? true
+        if scheme == "http" || scheme == "https" {
+            if !isMainFrame || isInternal(url) { return decisionHandler(.allow) }
+        }
+        NSWorkspace.shared.open(url)   // external sites, mailto: ...
+        decisionHandler(.cancel)
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = action.request.url {
+            if isInternal(url) { webView.load(action.request) } else { NSWorkspace.shared.open(url) }
+        }
+        return nil
+    }
+
+    // MARK: JS dialogs (confirm/alert used by the web app)
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: "OK")
+        alert.runModal(); completionHandler()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert(); alert.messageText = message
+        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Annuleer")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert(); alert.messageText = prompt
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Annuleer")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+    }
+
+    // MARK: Loading state
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        failed = false
+        if !hasLoaded { DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.2)) { self.hasLoaded = true } } }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { handle(error) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { handle(error) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { webView.reload() }
+
+    private func handle(_ error: Error) {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+        if ns.domain == "WebKitErrorDomain" && ns.code == 102 { return }
+        errorMessage = ns.domain == NSURLErrorDomain
+            ? "Controleer je internetverbinding en probeer het opnieuw."
+            : ns.localizedDescription
+        failed = true
+    }
+}
