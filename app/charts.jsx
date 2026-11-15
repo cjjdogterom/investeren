@@ -251,6 +251,7 @@ function PerformanceChart({
   const padL = compact ? 16 : 0;
   const hasData = n >= 2 && primary && primary.filter(v => v != null && Number.isFinite(v)).length >= 2;
   const showSecondary = kind === 'money' && Array.isArray(secondary) && secondary.length === n;
+  const signed = kind === 'pct' || kind === 'gain';   // nul-lijn met groen/rood vlak
 
   const geo = useMemo(() => {
     if (!hasData) return null;
@@ -259,7 +260,7 @@ function PerformanceChart({
     scan(primary);
     if (showSecondary) scan(secondary);
     let lo, hi;
-    if (kind === 'pct') { lo = Math.min(0, mn); hi = Math.max(0, mx); }
+    if (signed) { lo = Math.min(0, mn); hi = Math.max(0, mx); }
     else if (baseline === 'auto') { lo = Math.min(mn * 0.92, mn); hi = mx; }
     else { lo = Math.min(0, mn); hi = mx; }
     const nt = chNiceTicks(lo, hi, 4);
@@ -295,7 +296,7 @@ function PerformanceChart({
         out.clipAbove = chPts([...step, [sx1, -10], [sx0, -10]]);
         out.clipBelow = chPts([...step, [sx1, H + 10], [sx0, H + 10]]);
       }
-    } else if (kind === 'pct') {
+    } else if (signed) {
       const y0 = y(0);
       out.zeroY = y0;
       out.band = chPts([...fwd, [lastX, y0], [firstX, y0]]);
@@ -304,7 +305,7 @@ function PerformanceChart({
     }
     out.xticks = compact ? [] : chMonthTicks(dates, 6);
     return out;
-  }, [hasData, dates, primary, secondary, showSecondary, kind, baseline, H, n, compact]);
+  }, [hasData, dates, primary, secondary, showSecondary, kind, signed, baseline, H, n, compact]);
 
   const lastIdx = useMemo(() => {
     if (!hasData) return -1;
@@ -382,6 +383,7 @@ function PerformanceChart({
     const parts = [fmtDateLong(dates[i])];
     const v = primary[i];
     if (kind === 'pct') parts.push(`rendement ${v == null ? '—' : fmtPct(v, { decimals: 1 })}`);
+    else if (kind === 'gain') parts.push(`winst ${chMoney(v, privacy, { sign: true })}`);
     else {
       parts.push(`waarde ${chMoney(v, privacy)}`);
       if (showSecondary) parts.push(`netto ingelegd ${chMoney(secondary[i], privacy)}`);
@@ -412,7 +414,7 @@ function PerformanceChart({
   return (
     <div className={chCx('ch-root', compact && 'ch-root--compact', className)} style={rootStyle} data-testid={testId}>
       {/* y labels */}
-      {g.nt.ticks.filter(t => !compact || ((kind === 'pct' || t > g.nt.lo) && !g.yp.some((v, k) => v != null && g.xs[k] < 190 && Math.abs(v - g.y(t)) < 13))).map(t => (
+      {g.nt.ticks.filter(t => !compact || ((signed || t > g.nt.lo) && !g.yp.some((v, k) => v != null && g.xs[k] < 190 && Math.abs(v - g.y(t)) < 13))).map(t => (
         <div key={t} className={chCx('ch-ylab', compact && 'ch-ylab--in')} style={{ top: `${(g.y(t) / H) * H}px` }}>{tickLabel(t)}</div>
       ))}
       <div ref={plotRef} className="ch-plot" style={plotStyle}
@@ -432,12 +434,12 @@ function PerformanceChart({
           </defs>
           {g.nt.ticks.map(t => (
             <line key={t} x1={compact ? -120 : 0} x2={compact ? 1120 : 1000} y1={g.y(t)} y2={g.y(t)} className="ch-grid"
-              style={kind === 'pct' && t === 0 ? { stroke: 'var(--border-strong)', strokeDasharray: 'none' } : undefined} />
+              style={signed && t === 0 ? { stroke: 'var(--border-strong)', strokeDasharray: 'none' } : undefined} />
           ))}
           <g key={rangeKey} className="ch-fade">
             {g.area && <path d={g.area} style={{ fill: `url(#${uid}-g)` }} />}
             {g.band && g.clipBelow && <polygon points={g.band} clipPath={`url(#${uid}-b)`} style={{ fill: 'var(--loss-fill)', fillOpacity: 0.16 }} />}
-            {g.band && g.clipAbove && kind === 'pct' && <polygon points={g.band} clipPath={`url(#${uid}-a)`} style={{ fill: 'var(--gain-fill)', fillOpacity: 0.14 }} />}
+            {g.band && g.clipAbove && signed && <polygon points={g.band} clipPath={`url(#${uid}-a)`} style={{ fill: 'var(--gain-fill)', fillOpacity: 0.14 }} />}
             {g.stepLine && <path d={g.stepLine} className="ch-step" />}
             <path d={g.line} className="ch-glow" />
             <path d={g.line} className="ch-line" />
@@ -508,7 +510,7 @@ function ChTableTwin({ dates, primary, secondary, kind, privacy, top }) {
             <thead>
               <tr>
                 <th scope="col">Datum</th>
-                {kind === 'pct' ? <th scope="col" className="num">Rendement</th> : <>
+                {kind === 'pct' ? <th scope="col" className="num">Rendement</th> : kind === 'gain' ? <th scope="col" className="num">Winst</th> : <>
                   <th scope="col" className="num">Waarde</th>
                   {secondary && <th scope="col" className="num">Netto ingelegd</th>}
                   {secondary && <th scope="col" className="num">Winst</th>}
@@ -519,7 +521,7 @@ function ChTableTwin({ dates, primary, secondary, kind, privacy, top }) {
               {rows.map(i => (
                 <tr key={i}>
                   <td>{fmtDateLong(dates[i])}</td>
-                  {kind === 'pct' ? <td className="num">{fmtPct(primary[i], { decimals: 1 })}</td> : <>
+                  {kind === 'pct' ? <td className="num">{fmtPct(primary[i], { decimals: 1 })}</td> : kind === 'gain' ? <td className="num">{chMoney(primary[i], privacy, { sign: true })}</td> : <>
                     <td className="num">{chMoney(primary[i], privacy)}</td>
                     {secondary && <td className="num">{chMoney(secondary[i], privacy)}</td>}
                     {secondary && <td className="num">{chMoney(primary[i] - secondary[i], privacy, { sign: true })}</td>}

@@ -118,6 +118,8 @@ injectStyles('overzicht', `
 .ov-m__periods { display: flex; gap: 8px; align-items: center; }
 .ov-m__periods .seg { flex: 1; }
 .ov-m__periods .seg__btn { height: 36px; }
+.ov-m__modes { margin-top: 8px; }
+.ov-m__modes .seg { width: 100%; }
 .ov-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .ov-quick__btn { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: none; padding: 0; font: 500 12.5px/16px var(--font); color: var(--fg); cursor: pointer; }
 .ov-quick__well { width: 56px; height: 56px; border-radius: 20px; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); color: var(--fg); }
@@ -303,10 +305,19 @@ function useOvPerformance(app) {
   }
 
   // Chart data
-  const mode = prefs.chartMode === 'return' ? 'return' : 'value';
+  const mode = prefs.chartMode === 'return' || prefs.chartMode === 'gain' ? prefs.chartMode : 'value';
   const chartDates = r.enabled ? dates.slice(r.i0, r.i1 + 1) : [];
   const twrCurve = useMemo(() => (mode === 'return' && r.enabled ? cumulativeTwr(series, r.i0, r.i1) : null), [mode, series, r.i0, r.i1, r.enabled]);
-  const primary = mode === 'return' ? (twrCurve || []) : (r.enabled ? series.value.slice(r.i0, r.i1 + 1) : []);
+  // Winst = waarde − netto ingelegd; bij een periode vanaf 0 aan het begin (= winst excl. stortingen in die periode).
+  const gainCurve = useMemo(() => {
+    if (mode !== 'gain' || !r.enabled) return null;
+    const g = i => (series.value[i] == null || series.net[i] == null ? null : series.value[i] - series.net[i]);
+    const base = r.all ? 0 : (g(r.i0) || 0);
+    const out = [];
+    for (let i = r.i0; i <= r.i1; i++) { const v = g(i); out.push(v == null ? null : v - base); }
+    return out;
+  }, [mode, series, r.i0, r.i1, r.enabled, r.all]);
+  const primary = mode === 'return' ? (twrCurve || []) : mode === 'gain' ? (gainCurve || []) : (r.enabled ? series.value.slice(r.i0, r.i1 + 1) : []);
   const secondary = mode === 'value' && r.enabled ? series.net.slice(r.i0, r.i1 + 1) : null;
   const twrAllNull = mode === 'return' && primary.every(v => v == null);
   const peSet = new Set(exclPE ? peIds : []);
@@ -317,6 +328,7 @@ function useOvPerformance(app) {
     const d = chartDates[i];
     if (!d) return '';
     if (mode === 'return') return `${fmtDateLong(d)}: ${primary[i] == null ? '—' : fmtPct(primary[i], { decimals: 1 })}`;
+    if (mode === 'gain') return `${fmtDateLong(d)}: winst ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i], { sign: true })}`;
     return `${fmtDateLong(d)}: ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i])}`;
   };
 
@@ -502,6 +514,8 @@ function OvVerdelingCard({ app, pinIndex }) {
 // ===================================================================
 // Desktop cards
 // ===================================================================
+const OV_CHART_MODES = [{ value: 'value', label: 'Waarde' }, { value: 'gain', label: 'Winst' }, { value: 'return', label: 'Rendement' }];
+
 function OvPrestatiesCard({ app, pf }) {
   const { model, prefs } = app;
   const privacy = !!prefs.privacy;
@@ -556,20 +570,22 @@ function OvPrestatiesCard({ app, pf }) {
               <span className="ov-key"><span className="ov-key__dia" />Waardering</span>
               <span className="ov-key"><span className="ov-key__ring" />Opname</span>
             </>
-          ) : <span className="ov-key"><span className="ov-key__line" />Tijdgewogen rendement</span>}
+          ) : pf.mode === 'gain'
+            ? <span className="ov-key"><span className="ov-key__line" />{pf.r.all ? 'Totale winst (waarde − netto ingelegd)' : 'Winst excl. stortingen sinds begin periode'}</span>
+            : <span className="ov-key"><span className="ov-key__line" />Tijdgewogen rendement</span>}
         </div>
         {pf.hasPE && (
           <Chip active={!!prefs.exclPE} onClick={() => app.setPrefs({ exclPE: !prefs.exclPE })}>Excl. PE</Chip>
         )}
         <Segmented size="sm" ariaLabel="Grafiekweergave" value={pf.mode} onChange={v => app.setPrefs({ chartMode: v })}
-          options={[{ value: 'value', label: 'Waarde' }, { value: 'return', label: 'Rendement' }]} />
+          options={OV_CHART_MODES} />
       </div>
       <div className="ov-chartwrap">
         <PerformanceChart testId="perf-chart" dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-          kind={pf.mode === 'return' ? 'pct' : 'money'} height={220} markers={pf.mode === 'value' ? pf.markers : null}
+          kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220} markers={pf.mode === 'value' ? pf.markers : null}
           liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
           cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
-          ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : 'Waarde en netto ingelegd over de periode'}
+          ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
           valueText={pf.valueText} privacy={privacy}
           emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
       </div>
@@ -813,17 +829,18 @@ function OvMobile({ app }) {
       <div>
         <div className="ov-m__chart">
           <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-            kind={pf.mode === 'return' ? 'pct' : 'money'} height={164}
+            kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={164}
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} onCursor={pf.onCursor}
-            ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : 'Waarde en netto ingelegd over de periode'}
+            ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
             valueText={pf.valueText} privacy={privacy}
             emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
         </div>
         <div className="ov-m__periods" style={{ marginTop: 8 }}>
           <Segmented pill full ariaLabel="Periode" value={pf.periodKey} onChange={k => app.setPrefs({ period: k })} options={pf.periodOptions} />
-          <IconButton icon="trending-up" label="Rendement tonen" pressed={pf.mode === 'return'}
-            onClick={() => app.setPrefs({ chartMode: pf.mode === 'return' ? 'value' : 'return' })} />
+        </div>
+        <div className="ov-m__modes">
+          <Segmented size="sm" full ariaLabel="Grafiekweergave" value={pf.mode} onChange={v => app.setPrefs({ chartMode: v })} options={OV_CHART_MODES} />
         </div>
       </div>
 
