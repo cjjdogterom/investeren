@@ -491,7 +491,7 @@ function StFinancieel({ app }) {
   return (
     <Card title="Vrij op rekening">
       <div className="st-stack">
-        <p className="st-note">Haalt live het bedrag op dat je deze maand nog vrij hebt volgens je Financieel Systeem en toont het als post "Vrij op rekening" onder Liquide. De sleutel geeft alleen leestoegang tot dit ene bedrag en wordt via je eigen sync gedeeld met je andere apparaten.</p>
+        <p className="st-note">Haalt live het bedrag op dat je deze maand nog vrij hebt volgens je Financieel Systeem en toont het als post "Vrij op rekening" onder Liquide. Met dezelfde sleutel komen boekingen met categorie Vermogensopbouw binnen als transactie op de gekozen positie (aan te vullen met aantal, prijs en kosten); je partijlijst gaat daarvoor als keuzelijst naar Financieel. De sleutel wordt via je eigen sync gedeeld met je andere apparaten.</p>
         <label className="st-label" htmlFor="st-fin-key">Sleutel</label>
         <Input id="st-fin-key" type="password" autoComplete="off" value={val} placeholder="Plak hier de deelsleutel"
           onChange={e => setVal(e.target.value.trim())} />
@@ -507,6 +507,19 @@ function StFinancieel({ app }) {
               : 'Ophalen…'}
           </div>
         )}
+        {saved && (() => {
+          // Beleggingen (Vermogensopbouw) uit Financieel: zelfde sleutel, eigen statusregel.
+          const bs = app.finBelStatus || {};
+          const open = ((app.state && app.state.transactions) || []).filter(isFinBelAanvullen).length;
+          const err = bs.error || bs.posError;
+          return (
+            <div className={'st-status ' + (err ? 'st-status--err' : 'st-status--ok')} aria-live="polite" data-testid="st-fin-beleggingen">
+              {err ? '⚠ Beleggingen: ' + err
+                : bs.count != null ? `✓ Beleggingen: ${bs.count} uit Financieel${open ? ` · ${open} aan te vullen` : ''}`
+                : 'Beleggingen ophalen…'}
+            </div>
+          );
+        })()}
       </div>
     </Card>
   );

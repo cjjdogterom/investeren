@@ -168,7 +168,7 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                 <tr key={tx.id} data-testid={`tx-row-${tx.id}`} data-txrow="" tabIndex={0}
                   onClick={() => app.openTxDetail(tx.id)} onKeyDown={e => onRowKey(e, tx)}>
                   <td className="tr-tnum tr-ell">{trDay(tx.date)}</td>
-                  <td><span className="tr-type"><Icon name={trTypeIcon(tx.type)} size={14} /><span className="tr-ell">{trShortLabel(tx.type)}</span></span></td>
+                  <td><span className="tr-type"><Icon name={trTypeIcon(tx.type)} size={14} /><span className="tr-ell">{trShortLabel(tx.type)}</span>{isFinBelAanvullen(tx) && <TrAanvulPill />}</span></td>
                   {showParty && <td><TrPartyCell party={party} id={tx.party} /></td>}
                   <td className="tr-tnum tr-ell tr-muted" title={txDetailsText(tx, party)}>{txDetailsText(tx, party)}</td>
                   <td className="num"><TrAmount tx={tx} party={party} /></td>
@@ -176,7 +176,9 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                   <td className="tr-ell tr-muted" title={tx.note || ''}>{tx.note || ''}</td>
                   <td onClick={e => e.stopPropagation()}>
                     {menu && <Menu size="sm" triggerLabel="Acties" items={[
-                      { label: 'Bewerken', icon: 'pencil', onClick: () => app.editTx(tx) },
+                      isFinBelAanvullen(tx)
+                        ? { label: 'Aanvullen', icon: 'pencil', onClick: () => app.completeFinTx(tx) }
+                        : { label: 'Bewerken', icon: 'pencil', onClick: () => app.editTx(tx) },
                       { label: 'Verwijderen', icon: 'trash-2', danger: true, onClick: () => app.deleteTx(tx.id) },
                     ]} />}
                   </td>
@@ -190,6 +192,12 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
   );
 }
 
+// Markering OPEN: boeking uit Financieel die nog aangevuld moet worden (aantal, prijs, kosten).
+// Blijft staan tot de transactie in het formulier is opgeslagen (markering 'fin:aanvullen' weg).
+function TrAanvulPill() {
+  return <Pill tone="warn" icon="pencil" title="Uit Financieel: nog aanvullen met aantal, prijs en kosten" data-testid="tx-open-pill">OPEN</Pill>;
+}
+
 function TrMobileRow({ app, tx, showParty }) {
   const party = trPartyOf(app, tx.party);
   const color = party ? partyColorOf(party) : 'var(--fg-subtle)';
@@ -200,7 +208,7 @@ function TrMobileRow({ app, tx, showParty }) {
     <button type="button" className="tr-mrow" data-testid={`tx-row-${tx.id}`} onClick={() => app.openTxDetail(tx.id)}>
       <span className="tr-tile"><Icon name={trTypeIcon(tx.type)} size={18} /><span className="tr-tile__dot" style={{ background: color }} /></span>
       <span className="tr-mrow__main">
-        <span className="tr-mrow__title">{title}</span>
+        <span className="tr-mrow__title">{title}{isFinBelAanvullen(tx) && <> <TrAanvulPill /></>}</span>
         <span className="tr-mrow__sub">{sub}</span>
         {details && <span className="tr-mrow__sub num">{details}</span>}
       </span>
@@ -241,7 +249,7 @@ function TxList({ app, txs, variant = 'ledger', limit, showParty = true }) {
             <button key={tx.id} type="button" className="tr-act" data-testid={`tx-row-${tx.id}`} onClick={() => app.openTxDetail(tx.id)}>
               <span className="tr-tile"><Icon name={trTypeIcon(tx.type)} size={16} /><span className="tr-tile__dot" style={{ background: color }} /></span>
               <span className="tr-mrow__main">
-                <span className="tr-act__title">{TX_LABELS[tx.type]}</span>
+                <span className="tr-act__title">{TX_LABELS[tx.type]}{isFinBelAanvullen(tx) && <> <TrAanvulPill /></>}</span>
                 <span className="tr-act__sub tr-ell">{showParty ? `${party ? party.name : 'Onbekend'} · ` : ''}{fmtRelDay(tx.date, today)}</span>
               </span>
               <span className="tr-mrow__end">

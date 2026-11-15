@@ -367,6 +367,15 @@ function ovAttentionItems(app) {
   } else {
     out.forEach(rw => items.push({ id: 'drift-' + rw.key, tone: 'warn', icon: 'triangle-alert', title: `${driftLabel(rw)} ${fmtPt(rw.drift)} t.o.v. doel`, sub: `Doel ${fmtPct(rw.target, { decimals: 0, sign: false })} · nu ${fmtPct(rw.current, { decimals: 1, sign: false })}`, action: goPlan, drift: [rw] }));
   }
+  const finPending = ((state && state.transactions) || []).filter(isFinBelAanvullen).sort((a, b) => b.date.localeCompare(a.date));
+  if (finPending.length) {
+    const n = finPending.length;
+    const one = n === 1 ? finPending[0] : null;
+    items.push({ id: 'fin-aanvullen', tone: 'warn', icon: 'pencil',
+      title: `${finBelOpenTitle(n)} (uit Financieel)`,
+      sub: finPending.slice(0, 2).map(t => `${finBelPartyLabel(model.allParties, t.party)} ${app.prefs && app.prefs.privacy ? '€ •••••' : fmtMoney(+t.amountEur || 0, { decimals: 2 })} · ${fmtDateShort(t.date)}`).join(' · ') + (n > 2 ? ' …' : ''),
+      action: one ? { label: 'Aanvullen', onClick: () => app.completeFinTx(one) } : { label: 'Bekijken', onClick: () => app.navigate('/posities') } });
+  }
   if (model.orphans.length) {
     items.push({ id: 'orphans', tone: 'warn', icon: 'triangle-alert', title: `${model.orphans.length} transacties zonder partij`, sub: 'Deze tellen niet mee in je posities.', action: { label: 'Bekijken', onClick: () => app.navigate('/transacties?partij=__orphan') } });
   }

@@ -867,7 +867,8 @@ function ShSidebar({ app, collapsed, counts, driftWarn }) {
       </div>
       <div className="sh-nav">
         <ShNavLink to="/overzicht" icon="layout-dashboard" label="Overzicht" current={r.name === 'overzicht'} testId="nav-overzicht" onNavigate={go} />
-        <ShNavLink to="/posities" icon="layers" label="Posities" current={r.name === 'posities'} count={counts.open} testId="nav-posities" onNavigate={go} />
+        <ShNavLink to="/posities" icon="layers" label="Posities" current={r.name === 'posities'} count={counts.open} testId="nav-posities" onNavigate={go}
+          pip={counts.finOpen > 0} title={counts.finOpen > 0 ? `Posities · ${counts.finOpen} open ${counts.finOpen === 1 ? 'belegging' : 'beleggingen'} uit Financieel` : undefined} />
         <ShNavLink to="/transacties" icon="arrow-left-right" label="Transacties" current={r.name === 'transacties'} count={counts.tx} testId="nav-transacties" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" icon="target" label="Plan" current={r.name === 'plan' && collapsed} testId="nav-plan" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" label="Verdeling" sub current={r.name === 'plan' && r.params.tab === 'verdeling'} pip={driftWarn}
@@ -1970,6 +1971,68 @@ function App() {
 
   const sbOk = !!(supabaseConfig.url && supabaseConfig.anonKey);
 
+  // ── Beleggingen uit het Financieel Systeem (categorie Vermogensopbouw) ──
+  // 1) De partijlijst gaat naar Financieel (keuzelijst "Waarin investeer je?"), bij laden en bij elke wijziging.
+  // 2) De complete lijst beleggingen komt terug en wordt via finBelMerge in de transacties verwerkt.
+  // Zelfde sleutel als Vrij op rekening; POST als text/plain zodat er geen CORS-preflight nodig is.
+  const finBelUrl = path => FIN_BEL_API_URL + path + '?sleutel=' + encodeURIComponent(financieelSleutel);
+  const finBelPos = React.useMemo(() => finBelPosities(allParties), [allParties]);
+  const finBelPosSig = React.useMemo(() => JSON.stringify(finBelPos), [finBelPos]);
+  // Pas na de eerste geslaagde Supabase-load: anders zou een lokale (oude) stand de gesyncte overschrijven.
+  const finBelReady = !sbOk || !!syncStatus.syncedAt;
+  const [finBel, setFinBel] = React.useState(null); // { list, at }
+  const [finBelStatus, setFinBelStatus] = React.useState({ error: null, at: null, count: null, posError: null });
+  React.useEffect(() => {
+    if (!financieelSleutel || !finBelReady) return undefined;
+    let stop = false;
+    fetch(finBelUrl('/posities'), {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ posities: finBelPos }),
+    })
+      .then(r => r.json().catch(() => null).then(j => { if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'HTTP ' + r.status); }))
+      .then(() => { if (!stop) setFinBelStatus(st => (st.posError ? { ...st, posError: null } : st)); })
+      .catch(e => { if (!stop) setFinBelStatus(st => ({ ...st, posError: e.message || 'Posities versturen mislukt' })); });
+    return () => { stop = true; };
+  }, [financieelSleutel, finBelPosSig, finBelReady]); // eslint-disable-line
+  React.useEffect(() => {
+    if (!financieelSleutel) { setFinBel(null); setFinBelStatus({ error: null, at: null, count: null, posError: null }); return undefined; }
+    let stop = false;
+    const load = () => fetch(finBelUrl(''), { cache: 'no-store' })
+      .then(r => r.json().catch(() => null).then(j => {
+        if (!r.ok || !j) throw new Error((j && j.error) || 'HTTP ' + r.status);
+        if (!Array.isArray(j.beleggingen)) throw new Error('Onverwacht antwoord');
+        return j;
+      }))
+      .then(j => {
+        if (stop) return;
+        setFinBel(prev => (prev && JSON.stringify(prev.list) === JSON.stringify(j.beleggingen) ? prev : { list: j.beleggingen, at: j.bijgewerkt || null }));
+        setFinBelStatus(st => ({ ...st, error: null, at: new Date().toISOString(), count: j.beleggingen.length }));
+      })
+      .catch(e => { if (!stop) setFinBelStatus(st => ({ ...st, error: e.message || 'Ophalen mislukt' })); });
+    load();
+    const id = setInterval(load, 60000);
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
+  }, [financieelSleutel]); // eslint-disable-line
+  // Verwerken zodra er een lijst is en de gesyncte transacties er zijn; ook na elke pull (idempotent:
+  // vaste id's 'fin-<id>', en finBelMerge geeft null als er niets te doen is).
+  React.useEffect(() => {
+    if (!finBel || !finBelReady) return;
+    if (sbOk && !transactionsLoadedRef.current) return;
+    setSyncedState(s => {
+      const r = finBelMerge(s.transactions || [], finBel.list, {
+        parties: allPartiesRef.current,
+        deletedTransactionIds: s.deletedTransactionIds,
+        t212Linked: t212Linked(s.transactions) || !!(s.tweaks && s.tweaks.t212Sleutel),
+      });
+      if (!r) return s;
+      return { ...s, transactions: r.transactions, deletedTransactionIds: { ...(s.deletedTransactionIds || {}), ...r.deleted } };
+    });
+  }, [finBel, finBelReady, sbOk, state.transactions, allParties, setSyncedState]);
+
   // ── iOS-widget: publiceer de hero-getallen naar portfolio.data.widgetSnapshot ──
   // Alleen na een geslaagde Supabase-load met transacties, zonder openstaande save/fout,
   // met live koersen; en alleen bij ≥ € 1 verschil in totaal of ≥ 10 min sinds de vorige write.
@@ -1985,12 +2048,14 @@ function App() {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       const snap = buildWidgetSnapshot(model, prefs);
       if (!snap || !Number.isFinite(snap.total) || !(state.transactions || []).length) return;
+      // Aantal OPEN beleggingen uit Financieel (nog aan te vullen); extra veld, de widget mag het negeren.
+      snap.openBeleggingen = (state.transactions || []).filter(isFinBelAanvullen).length;
       const last = widgetSnapLastRef.current;
       const now = Date.now();
-      if (last.total != null && Math.abs(snap.total - last.total) < 1 && now - last.at < 10 * 60 * 1000) return;
+      if (last.total != null && Math.abs(snap.total - last.total) < 1 && last.open === snap.openBeleggingen && now - last.at < 10 * 60 * 1000) return;
       const client = getSupabaseClient(supabaseConfig);
       if (!client) return;
-      widgetSnapLastRef.current = { total: snap.total, at: now };
+      widgetSnapLastRef.current = { total: snap.total, at: now, open: snap.openBeleggingen };
       saveQueueRef.current = saveQueueRef.current
         .catch(() => {})
         .then(() => supabaseSaveWidgetSnapshot(client, snap))
@@ -2115,6 +2180,8 @@ function App() {
 
   const saveTx = React.useCallback(tx => {
     if (!tx || !tx.id) return;
+    // Opslaan via het formulier = aangevuld/overgenomen: markering uit Financieel weg, de sync blijft er voortaan af.
+    if (isFinBelManaged(tx)) { tx = { ...tx }; delete tx._t212Id; }
     const updatedAt = new Date().toISOString();
     const stampedTx = { ...tx, updatedAt };
     const isNew = !(stateRef.current.transactions || []).some(t => t.id === tx.id);
@@ -2242,6 +2309,12 @@ function App() {
 
   const openTx = React.useCallback((preset = null) => openOverlay({ kind: 'tx', preset: preset || null, initial: null }), [openOverlay]);
   const editTx = React.useCallback(tx => openOverlay({ kind: 'tx', preset: null, initial: tx }), [openOverlay]);
+  // Aan te vullen boeking uit Financieel: open het bewerkformulier als koop (stuk-partijen) of inleg.
+  const completeFinTx = React.useCallback(tx => {
+    if (!tx) return;
+    const party = allPartiesRef.current.find(p => p.id === tx.party);
+    openOverlay({ kind: 'tx', preset: null, initial: { ...tx, type: finBelCompletionType(party) } });
+  }, [openOverlay]);
   const openTxDetail = React.useCallback(txId => openOverlay({ kind: 'txDetail', txId }), [openOverlay]);
   const openPartyForm = React.useCallback((party = null, { startInDelete = false } = {}) => openOverlay({ kind: 'partyForm', party, startInDelete }), [openOverlay]);
   const openPrices = React.useCallback(() => openOverlay({ kind: 'prices' }), [openOverlay]);
@@ -2271,27 +2344,28 @@ function App() {
   const app = React.useMemo(() => ({
     state: viewState, model, spots, tweaks: displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, setSupabaseConfig, t212Status, importMsg, meesmanHistStatus,
-    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
+    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,
     stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
-    openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
+    openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
     overlayOpen: overlay !== null, confirm: confirmFn, toast,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
-    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus,
+    chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,
     stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
-    openTx, editTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
+    openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
 
   // Sidebar-tellers
   const driftWarn = React.useMemo(() => {
     try { return driftRows(model.summaries, state.targetAllocation).rows.some(r => r.outside); } catch (e) { return false; }
   }, [model, state.targetAllocation]);
-  const counts = { open: model.totals?.openCount ?? (model.open || []).length, tx: (viewState.transactions || []).length };
+  const finOpenCount = React.useMemo(() => (state.transactions || []).filter(isFinBelAanvullen).length, [state.transactions]);
+  const counts = { open: model.totals?.openCount ?? (model.open || []).length, tx: (viewState.transactions || []).length, finOpen: finOpenCount };
 
   const ov = overlay || {};
   const screen = (

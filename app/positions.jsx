@@ -1268,6 +1268,44 @@ function PsPostCoins({ app, s }) {
   );
 }
 
+// Aan te vullen boekingen uit Financieel (Vermogensopbouw): datum, positie en bedrag, met een knop naar
+// het bewerkformulier. Tot het aanvullen telt het bedrag als ingelegd tegen kostprijs (winst 0).
+function PsFinAanvul({ app, partyIds = null, inline = false }) {
+  const all = (app.state && app.state.transactions) || [];
+  const list = all.filter(t => isFinBelAanvullen(t) && (!partyIds || partyIds.includes(t.party)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  if (!list.length) return null;
+  const parties = (app.model && app.model.allParties) || [];
+  const rows = list.map(tx => {
+    const party = parties.find(p => p.id === tx.party) || null;
+    return (
+      <ListRow key={tx.id} testId={`fin-aanvul-${tx.id}`}
+        leading={party ? <Monogram party={party} size={28} /> : null}
+        title={<>{finBelPartyLabel(parties, tx.party)} <Pill tone="warn" icon="pencil">OPEN</Pill></>}
+        subtitle={party ? `${fmtDateLong(tx.date)} · uit Financieel`
+          : `${fmtDateLong(tx.date)} · uit Financieel · onbekende positie, kies de juiste bij aanvullen`}
+        value={<Money value={+tx.amountEur || 0} decimals={2} />}
+        secondary={<Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>} />
+    );
+  });
+  const note = 'Uit Financieel (Vermogensopbouw). Vul aantal, prijs en kosten aan; tot dan telt het bedrag als ingelegd tegen kostprijs.';
+  const heading = finBelOpenTitle(list.length);
+  if (inline) {
+    return (
+      <div data-testid="fin-aanvul-inline">
+        <div className="ps-sec-head"><h3 className="ps-sec-title">{heading}</h3></div>
+        {rows}
+      </div>
+    );
+  }
+  return (
+    <Card title={heading} data-testid="fin-aanvul-card">
+      <p className="ps-subtle" style={{ fontSize: 12.5, margin: '0 0 6px' }}>{note}</p>
+      {rows}
+    </Card>
+  );
+}
+
 function PsPartyBody({ app, s }) {
   const { model, prefs, spots } = app;
   const p = s.party;
@@ -1357,6 +1395,7 @@ function PsPartyBody({ app, s }) {
       )}
       <PsUnderlying party={p} value={s.currentValueEur} privacy={privacy} />
       {s.external && s.external.history && s.external.history.length > 0 && <PsFinHistory points={s.external.history} privacy={privacy} />}
+      <PsFinAanvul app={app} inline partyIds={[id, ...((s.leaves || []).map(l => (l.party ? l.party.id : l.id)))]} />
       <div>
         <div className="ps-sec-head">
           <h3 className="ps-sec-title">Transacties ({txs.length})</h3>
@@ -1838,6 +1877,7 @@ function PsMobile({ app }) {
           <AllocationBar segments={segments} height={14} privacy={!!prefs.privacy} ariaLabel="Verdeling per categorie" />
         </div>
       </Card>
+      <PsFinAanvul app={app} />
       <Card>
         <HoldingsList app={app} variant="page" />
       </Card>
@@ -1884,6 +1924,7 @@ function PsDesktop({ app }) {
           options={psPeriodOptions(model.series.dates, PS_GAIN_PERIODS).map(o => (o.value === 'ALL' ? { ...o, disabled: false } : o))} />
         <span className="ps-foot-note">bepaalt winst- en trendkolom · Alles = totale winst</span>
       </div>
+      <PsFinAanvul app={app} />
       <Card padding={0}>
         <HoldingsTable app={app} variant="full" />
       </Card>

@@ -355,6 +355,12 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   const showInstrument = party && party.id === 'trading212' && MD_INSTR_TYPES.includes(form.type);
   const showMetal = isMixed && MD_METAL_TYPES.includes(form.type);
   const showOptAmount = form.type === 'opname' && mdUnitBased(party);
+  // Aanvullen van een boeking uit Financieel: het bedrag dat van de rekening ging staat al vast.
+  const finAanvul = !!(initial && isFinBelAanvullen(initial));
+  const finBedrag = finAanvul ? (+initial.amountEur || 0) : 0;
+  const finFee = form.feeMode === 'eur' ? feeRaw : 0;
+  const finPxSuggest = finAanvul && form.type === 'koop' && qtyN > 0 && finBedrag > finFee
+    ? +((finBedrag - finFee) / qtyN).toFixed(6) : null;
 
   const errors = {};
   for (const k of needs) {
@@ -500,7 +506,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
 
   return (
     <Sheet open={open} onClose={onClose} testId="tx-sheet" width={520}
-      title={isEdit ? 'Transactie bewerken' : 'Nieuwe transactie'}
+      title={finAanvul ? 'Transactie aanvullen' : isEdit ? 'Transactie bewerken' : 'Nieuwe transactie'}
       subtitle="Leg inleg, koop, verkoop of een waardering vast."
       onBack={!isEdit && step === 2 && !(preset && preset.type) ? () => setStep(1) : undefined}
       footer={footer}>
@@ -540,6 +546,13 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
             </div>
           )}
           {typeNote && <div className="md-note" role="status"><Icon name="info" size={14} />{typeNote}</div>}
+          {finAanvul && (
+            <div className="md-live" data-testid="tx-fin-aanvul">
+              Uit Financieel: <b className="num">{fmtMoney(finBedrag, { decimals: 2 })}</b> op {fmtDateShort(initial.date)}.
+              {' '}{form.type === 'koop' ? 'Vul het aantal, de prijs per eenheid en eventuele transactiekosten in.' : 'Controleer het bedrag en sla op.'}
+              {' '}Na opslaan is het een gewone transactie.
+            </div>
+          )}
 
           <Field label={isTransfer ? 'Van' : 'Partij'} htmlFor={`${ids}-party`}
             hint={party && party.unit === 'bundle' && party.id !== STOCK_PARTY_ID ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
@@ -632,6 +645,11 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
                 <MoneyInput id={`${ids}-px`} value={form.unitPriceEur} onChange={setUnitPrice} placeholder="0,00" />
               </Field>
             </div>
+          )}
+          {finPxSuggest != null && Math.abs(finPxSuggest - pxN) > 1e-6 && (
+            <button type="button" className="md-addlink" onClick={() => setUnitPrice(mdNum(finPxSuggest))}>
+              <Icon name="circle-plus" size={14} />Gebruik {fmtMoney(finPxSuggest, { decimals: 4 })} per {unitLabel} (bedrag{finFee > 0 ? ' − kosten' : ''} ÷ aantal)
+            </button>
           )}
 
           {isTransfer && (
@@ -743,13 +761,18 @@ function TxDetailSheet({ app, open, txId, onClose }) {
   if (tx.note) rows.push(['Notitie', tx.note, true]);
   if (tx.updatedAt) rows.push(['Laatst gewijzigd', `${fmtDateLong(String(tx.updatedAt).slice(0, 10))} · ${fmtTime(tx.updatedAt)}`]);
   if (tx._t212Id && pieIdOfTx(tx)) rows.push(['Pie', tx.note && tx.note.startsWith('Pie ') ? tx.note.slice(4) : 'Trading 212-pie']);
+  else if (isFinBelAanvullen(tx)) rows.push(['Status', <Pill tone="warn" icon="pencil">OPEN · uit Financieel, nog aanvullen</Pill>]);
+  else if (isFinBelManaged(tx)) rows.push(['Bron', 'Uit Financieel']);
   else if (tx._t212Id) rows.push(['Bron', 'Geïmporteerd uit Trading 212']);
+  const finAanvulTx = isFinBelAanvullen(tx);
 
   const footer = (
     <div className="md-foot">
       <span className="md-foot__reason" />
       <Button variant="danger" icon="trash-2" onClick={() => app.deleteTx(tx.id).then(ok => { if (ok && onClose) onClose(); })}>Verwijderen</Button>
-      <Button variant="primary" icon="pencil" onClick={() => app.editTx(tx)}>Bewerken</Button>
+      {finAanvulTx
+        ? <Button variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>
+        : <Button variant="primary" icon="pencil" onClick={() => app.editTx(tx)}>Bewerken</Button>}
     </div>
   );
   return (

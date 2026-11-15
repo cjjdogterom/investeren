@@ -141,6 +141,125 @@ function financieelOverSummary(party, fo) {
   };
 }
 
+// ===== Beleggingen uit het Financieel Systeem =====
+// Boek je in Financieel een uitgave met categorie Vermogensopbouw, dan kies je daar een positie uit deze app
+// ("Waarin investeer je?"). Die boekingen komen via /api/beleggingen binnen als transactie 'fin-<financieel-id>'.
+// De markering staat in _t212Id (kolom t212_id, de bestaande kolom voor een externe bron-sleutel), zodat er
+// geen schemawijziging nodig is en markering + boeking als één rij synchroniseren:
+//   'fin:aanvullen' → nog aan te vullen (aantal, prijs, kosten); de sync mag hem bijwerken of verwijderen
+//   'fin:auto'      → compleet, maar nog door de sync beheerd (Trading 212-inleg zonder API-koppeling)
+// Sla je de boeking op in het formulier, dan vervalt de markering en raakt de sync hem nooit meer aan.
+const FIN_BEL_API_URL = 'https://financieel.financieel-chris.workers.dev/api/beleggingen';
+const FIN_BEL_AANVULLEN = 'fin:aanvullen';
+const FIN_BEL_AUTO = 'fin:auto';
+function finBelTxId(finId) { return 'fin-' + String(finId); }
+function isFinBelAanvullen(t) { return !!t && t._t212Id === FIN_BEL_AANVULLEN; }
+function isFinBelManaged(t) { return !!t && (t._t212Id === FIN_BEL_AANVULLEN || t._t212Id === FIN_BEL_AUTO); }
+// Een openstaande boeking is een 'inleg' met alleen een bedrag. Bij eur/bundle telt een inleg al als
+// ingelegd én waarde. Bij stuk-partijen (part/crypto/gram/ounce/mixed) zou een inleg zonder aantal nergens
+// meetellen; daar rekenen we hem als geld onderweg tegen kostprijs: ingelegd = waarde = bedrag, winst 0.
+function finBelPendingAtCost(t, party) {
+  return isFinBelAanvullen(t) && t.type === 'inleg' && !!party && party.unit !== 'eur' && party.unit !== 'bundle' && party.unit !== 'post';
+}
+// Type waarmee het aanvulformulier opent: koop (aantal × prijs + kosten) bij stuk-partijen, anders inleg.
+function finBelCompletionType(party) {
+  return !party || party.unit === 'eur' || party.unit === 'bundle' ? 'inleg' : 'koop';
+}
+// Posities die Financieel als keuze toont. Niet: 'Vrij op rekening' (live waarde uit Financieel zelf) en
+// crypto-posten (Finst/Wallet groeperen alleen hun coins; boekingen staan altijd op de coin, bv. finst-btc).
+function finBelPosities(parties) {
+  const list = (parties || []).filter(p => p && p.id);
+  const byId = Object.fromEntries(list.map(p => [p.id, p]));
+  return list
+    .filter(p => p.id !== FIN_OVER_PARTY_ID && !isPostParty(p))
+    .map(p => {
+      const post = p.postId && byId[p.postId] && isPostParty(byId[p.postId]) ? byId[p.postId] : null;
+      return {
+        id: p.id,
+        naam: post ? `${p.name} (${post.name})` : (p.name || p.id),
+        categorie: p.category || '',
+        ondertitel: p.subtitle || '',
+        eenheid: p.unit || '',
+        t212: p.id === STOCK_PARTY_ID,
+      };
+    });
+}
+// Weergavenaam van een positie; coin-sub-holdings met hun post erbij, bv. "Bitcoin (Finst)".
+function finBelPartyLabel(parties, id) {
+  const list = parties || [];
+  const p = list.find(x => x && x.id === id);
+  if (!p) return id || '?';
+  const post = p.postId ? list.find(x => x && x.id === p.postId && isPostParty(x)) : null;
+  return post ? `${p.name} (${post.name})` : (p.name || p.id);
+}
+// Kop van het overzicht, bv. "3 open beleggingen — vul aan".
+function finBelOpenTitle(n) { return `${n} open ${n === 1 ? 'belegging' : 'beleggingen'} — vul aan`; }
+function finBelNormalize(b) {
+  if (!b || b.id == null || b.id === '' || !b.positie) return null;
+  const bedrag = typeof b.bedrag === 'number' ? b.bedrag : parseFloat(b.bedrag);
+  const datum = typeof b.datum === 'string' ? b.datum.slice(0, 10) : '';
+  if (!Number.isFinite(bedrag) || !(bedrag > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(datum)) return null;
+  return {
+    id: String(b.id), datum, bedrag: Math.round(bedrag * 100) / 100, positie: String(b.positie),
+    omschrijving: typeof b.omschrijving === 'string' ? b.omschrijving.trim() : '',
+    rekening: typeof b.rekening === 'string' ? b.rekening.trim() : '',
+  };
+}
+function finBelNote(b) { return ['Uit Financieel', b.omschrijving, b.rekening].filter(Boolean).join(' · '); }
+// Pure merge van de (complete) lijst uit Financieel in de transacties. Geeft null als er niets verandert,
+// anders { transactions, deleted: { id: iso }, added, updated, removed, skipped }.
+// - nieuw → inleg met markering (T212: 'fin:auto'; bij een actieve T212-koppeling niets: stortingen komen via de API)
+// - nog beheerd (gemarkeerd) → partij, datum, bedrag en notitie volgen Financieel; verdwenen → verwijderen
+// - door de gebruiker aangevuld (markering weg) → nooit meer aanraken
+// - door de gebruiker verwijderd (tombstone) → niet opnieuw aanmaken
+// - onbekende positie → toch aanmaken (zonder partij); de gebruiker kiest de positie bij het aanvullen
+function finBelMerge(transactions, beleggingen, opts = {}) {
+  const txs = transactions || [];
+  const partyIds = new Set(finBelPosities(opts.parties).map(p => p.id));
+  const tomb = opts.deletedTransactionIds || {};
+  const now = opts.now || new Date().toISOString();
+  const byId = new Map(txs.map(t => [t.id, t]));
+  const seen = new Set();
+  const upserts = new Map();
+  const removeIds = new Set();
+  let added = 0, updated = 0, skipped = 0, unknown = 0;
+  for (const raw of beleggingen || []) {
+    if (raw && raw.id != null && raw.id !== '') seen.add(finBelTxId(raw.id));
+    const b = finBelNormalize(raw);
+    if (!b) { skipped++; continue; }
+    const id = finBelTxId(b.id);
+    const cur = byId.get(id);
+    if (cur && !isFinBelManaged(cur)) continue;
+    const isT212 = b.positie === STOCK_PARTY_ID;
+    if (isT212 && opts.t212Linked) { if (cur) removeIds.add(id); continue; }
+    // 'Vrij op rekening' is geen belegging (en boekingen daarop worden genegeerd). Een onbekende positie
+    // (bv. uit de standaardlijst van Financieel, of een verwijderde partij) wordt wél aangemaakt: hij staat dan
+    // bij Aan te vullen met een melding, en in het formulier kies je de juiste positie.
+    if (b.positie === FIN_OVER_PARTY_ID) { skipped++; continue; }
+    if (!partyIds.has(b.positie)) unknown++;
+    if (!cur && tomb[id]) continue;
+    const want = { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: isT212 ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
+    if (!cur) { upserts.set(id, { ...want, updatedAt: now }); added++; continue; }
+    const same = ['party', 'type', 'date', 'amountEur', 'note', '_t212Id'].every(k => (cur[k] ?? null) === (want[k] ?? null));
+    if (!same) {
+      const next = { ...cur, ...want, updatedAt: now };
+      ['quantity', 'unitPriceEur', 'feeEur', 'valueEur', 'instrument', 'metalType', 'silverUnit', 'goldUnit'].forEach(k => { delete next[k]; });
+      upserts.set(id, next);
+      updated++;
+    }
+  }
+  for (const t of txs) {
+    if (isFinBelManaged(t) && String(t.id).indexOf('fin-') === 0 && !seen.has(t.id)) removeIds.add(t.id);
+  }
+  if (!upserts.size && !removeIds.size) return null;
+  const next = txs.filter(t => !removeIds.has(t.id)).map(t => upserts.get(t.id) || t);
+  upserts.forEach((t, id) => { if (!byId.has(id)) next.push(t); });
+  next.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  const deleted = {};
+  removeIds.forEach(id => { deleted[id] = now; });
+  return { transactions: next, deleted, added, updated, removed: removeIds.size, skipped, unknown };
+}
+
 // ===== Crypto-posten =====
 // Een "post" (unit 'post', bv. Finst of Wallet) groepeert per-coin sub-holdings: gewone crypto-partijen
 // met postId + coin (finst-btc, wallet-eth …). Transacties blijven op de sub-holding staan, dus bestaande
@@ -915,6 +1034,7 @@ function summarizeParty(party, transactions, spots, ctx) {
   let totalDividend = 0, totalFees = 0, totalIncome = 0;
   let totalCashback = 0;
   let netCashIn = 0;
+  let pendingEur = 0; // aan te vullen boekingen uit Financieel (geld onderweg, tegen kostprijs)
   let bookedQuantity = null, chainCheckedAt = null;
 
   for (const t of txs) {
@@ -929,6 +1049,12 @@ function summarizeParty(party, transactions, spots, ctx) {
         quantity += +t.quantity || 0;
         costBasis += tc.cost;
       }
+      continue;
+    }
+    if (finBelPendingAtCost(t, party)) {
+      const a = +t.amountEur || 0;
+      pendingEur += a;
+      netCashIn += a;
       continue;
     }
     // Transactiekosten tellen mee in costBasis (echte netto-investering)
@@ -1095,6 +1221,8 @@ function summarizeParty(party, transactions, spots, ctx) {
 
   const costQty = party.isMixed ? goldQty + silverQty : (bookedQuantity != null ? bookedQuantity : quantity);
   const avgCost = costQty > 0 ? costBasis / costQty : null;
+  // Na de waardering en gemiddelde kostprijs: ingelegd en waarde allebei + bedrag → winst ongewijzigd.
+  if (pendingEur) { costBasis += pendingEur; currentValueEur += pendingEur; }
   const invested = costBasis + realizedCostBasis;
   const pnl = currentValueEur - costBasis + realizedPnl;
   const pnlPct = invested > 0 ? (pnl / invested) * 100 : 0;
@@ -1113,6 +1241,7 @@ function summarizeParty(party, transactions, spots, ctx) {
     realizedCostBasis, realizedProceeds, realizedPnl,
     pnl, pnlPct,
     bookedQuantity, chainCheckedAt,
+    pendingEur,
   };
 }
 
@@ -1125,7 +1254,7 @@ function buildPartyTimeSeries(transactions, parties, spots) {
   const unitValuationsByParty = Object.fromEntries(parties.map(p => [p.id, unitValuationPoints(txByParty[p.id] || [])]));
   const totalValuationsByParty = Object.fromEntries(parties.map(p => [p.id, totalValuationPoints(txByParty[p.id] || [])]));
   const state = {};
-  for (const p of parties) state[p.id] = { qty: 0, goldQty: 0, silverQty: 0, cost: 0, lastUnitPx: null, lastTotal: null };
+  for (const p of parties) state[p.id] = { qty: 0, goldQty: 0, silverQty: 0, cost: 0, lastUnitPx: null, lastTotal: null, pending: 0 };
 
   const dates = [];
   const byParty = Object.fromEntries(parties.map(p => [p.id, []]));
@@ -1153,6 +1282,7 @@ function buildPartyTimeSeries(transactions, parties, spots) {
       }
       const s = state[t.party]; if (!s) { ti++; continue; }
       const p = parties.find(x => x.id === t.party);
+      if (finBelPendingAtCost(t, p)) { s.pending += +t.amountEur || 0; ti++; continue; } // tegen kostprijs, zie summarizeParty
       if (t.feeEur) s.cost += +t.feeEur; // fees tellen mee in investering
       switch (t.type) {
         case 'inleg':
@@ -1311,8 +1441,9 @@ function buildPartyTimeSeries(transactions, parties, spots) {
         const manualTotal = px == null ? weeklyInterpolatedValue(totalValuations, iso, null) : null;
         v = manualTotal ?? ((px || 0) * s.qty);
       }
+      if (s.pending) v += s.pending;
       byParty[p.id].push(v);
-      tot += v; inv += s.cost;
+      tot += v; inv += s.cost + s.pending;
     }
     dates.push(iso); total.push(tot); invested.push(inv);
     iso = addDaysIso(iso, 1);
@@ -2552,6 +2683,7 @@ Object.assign(window, {
   ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
+  FIN_BEL_API_URL, FIN_BEL_AANVULLEN, FIN_BEL_AUTO, finBelTxId, isFinBelAanvullen, isFinBelManaged, finBelPendingAtCost, finBelCompletionType, finBelPosities, finBelPartyLabel, finBelOpenTitle, finBelNormalize, finBelMerge,
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
