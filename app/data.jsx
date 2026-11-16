@@ -2293,9 +2293,13 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   const dateIdx = new Map(dates.map((x, i) => [x, i]));
   const chartSet = new Set(chartIds);
   const markers = [];
+  // Trading 212 gekoppeld: alleen API-boekingen vanaf de startdatum tellen mee, dus ook alleen die markeren.
+  const t212Lnk = t212Linked(transactions);
+  const t212From = t212Lnk && byId[STOCK_PARTY_ID] && byId[STOCK_PARTY_ID].stocks ? byId[STOCK_PARTY_ID].stocks.startDate || null : null;
   for (const t of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const dispId = dispIdOf(t.party);
     if (!chartSet.has(dispId) || t.type === 'overboeking') continue;
+    if (t.party === STOCK_PARTY_ID && t212Lnk && (!isT212ApiTx(t) || (t212From && t.date < t212From))) continue;
     const s = byId[dispId];
     const index = dateIdx.get(t.date);
     if (index == null) continue;

@@ -576,8 +576,6 @@ function OvPrestatiesCard({ app, pf }) {
               <span className="ov-key"><span className="ov-key__line" />Waarde</span>
               <span className="ov-key"><span className="ov-key__step" />Netto ingelegd</span>
               <span className="ov-key"><span className="ov-key__band" />Winst</span>
-              <span className="ov-key"><span className="ov-key__dia" />Waardering</span>
-              <span className="ov-key"><span className="ov-key__ring" />Opname</span>
             </>
           ) : pf.mode === 'gain'
             ? <span className="ov-key"><span className="ov-key__line" />{pf.r.all ? 'Totale winst (waarde − netto ingelegd)' : 'Winst excl. stortingen sinds begin periode'}</span>
@@ -591,7 +589,7 @@ function OvPrestatiesCard({ app, pf }) {
       </div>
       <div className="ov-chartwrap">
         <PerformanceChart testId="perf-chart" dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-          kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220} markers={pf.mode === 'value' ? pf.markers : null}
+          kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220}
           liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
           cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
           ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
