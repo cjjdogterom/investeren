@@ -28,54 +28,94 @@ injectStyles('jaaroverzicht', `
 .jr-preview { min-width: 0; overflow-x: auto; padding-bottom: 8px; }
 
 /* ---- Document (A4) ---- */
-.jr-paper { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 16mm 15mm 18mm; background: #fff; color: #16181d; box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 30px rgba(0,0,0,.10); border-radius: 4px;
-  font: 400 9.5pt/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.jr-paper { --ink: #14171f; --ink2: #3c4350; --mut: #6b7280; --rule: #e4e7ec; --rule2: #c9ced6; --acc: #1f3a5f;
+  width: 210mm; min-height: 297mm; margin: 0 auto; padding: 18mm 17mm 18mm; background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 30px rgba(0,0,0,.10); border-radius: 4px;
+  font: 400 9.2pt/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .jr-paper * { box-sizing: border-box; }
-.jr-dhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 12px; border-bottom: 2px solid #16181d; }
-.jr-dtitle { font-size: 18pt; font-weight: 700; letter-spacing: -0.01em; margin: 0; line-height: 1.15; }
-.jr-dsub { margin-top: 4px; color: #4b5260; font-size: 10pt; }
-.jr-dmeta { text-align: right; font-size: 8.5pt; color: #4b5260; line-height: 1.6; white-space: nowrap; }
-.jr-dmeta b { color: #16181d; font-weight: 600; }
-.jr-badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px; font-size: 7.5pt; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; background: #fff4e0; color: #8a5300; border: 1px solid #f1d4a3; }
-.jr-badge--ok { background: #e9f6ee; color: #1d6b3c; border-color: #bfe3cc; }
-.jr-sec { margin-top: 16px; }
-.jr-sec h2 { font-size: 10.5pt; font-weight: 700; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid #d5d9e0; display: flex; gap: 8px; align-items: baseline; }
-.jr-sec h2 .jr-num { color: #8a909c; font-weight: 600; }
-.jr-sec p { margin: 0 0 6px; }
-.jr-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-.jr-kpi { border: 1px solid #d5d9e0; border-radius: 6px; padding: 8px 10px; }
-.jr-kpi__l { font-size: 7.5pt; color: #6a7180; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
-.jr-kpi__v { font-size: 13pt; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.jr-kpi__s { font-size: 7.5pt; color: #6a7180; margin-top: 1px; }
+.jr-paper p { margin: 0; }
+.jr-top { display: flex; justify-content: space-between; font-size: 7pt; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); font-weight: 600; }
+.jr-title { margin: 14px 0 0; font-size: 23pt; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.jr-title span { color: var(--mut); font-weight: 400; }
+.jr-lede { margin-top: 4px !important; color: var(--ink2); font-size: 10pt; }
+.jr-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 0 0; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--rule2); }
+.jr-meta > div { padding: 7px 10px 8px 0; }
+.jr-meta > div + div { padding-left: 10px; border-left: 1px solid var(--rule); }
+.jr-meta dt, .jr-lbl { font-size: 6.8pt; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); font-weight: 600; }
+.jr-meta dd { margin: 2px 0 0; font-weight: 600; font-size: 9pt; }
+.jr-state { color: #8a5300; } .jr-state--ok { color: #1d6b3c; }
+.jr-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
+.jr-sum > div { padding: 2px 12px 2px 0; }
+.jr-sum > div + div { padding-left: 12px; border-left: 1px solid var(--rule); }
+.jr-sum__v { font-size: 14.5pt; font-weight: 700; letter-spacing: -0.01em; margin-top: 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.jr-sum__s { font-size: 7.3pt; color: var(--mut); margin-top: 1px; }
+
+.jr-part { margin-top: 30px; padding-top: 12px; border-top: 1.5px solid var(--ink); display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 0 14px; align-items: baseline; }
+.jr-part__no { font-size: 7.2pt; letter-spacing: .12em; text-transform: uppercase; color: var(--acc); font-weight: 700; }
+.jr-part h2 { margin: 0; font-size: 15pt; font-weight: 700; letter-spacing: -0.01em; }
+.jr-part p { grid-column: 2; color: var(--ink2); margin-top: 3px; font-size: 8.8pt; }
+.jr-sec { margin-top: 20px; }
+.jr-sec h3 { margin: 0 0 7px; font-size: 10pt; font-weight: 700; display: flex; gap: 10px; align-items: baseline; break-after: avoid; }
+.jr-sec h3 .jr-num { color: var(--acc); font-weight: 600; font-variant-numeric: tabular-nums; min-width: 22px; }
+.jr-intro { color: var(--ink2); font-size: 8.5pt; margin: -2px 0 8px 32px !important; }
+
+/* Bezittingentabel */
 .jr-twrap { overflow-x: auto; }
-.jr-t { width: 100%; border-collapse: collapse; font-size: 8.5pt; font-variant-numeric: tabular-nums; }
-.jr-t th { text-align: left; font-weight: 600; color: #4b5260; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .04em; padding: 5px 6px; border-bottom: 1px solid #b9bfca; background: #f4f5f7; vertical-align: bottom; }
-.jr-t td { padding: 4.5px 6px; border-bottom: 1px solid #e6e8ec; vertical-align: top; }
+.jr-t { width: 100%; border-collapse: collapse; font-size: 8.6pt; font-variant-numeric: tabular-nums; }
+.jr-t th { text-align: left; font-weight: 600; color: var(--mut); font-size: 6.8pt; text-transform: uppercase; letter-spacing: .07em; padding: 0 6px 5px; border-bottom: 1px solid var(--ink); vertical-align: bottom; }
+.jr-t td { padding: 5px 6px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.jr-t th:first-child, .jr-t td:first-child { padding-left: 0; }
+.jr-t th:last-child, .jr-t td:last-child { padding-right: 0; }
 .jr-t .n { text-align: right; white-space: nowrap; }
-.jr-t tfoot td { font-weight: 700; border-top: 1.5px solid #16181d; border-bottom: 0; background: #fafbfc; }
-.jr-t .jr-cat td { background: #fafbfc; font-weight: 600; color: #2b2f37; }
 .jr-t tr { break-inside: avoid; }
-.jr-t--wide { font-size: 7.8pt; }
-.jr-t--wide th { font-size: 6.8pt; letter-spacing: .02em; padding: 5px 4px; }
-.jr-t--wide td { padding: 4.5px 4px; }
-.jr-t .muted, .jr-muted { color: #6a7180; }
-.jr-t .sm { font-size: 7.5pt; color: #6a7180; display: block; }
+.jr-t .jr-grp td { padding-top: 11px; border-bottom: 1px solid var(--rule2); font-weight: 600; font-size: 8pt; color: var(--ink2); }
+.jr-t .jr-grp td:first-child { font-size: 6.9pt; letter-spacing: .08em; text-transform: uppercase; color: var(--acc); font-weight: 700; }
+.jr-t .jr-item td:first-child { padding-left: 14px; }
+.jr-t tfoot td { font-weight: 700; border-top: 1.5px solid var(--ink); border-bottom: 3px double var(--ink); padding-top: 6px; padding-bottom: 6px; }
+.jr-asset-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.jr-asset-cell b { font-weight: 600; display: block; }
+.jr-asset-cell small { display: block; font-size: 7.2pt; color: var(--mut); line-height: 1.3; }
+.jr-logo { width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0; overflow: hidden; background: #fff; box-shadow: inset 0 0 0 1px rgba(15,23,42,.12); display: inline-grid; place-items: center; }
+.jr-logo img { width: 100%; height: 100%; object-fit: contain; padding: 2px; display: block; }
+.jr-logo--tile img { padding: 0; object-fit: cover; }
+.jr-logo--mono { font-size: 6.6pt; font-weight: 700; letter-spacing: -0.02em; color: var(--ink2); background: #eef0f3; }
+.jr-logo--sm { width: 15px; height: 15px; border-radius: 4px; }
+.jr-logo--sm.jr-logo--mono { font-size: 5.4pt; }
+
+/* Berekeningen: ingesprongen, binnenkolom (a) voor posten en buitenkolom (b) voor (sub)totalen */
+.jr-led { width: 100%; border-collapse: collapse; font-size: 9pt; font-variant-numeric: tabular-nums; }
+.jr-led td { padding: 3.2px 0; vertical-align: middle; }
+.jr-led td.n { text-align: right; white-space: nowrap; width: 19%; padding-left: 12px; }
+.jr-led td.a { color: var(--ink2); }
+.jr-led td.rule { border-top: 1px solid var(--ink); }
+.jr-led tr.head td { padding-top: 10px; font-weight: 700; }
+.jr-led tr.head:first-child td { padding-top: 0; }
+.jr-led tr.sub td:first-child { color: var(--ink2); }
+.jr-led tr.sum td { font-weight: 600; }
+.jr-led tr.total td { font-weight: 700; padding-top: 5px; padding-bottom: 5px; }
+.jr-led tr.total td.b { border-top: 1.5px solid var(--ink); border-bottom: 3px double var(--ink); }
+.jr-led tr.muted td { color: var(--mut); font-size: 8.3pt; }
+.jr-l { display: flex; align-items: center; gap: 7px; }
+.jr-led small { color: var(--mut); font-size: 7.5pt; margin-left: 6px; font-weight: 400; }
+.jr-block { margin-left: 32px; }
+
+.jr-cmp { display: grid; grid-template-columns: 1fr 1fr; margin: 4px 0 0 32px; border: 1px solid var(--rule2); border-radius: 6px; overflow: hidden; break-inside: avoid; }
+.jr-cmp > div { padding: 10px 12px; }
+.jr-cmp > div + div { border-left: 1px solid var(--rule2); }
+.jr-cmp .is-best { background: #eef6f1; }
+.jr-cmp__v { font-size: 14pt; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.jr-cmp__s { font-size: 7.4pt; color: var(--mut); }
+.jr-concl { margin: 8px 0 0 32px !important; font-size: 8.6pt; color: var(--ink2); padding-left: 10px; border-left: 2px solid var(--acc); break-inside: avoid; }
+
 .jr-neg { color: #b42318; }
 .jr-pos { color: #1d6b3c; }
-.jr-calc { width: 100%; border-collapse: collapse; font-size: 9pt; font-variant-numeric: tabular-nums; }
-.jr-calc td { padding: 3.5px 6px; border-bottom: 1px dotted #d5d9e0; }
-.jr-calc td.n { text-align: right; white-space: nowrap; width: 30%; }
-.jr-calc tr.tot td { font-weight: 700; border-top: 1.5px solid #16181d; border-bottom: 0; }
-.jr-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.jr-box { border: 1px solid #d5d9e0; border-radius: 6px; padding: 8px 10px; break-inside: avoid; }
-.jr-box h3 { font-size: 9pt; margin: 0 0 4px; }
-.jr-callout { margin-top: 8px; padding: 8px 10px; border-left: 3px solid #16181d; background: #f4f5f7; font-size: 8.5pt; break-inside: avoid; }
-.jr-warns { margin: 6px 0 0; padding-left: 16px; font-size: 8pt; color: #8a5300; }
-.jr-fine { font-size: 7.5pt; color: #6a7180; line-height: 1.5; }
-.jr-fine li { margin-bottom: 2px; }
-.jr-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 18px; font-size: 8.5pt; color: #4b5260; break-inside: avoid; }
-.jr-sign div { border-top: 1px solid #b9bfca; padding-top: 4px; }
-.jr-foot { margin-top: 16px; padding-top: 6px; border-top: 1px solid #d5d9e0; display: flex; justify-content: space-between; font-size: 7.5pt; color: #8a909c; }
+.jr-muted { color: var(--mut); }
+.jr-fine { font-size: 7.5pt; color: var(--mut); line-height: 1.55; }
+.jr-notes { margin: 0 0 0 32px; padding-left: 14px; }
+.jr-notes li { margin-bottom: 2px; }
+.jr-warns { margin: 10px 0 0 32px; padding: 7px 10px 7px 24px; background: #fff8eb; border-left: 2px solid #d99a2b; font-size: 7.8pt; color: #7a4a00; break-inside: avoid; }
+.jr-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 34px; font-size: 7.6pt; color: var(--mut); break-inside: avoid; }
+.jr-sign div { border-top: 1px solid var(--ink2); padding-top: 4px; }
+.jr-foot { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--rule); display: flex; justify-content: space-between; font-size: 7pt; color: var(--mut); }
 
 .jr-printroot { display: none; }
 @media (max-width: 1100px) {
@@ -83,24 +123,29 @@ injectStyles('jaaroverzicht', `
   .jr-side { position: static; max-height: none; overflow: visible; }
 }
 @media screen and (max-width: 860px) {
-  .jr-paper { width: auto; min-height: 0; padding: 20px 16px; font-size: 9pt; }
-  .jr-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .jr-two { grid-template-columns: minmax(0, 1fr); }
-  .jr-dhead { flex-direction: column; }
-  .jr-dmeta { text-align: left; }
+  .jr-paper { width: auto; min-height: 0; padding: 22px 16px; font-size: 9pt; }
+  .jr-meta, .jr-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jr-meta > div:nth-child(3), .jr-sum > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  .jr-sum > div { padding-bottom: 8px; }
+  .jr-part { grid-template-columns: minmax(0, 1fr); }
+  .jr-part p { grid-column: 1; }
+  .jr-block, .jr-cmp, .jr-concl, .jr-intro, .jr-notes, .jr-warns { margin-left: 0 !important; }
+  .jr-cmp { grid-template-columns: minmax(0, 1fr); }
+  .jr-cmp > div + div { border-left: 0; border-top: 1px solid var(--rule2); }
+  .jr-led td.n { width: auto; }
 }
 @media print {
-  @page { size: A4; margin: 14mm 13mm 16mm;
-    @bottom-left { content: "Vermogensoverzicht box 3 — vertrouwelijk"; font: 7pt -apple-system, Helvetica, Arial, sans-serif; color: #8a909c; }
+  @page { size: A4; margin: 15mm 15mm 17mm;
+    @bottom-left { content: "Vermogensoverzicht — vertrouwelijk"; font: 7pt -apple-system, Helvetica, Arial, sans-serif; color: #8a909c; }
     @bottom-right { content: "Pagina " counter(page) " van " counter(pages); font: 7pt -apple-system, Helvetica, Arial, sans-serif; color: #8a909c; } }
   html, body { background: #fff !important; }
   body > *:not(.jr-printroot) { display: none !important; }
   .jr-printroot { display: block !important; }
   .jr-printroot .jr-paper { width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none; border-radius: 0; }
   .jr-twrap { overflow: visible; }
-  .jr-sec { break-inside: auto; }
-  .jr-sec h2 { break-after: avoid; }
-  .jr-kpis, .jr-two { break-inside: avoid; }
+  .jr-part--break { break-before: page; margin-top: 0; }
+  .jr-part { break-after: avoid; }
+  .jr-meta, .jr-sum, .jr-led, .jr-cmp { break-inside: avoid; }
   .jr-foot { display: none; }
 }
 `);
@@ -260,157 +305,215 @@ function jrSigned(v) {
   if (v == null) return <span className="jr-muted">—</span>;
   return <span className={v < -0.5 ? 'jr-neg' : v > 0.5 ? 'jr-pos' : undefined}>{fmtMoney(v, { sign: true })}</span>;
 }
+const jrPct = v => `${(+v).toFixed(2).replace('.', ',')}%`;
+
+// Logo van de aanbieder (zelfde bestanden als in de app); anders een neutraal monogram.
+function JrLogo({ party, small }) {
+  const src = typeof partyLogo === 'function' ? partyLogo(party) : null;
+  const [bad, setBad] = useState(false);
+  const cls = 'jr-logo' + (small ? ' jr-logo--sm' : '');
+  if (src && !bad) {
+    return <span className={cls + (/-tile\./.test(src) ? ' jr-logo--tile' : '')} aria-hidden="true">
+      <img src={src} alt="" draggable="false" onError={() => setBad(true)} /></span>;
+  }
+  return <span className={cls + ' jr-logo--mono'} aria-hidden="true">{monogramOf(party)}</span>;
+}
+
+// Berekening als staat: ingesprongen posten in de binnenkolom (a), (sub)totalen in de buitenkolom (b).
+function JrLedger({ rows }) {
+  return (
+    <table className="jr-led"><tbody>{rows.filter(Boolean).map((r, i) => (
+      <tr key={i} className={r.k || undefined}>
+        <td style={r.lvl ? { paddingLeft: r.lvl * 16 } : undefined}>{r.l}{r.note ? <small>{r.note}</small> : null}</td>
+        <td className={'n a' + (r.ra ? ' rule' : '')}>{r.a}</td>
+        <td className={'n b' + (r.rb ? ' rule' : '')}>{r.b}</td>
+      </tr>))}
+    </tbody></table>
+  );
+}
 
 function JrDocument({ rep, cfg }) {
   const Y = rep.year;
   const peil = `1 januari ${Y}`;
-  const endLabel = rep.open ? `Stand ${fmtDateLong(rep.endIso)}` : `31 december ${Y}`;
+  const endShort = rep.open ? `Stand ${fmtDateLong(rep.endIso)}` : `31 december ${Y}`;
   const made = fmtDateLong(rep.today);
-  const allWarns = rep.inc.flatMap(r => r.warns.map(w => `${r.name}: ${w}`));
+  const allWarns = rep.inc.flatMap(r => r.warns.map(w => ({ r, w })));
   const excluded = rep.rows.filter(r => !r.incl && !r.dormant);
-  const f = rep.forfait, w = rep.werkelijk, R = rep.rates;
-  const pctFmt = v => `${String(v.toFixed(2)).replace('.', ',')}%`;
-  let n = 0;
-  const H = ({ children }) => <h2><span className="jr-num">{++n}.</span>{children}</h2>;
-  return (
-    <article className="jr-paper" aria-label={`Vermogensoverzicht box 3 ${Y}`}>
-      <header className="jr-dhead">
-        <div>
-          <h1 className="jr-dtitle">Vermogensoverzicht box 3</h1>
-          <div className="jr-dsub">Belastingjaar {Y} · peildatum {peil}{cfg.name ? <> · {cfg.name}</> : null}</div>
-          <span className={rep.open ? 'jr-badge' : 'jr-badge jr-badge--ok'}>{rep.open ? 'Voorlopig — jaar nog niet afgesloten' : 'Jaar afgesloten'}</span>
-        </div>
-        <div className="jr-dmeta">
-          {cfg.name && <div>Belastingplichtige: <b>{cfg.name}</b></div>}
-          {cfg.partner && <div>Met fiscale partner</div>}
-          <div>Opgesteld: <b>{made}</b></div>
-          <div>Valuta: <b>EUR</b> · {rep.inc.length} bezittingen</div>
-        </div>
-      </header>
+  const f = rep.forfait, w = rep.werkelijk, R = rep.rates, T = rep.totals;
+  const sum = (arr, k) => arr.reduce((a, r) => a + (r[k] || 0), 0);
+  const groups = rep.byCat.filter(c => c.rows.length);
+  const startExact = sum(rep.inc, 'start');
+  const koers = T.result - T.income + T.costs;
+  const better = w.unknown ? null : (w.tax < f.tax - 0.5 ? 'w' : 'f');
+  const M = v => jrMoney(v);
+  const minus = v => (v == null ? '—' : fmtMoney(-Math.abs(v)));
+  const S = v => (v == null ? '—' : fmtMoney(v, { sign: true }));
+  const Asset = ({ r }) => (
+    <div className="jr-asset-cell"><JrLogo party={r.party} />
+      <div><b>{r.name}</b>{(r.sub || r.src.start === 'handmatig' || r.src.end === 'handmatig' || r.src.flow === 'handmatig')
+        ? <small>{[r.sub, (r.src.start === 'handmatig' || r.src.end === 'handmatig' || r.src.flow === 'handmatig') ? 'handmatig aangepast' : null].filter(Boolean).join(' · ')}</small> : null}</div>
+    </div>);
+  const LL = ({ r }) => <span className="jr-l"><JrLogo party={r.party} small />{r.name}</span>;
 
-      <div className="jr-kpis">
-        <div className="jr-kpi"><div className="jr-kpi__l">Bezittingen {peil}</div><div className="jr-kpi__v">{jrMoney(rep.totals.start)}</div><div className="jr-kpi__s">rendementsgrondslag</div></div>
-        <div className="jr-kpi"><div className="jr-kpi__l">{rep.open ? 'Stand nu' : `31 december ${Y}`}</div><div className="jr-kpi__v">{jrMoney(rep.totals.end)}</div><div className="jr-kpi__s">{rep.open ? fmtDateLong(rep.endIso) : 'einde jaar'}</div></div>
-        <div className="jr-kpi"><div className="jr-kpi__l">Forfaitair voordeel</div><div className="jr-kpi__v">{jrMoney(f.voordeel)}</div><div className="jr-kpi__s">belasting ± {jrMoney(f.tax)}</div></div>
-        <div className="jr-kpi"><div className="jr-kpi__l">Werkelijk rendement</div><div className="jr-kpi__v">{w.unknown ? '—' : jrMoney(w.total, { sign: true })}</div><div className="jr-kpi__s">{rep.open ? 'tot nu toe' : `over ${Y}`}</div></div>
+  return (
+    <article className="jr-paper" aria-label={`Vermogensoverzicht ${Y}`}>
+      <div className="jr-top"><span>Persoonlijke administratie · Box 3</span><span>Vertrouwelijk</span></div>
+      <h1 className="jr-title">Vermogensoverzicht <span>{Y}</span></h1>
+      <p className="jr-lede">Bezittingen, resultaat en berekening van de belasting over sparen en beleggen</p>
+      <dl className="jr-meta">
+        <div><dt>Belastingplichtige</dt><dd>{cfg.name || '—'}{cfg.partner ? <span className="jr-muted"> · met partner</span> : null}</dd></div>
+        <div><dt>Peildatum</dt><dd>{peil}</dd></div>
+        <div><dt>Opgesteld</dt><dd>{made}</dd></div>
+        <div><dt>Status</dt><dd className={rep.open ? 'jr-state' : 'jr-state jr-state--ok'}>{rep.open ? 'Voorlopig' : 'Jaar afgesloten'}</dd></div>
+      </dl>
+
+      <div className="jr-sum">
+        <div><div className="jr-lbl">Vermogen {peil}</div><div className="jr-sum__v">{M(T.start)}</div><div className="jr-sum__s">{rep.inc.length} bezittingen</div></div>
+        <div><div className="jr-lbl">{rep.open ? 'Vermogen nu' : `Vermogen 31 dec ${Y}`}</div><div className="jr-sum__v">{M(T.end)}</div><div className="jr-sum__s">{rep.open ? fmtDateLong(rep.endIso) : 'einde belastingjaar'}</div></div>
+        <div><div className="jr-lbl">Resultaat {Y}</div><div className="jr-sum__v">{jrSigned(T.result)}</div><div className="jr-sum__s">na netto inleg van {fmtMoney(T.flow, { sign: true })}</div></div>
+        <div><div className="jr-lbl">Box 3 forfaitair</div><div className="jr-sum__v">{M(f.tax)}</div><div className="jr-sum__s">indicatief · {R.tarief}% van {M(f.voordeel)}</div></div>
       </div>
 
-      <section className="jr-sec">
-        <H>Opgave voor de aangifte — {peil}</H>
-        <p className="jr-muted">Bedragen in hele euro's (naar beneden afgerond), zoals in te vullen onder <i>Bankrekeningen en andere bezittingen</i>. Er zijn geen schulden opgenomen.</p>
-        <div className="jr-twrap"><table className="jr-t">
-          <thead><tr><th>Rubriek in de aangifte</th><th className="n">Aantal</th><th className="n">Waarde {peil}</th><th className="n">Forfait</th></tr></thead>
-          <tbody>{rep.byCat.map(c => (
-            <tr key={c.key}><td>{c.label}<span className="sm">{c.sub}</span></td><td className="n">{c.rows.length}</td><td className="n">{jrMoney(c.start)}</td>
-              <td className="n">{pctFmt(c.rate === 'bank' ? R.bank : R.overig)}</td></tr>))}
-          </tbody>
-          <tfoot><tr><td>Totaal bezittingen</td><td className="n">{rep.inc.length}</td><td className="n">{jrMoney(rep.totals.start)}</td><td /></tr></tfoot>
-        </table></div>
-      </section>
+      {/* ---------------- Deel 1 ---------------- */}
+      <header className="jr-part">
+        <span className="jr-part__no">Deel 1</span><h2>Bezittingen en resultaat</h2>
+        <p>Waarde per bezitting op {peil} en {rep.open ? `de stand op ${fmtDateLong(rep.endIso)}` : `31 december ${Y}`}, en het resultaat na aftrek van wat er in {Y} netto is ingelegd.</p>
+      </header>
 
       <section className="jr-sec">
-        <H>Specificatie per bezitting</H>
+        <h3><span className="jr-num">1.1</span>Overzicht per bezitting</h3>
         <div className="jr-twrap"><table className="jr-t">
-          <thead><tr><th>Bezitting</th><th className="n">{peil}</th><th className="n">{endLabel}</th><th className="n">Verschil</th></tr></thead>
-          <tbody>{rep.byCat.filter(c => c.rows.length).map(c => (
+          <thead><tr><th>Bezitting</th><th className="n">{peil}</th><th className="n">Netto ingelegd</th><th className="n">{endShort}</th><th className="n">Resultaat</th></tr></thead>
+          <tbody>{groups.map(c => (
             <React.Fragment key={c.key}>
-              <tr className="jr-cat"><td colSpan={4}>{c.label}</td></tr>
+              <tr className="jr-grp"><td>{c.label}</td><td className="n">{M(sum(c.rows, 'start'))}</td><td className="n">{S(sum(c.rows, 'flow'))}</td><td className="n">{M(c.end)}</td><td className="n">{jrSigned(c.result)}</td></tr>
               {c.rows.map(r => (
-                <tr key={r.id}><td>{r.name}<span className="sm">{r.sub}{(r.src.start === 'handmatig' || r.src.end === 'handmatig') ? ' · handmatig aangepast' : ''}</span></td>
-                  <td className="n">{jrMoney(jrDown(r.start))}</td><td className="n">{jrMoney(r.end)}</td>
-                  <td className="n">{r.start != null && r.end != null ? jrSigned(r.end - r.start) : '—'}</td></tr>))}
+                <tr key={r.id} className="jr-item"><td><Asset r={r} /></td>
+                  <td className="n">{M(r.start)}</td><td className="n">{r.flow == null ? '—' : S(r.flow)}</td><td className="n">{M(r.end)}</td><td className="n">{jrSigned(r.result)}</td></tr>))}
             </React.Fragment>))}
           </tbody>
-          <tfoot><tr><td>Totaal</td><td className="n">{jrMoney(rep.totals.start)}</td><td className="n">{jrMoney(rep.totals.end)}</td><td className="n">{jrSigned(rep.totals.end - rep.totals.start)}</td></tr></tfoot>
+          <tfoot><tr><td>Totaal</td><td className="n">{M(startExact)}</td><td className="n">{S(T.flow)}</td><td className="n">{M(T.end)}</td><td className="n">{jrSigned(T.result)}</td></tr></tfoot>
         </table></div>
-        {excluded.length > 0 && <p className="jr-fine" style={{ marginTop: 6 }}>Niet opgenomen in dit overzicht (op verzoek uitgesloten): {excluded.map(r => r.name).join(', ')}.</p>}
+        {excluded.length > 0 && <p className="jr-fine" style={{ marginTop: 6 }}>Op verzoek niet opgenomen: {excluded.map(r => r.name).join(', ')}.</p>}
       </section>
 
       <section className="jr-sec">
-        <H>Forfaitaire berekening (indicatief)</H>
-        <div className="jr-two">
-          <div className="jr-box">
-            <h3>Fictief rendement</h3>
-            <table className="jr-calc"><tbody>
-              <tr><td>Banktegoeden {jrMoney(f.bank)} × {pctFmt(R.bank)}</td><td className="n">{jrMoney(f.fictBank)}</td></tr>
-              <tr><td>Overige bezittingen {jrMoney(f.other)} × {pctFmt(R.overig)}</td><td className="n">{jrMoney(f.fictOther)}</td></tr>
-              <tr><td>Schulden</td><td className="n">{jrMoney(0)}</td></tr>
-              <tr className="tot"><td>Totaal fictief rendement</td><td className="n">{jrMoney(f.fictief)}</td></tr>
-              <tr><td>Effectief rendementspercentage</td><td className="n">{(f.eff * 100).toFixed(2).replace('.', ',')}%</td></tr>
-            </tbody></table>
-          </div>
-          <div className="jr-box">
-            <h3>Voordeel uit sparen en beleggen</h3>
-            <table className="jr-calc"><tbody>
-              <tr><td>Rendementsgrondslag</td><td className="n">{jrMoney(f.grondslag)}</td></tr>
-              <tr><td>Heffingsvrij vermogen{cfg.partner ? ' (2 personen)' : ''}</td><td className="n">−{jrMoney(f.hvv)}</td></tr>
-              <tr><td>Grondslag sparen en beleggen</td><td className="n">{jrMoney(f.grondslagSB)}</td></tr>
-              <tr className="tot"><td>Voordeel ({(f.eff * 100).toFixed(2).replace('.', ',')}%)</td><td className="n">{jrMoney(f.voordeel)}</td></tr>
-              <tr><td>Belasting box 3 ({R.tarief}%)</td><td className="n"><b>{jrMoney(f.tax)}</b></td></tr>
-            </tbody></table>
-          </div>
-        </div>
-        <p className="jr-fine" style={{ marginTop: 6 }}>Percentages {R.year}: banktegoeden {pctFmt(R.bank)}, overige bezittingen {pctFmt(R.overig)}, schulden {pctFmt(R.schuld)}; heffingsvrij vermogen {jrMoney(R.hvv)} per persoon; tarief {R.tarief}% ({R.status}).
-          {cfg.partner ? ' Bij fiscale partners mag de grondslag naar keuze worden verdeeld; hier is het heffingsvrij vermogen van beide partners toegepast.' : ''}</p>
+        <h3><span className="jr-num">1.2</span>Vermogensontwikkeling {Y}</h3>
+        <div className="jr-block"><JrLedger rows={[
+          { k: 'sum', l: `Vermogen op ${peil}`, b: M(startExact) },
+          { l: 'Netto ingelegd', note: 'stortingen en aankopen min opnames en verkopen', b: S(T.flow) },
+          { k: 'head', l: `Resultaat ${Y}`, b: jrSigned(T.result) },
+          { k: 'sub', lvl: 1, l: 'Koers- en waardeverandering', a: S(koers) },
+          { k: 'sub', lvl: 1, l: 'Ontvangen dividend en rente', a: S(T.income) },
+          { k: 'sub', lvl: 1, l: 'Betaalde kosten', a: T.costs > 0.005 ? fmtMoney(-T.costs, { decimals: 2 }) : M(0) },
+          { k: 'total', l: rep.open ? `Vermogen op ${fmtDateLong(rep.endIso)}` : `Vermogen op 31 december ${Y}`, b: M(T.end) },
+        ]} /></div>
+      </section>
+
+      {/* ---------------- Deel 2 ---------------- */}
+      <header className="jr-part">
+        <span className="jr-part__no">Deel 2</span><h2>Belasting box 3</h2>
+        <p>Eerst de opgave en de forfaitaire berekening zoals de Belastingdienst die toepast, daarna het werkelijk rendement voor een eventueel beroep op de tegenbewijsregeling.</p>
+      </header>
+
+      <section className="jr-sec">
+        <h3><span className="jr-num">2.1</span>Opgave in de aangifte — {peil}</h3>
+        <p className="jr-intro">In te vullen onder <i>Bankrekeningen en andere bezittingen</i>. Bedragen in hele euro's, naar beneden afgerond.</p>
+        <div className="jr-block"><JrLedger rows={[
+          ...rep.byCat.flatMap(c => [
+            { k: 'head', l: c.label, note: c.rows.length ? null : 'geen', b: M(c.start) },
+            ...c.rows.map(r => ({ k: 'sub', lvl: 1, l: <LL r={r} />, a: M(jrDown(r.start)) })),
+          ]),
+          { k: 'head', l: 'Schulden', note: 'niet opgenomen', b: M(0) },
+          { k: 'total', l: 'Rendementsgrondslag', b: M(f.grondslag) },
+        ]} /></div>
       </section>
 
       <section className="jr-sec">
-        <H>Werkelijk rendement {rep.open ? `(${Y}, tot ${fmtDateLong(rep.endIso)})` : Y} — tegenbewijsregeling</H>
-        <p className="jr-muted">Werkelijk rendement = eindwaarde − beginwaarde − stortingen + onttrekkingen. Directe opbrengsten (dividend, rente) die op de rekening zijn bijgeschreven zitten al in de eindwaarde. Kosten zijn niet aftrekbaar en worden daarom teruggeteld.</p>
-        <div className="jr-twrap"><table className="jr-t jr-t--wide">
-          <thead><tr><th>Bezitting</th><th className="n">Begin</th><th className="n">Netto gestort</th><th className="n">Eind</th><th className="n">Resultaat</th><th className="n">Kosten¹</th><th className="n">Werkelijk rendement</th><th className="n">Dividend / rente²</th></tr></thead>
-          <tbody>{rep.inc.map(r => (
-            <tr key={r.id}><td>{r.name}{r.src.flow === 'handmatig' ? <span className="sm">stortingen handmatig</span> : null}</td>
-              <td className="n">{jrMoney(r.start)}</td><td className="n">{r.flow == null ? '—' : fmtMoney(r.flow, { sign: true })}</td><td className="n">{jrMoney(r.end)}</td>
-              <td className="n">{jrSigned(r.result)}</td><td className="n">{r.costs > 0.005 ? jrMoney(r.costs, { decimals: 2 }) : '—'}</td>
-              <td className="n"><b>{jrSigned(r.fiscal)}</b></td><td className="n">{r.income > 0.005 ? jrMoney(r.income, { decimals: 2 }) : '—'}</td></tr>))}
-          </tbody>
-          <tfoot><tr><td>Totaal</td><td className="n">{jrMoney(rep.totals.start)}</td><td className="n">{fmtMoney(rep.totals.flow, { sign: true })}</td><td className="n">{jrMoney(rep.totals.end)}</td>
-            <td className="n">{jrSigned(rep.totals.result)}</td><td className="n">{jrMoney(rep.totals.costs, { decimals: 2 })}</td><td className="n">{w.unknown ? '—' : jrSigned(w.total)}</td><td className="n">{jrMoney(rep.totals.income, { decimals: 2 })}</td></tr></tfoot>
-        </table></div>
-        <p className="jr-fine" style={{ marginTop: 4 }}>¹ Niet aftrekbaar; teruggeteld in het werkelijk rendement. ² Ter informatie; al begrepen in de eindwaarde.</p>
-        <div className="jr-callout">
-          {w.unknown ? <>Het werkelijk rendement is niet volledig: vul de ontbrekende bedragen handmatig in.</> : <>
-            Belasting over het werkelijk rendement (indicatie): <b>{jrMoney(w.tax)}</b> ({R.tarief}% van {jrMoney(Math.max(0, w.total))}) tegenover <b>{jrMoney(f.tax)}</b> forfaitair.{' '}
-            {rep.open ? 'Het jaar is nog niet afgesloten; de vergelijking is pas definitief na 31 december.'
-              : w.gunstig ? 'Het werkelijk rendement is lager dan het forfaitaire voordeel: een beroep op de tegenbewijsregeling lijkt gunstig.'
-                : 'Het werkelijk rendement is niet lager dan het forfaitaire voordeel: de tegenbewijsregeling levert waarschijnlijk geen voordeel op.'}
-            {' '}Een negatief werkelijk rendement wordt op nihil gesteld en is niet verrekenbaar.</>}
-        </div>
+        <h3><span className="jr-num">2.2</span>Forfaitaire berekening</h3>
+        <p className="jr-intro">Belastingjaar {Y}: banktegoeden {jrPct(R.bank)}, overige bezittingen {jrPct(R.overig)}, schulden {jrPct(R.schuld)} ({R.status}).</p>
+        <div className="jr-block"><JrLedger rows={[
+          { k: 'head', l: 'Fictief rendement' },
+          { k: 'sub', lvl: 1, l: 'Banktegoeden', note: `${M(f.bank)} × ${jrPct(R.bank)}`, a: M(f.fictBank) },
+          { k: 'sub', lvl: 1, l: 'Overige bezittingen', note: `${M(f.other)} × ${jrPct(R.overig)}`, a: M(f.fictOther) },
+          { k: 'sub', lvl: 1, l: 'Schulden', note: `${M(0)} × ${jrPct(R.schuld)}`, a: M(0) },
+          { k: 'sum', lvl: 1, l: 'Totaal fictief rendement', a: M(f.fictief), ra: true },
+          { k: 'muted', lvl: 1, l: 'Effectief rendementspercentage', note: `${M(f.fictief)} / ${M(f.grondslag)}`, a: jrPct(f.eff * 100) },
+          { k: 'head', l: 'Grondslag sparen en beleggen' },
+          { k: 'sub', lvl: 1, l: 'Rendementsgrondslag', a: M(f.grondslag) },
+          { k: 'sub', lvl: 1, l: 'Heffingsvrij vermogen', note: cfg.partner ? `2 × ${M(R.hvv)}` : null, a: minus(f.hvv) },
+          { k: 'sum', lvl: 1, l: 'Grondslag sparen en beleggen', a: M(f.grondslagSB), ra: true },
+          { l: 'Voordeel uit sparen en beleggen', note: `${M(f.grondslagSB)} × ${jrPct(f.eff * 100)}`, b: M(f.voordeel) },
+          { k: 'total', l: `Belasting box 3 (${R.tarief}%)`, b: M(f.tax) },
+        ]} /></div>
+        {cfg.partner && <p className="jr-fine" style={{ margin: '6px 0 0 32px' }}>Fiscale partners mogen de grondslag naar keuze verdelen; hier is het heffingsvrij vermogen van beiden toegepast.</p>}
       </section>
 
-      {cfg.appendix && (
+      <section className="jr-sec">
+        <h3><span className="jr-num">2.3</span>Werkelijk rendement {rep.open ? `(tot ${fmtDateLong(rep.endIso)})` : Y}</h3>
+        <p className="jr-intro">Tegenbewijsregeling: eindwaarde − beginwaarde − netto ingelegd. Kosten zijn niet aftrekbaar en worden teruggeteld; dividend en rente zitten al in de eindwaarde.</p>
+        <div className="jr-block"><JrLedger rows={[
+          { k: 'head', l: 'Resultaat per bezitting' },
+          ...rep.inc.map(r => ({ k: 'sub', lvl: 1, l: <LL r={r} />, note: r.costs > 0.005 ? `incl. ${fmtMoney(r.costs, { decimals: 2 })} kosten` : null, a: r.fiscal == null ? '—' : S(r.fiscal) })),
+          { k: 'sum', lvl: 1, l: 'Totaal', a: w.unknown ? '—' : S(w.total), ra: true },
+          { k: 'head', l: 'Opbouw' },
+          { k: 'sub', lvl: 1, l: rep.open ? 'Vermogen nu' : `Vermogen 31 december ${Y}`, a: M(T.end) },
+          { k: 'sub', lvl: 1, l: `Af: vermogen ${peil}`, a: minus(startExact) },
+          { k: 'sub', lvl: 1, l: 'Af: netto ingelegd', a: S(-T.flow) },
+          { k: 'sum', lvl: 1, l: 'Resultaat', a: S(T.result), ra: true },
+          { k: 'sub', lvl: 1, l: 'Bij: niet-aftrekbare kosten', a: T.costs > 0.005 ? fmtMoney(T.costs, { sign: true, decimals: 2 }) : M(0) },
+          { k: 'sum', lvl: 1, l: 'Werkelijk rendement', a: w.unknown ? '—' : S(w.total), ra: true },
+          { l: 'Belastbaar werkelijk rendement', note: w.total < 0 ? 'negatief wordt op nihil gesteld' : null, b: w.unknown ? '—' : M(Math.max(0, w.total)) },
+          { k: 'total', l: `Belasting box 3 (${R.tarief}%)`, b: w.unknown ? '—' : M(w.tax) },
+        ]} /></div>
+      </section>
+
+      <section className="jr-sec">
+        <h3><span className="jr-num">2.4</span>Vergelijking</h3>
+        <div className="jr-cmp">
+          <div className={better === 'f' ? 'is-best' : undefined}><div className="jr-lbl">Forfaitair</div><div className="jr-cmp__v">{M(f.tax)}</div><div className="jr-cmp__s">over een voordeel van {M(f.voordeel)}</div></div>
+          <div className={better === 'w' ? 'is-best' : undefined}><div className="jr-lbl">Werkelijk rendement</div><div className="jr-cmp__v">{w.unknown ? '—' : M(w.tax)}</div><div className="jr-cmp__s">{w.unknown ? 'onvolledig — vul ontbrekende bedragen in' : `over een rendement van ${M(Math.max(0, w.total))}`}</div></div>
+        </div>
+        <p className="jr-concl">{w.unknown ? 'Het werkelijk rendement is nog niet volledig; vergelijken is pas mogelijk als alle bedragen bekend zijn.'
+          : rep.open ? `Het jaar loopt nog; de vergelijking is pas definitief na 31 december ${Y}.`
+            : better === 'w' ? 'Het werkelijk rendement leidt tot minder belasting: een beroep op de tegenbewijsregeling lijkt gunstig.'
+              : 'Het werkelijk rendement is niet lager dan het forfaitaire voordeel: de tegenbewijsregeling levert waarschijnlijk geen voordeel op.'}</p>
+      </section>
+
+      <section className="jr-sec">
+        <h3><span className="jr-num">2.5</span>Toelichting</h3>
+        <ul className="jr-fine jr-notes">
+          <li>Waarde op de peildatum is de waarde in het economische verkeer aan het begin van 1 januari {Y} (slotwaarde 31 december {Y - 1}), op basis van beurskoersen, NAV van fondsen en crypto- en edelmetaalkoersen in euro.</li>
+          <li>Netto ingelegd is stortingen en aankopen min opnames en verkopen binnen het jaar. Overboekingen tussen eigen bezittingen vallen in het totaal tegen elkaar weg.</li>
+          <li>Bedragen met <i>handmatig aangepast</i> zijn overgenomen uit jaaroverzichten van de aanbieder en gaan voor op de berekende waarde.</li>
+          <li>Pensioenvermogen, de eigen woning en box 2-belangen zijn niet opgenomen. Heffingsvrij vermogen {Y}: {M(R.hvv)} per persoon.</li>
+          <li>Dit overzicht is een hulpmiddel bij de aangifte en geen fiscaal advies. Controleer de bedragen met de jaaroverzichten van banken en aanbieders en bewaar die minimaal 7 jaar.</li>
+        </ul>
+        {allWarns.length > 0 && <ul className="jr-warns">{allWarns.map((x, i) => <li key={i}><b>{x.r.name}:</b> {x.w}</li>)}</ul>}
+      </section>
+
+      <div className="jr-sign"><div>Datum</div><div>Handtekening{cfg.name ? ` — ${cfg.name}` : ''}</div></div>
+
+      {cfg.appendix && (<>
+        <header className="jr-part jr-part--break">
+          <span className="jr-part__no">Bijlage</span><h2>Mutaties in {Y}</h2>
+          <p>Alle boekingen van de opgenomen bezittingen, in datumvolgorde.</p>
+        </header>
         <section className="jr-sec">
-          <H>Mutaties in {Y}</H>
           {rep.inc.some(r => r.txs.length) ? (
             <div className="jr-twrap"><table className="jr-t">
               <thead><tr><th>Datum</th><th>Bezitting</th><th>Soort</th><th>Omschrijving</th><th className="n">Bedrag</th></tr></thead>
               <tbody>{rep.inc.flatMap(r => r.txs.map(t => ({ r, t }))).sort((a, b) => a.t.date.localeCompare(b.t.date)).map(({ r, t }) => {
                 const amt = t.type === 'waardering' ? (t.valueEur != null ? +t.valueEur : null) : t.type === 'overboeking' ? null : txGross(t);
                 const desc = [t.instrument, t.quantity ? fmtQty(+t.quantity) + (t.unitPriceEur ? ` × ${fmtMoney(+t.unitPriceEur, { decimals: 2 })}` : '') : null, t.feeEur ? `kosten ${fmtMoney(+t.feeEur, { decimals: 2 })}` : null].filter(Boolean).join(' · ');
-                return (<tr key={r.id + t.id}><td style={{ whiteSpace: 'nowrap' }}>{fmtDateLong(t.date)}</td><td>{r.name}</td><td>{r.typeLabel[t.type] || t.type}</td><td className="muted">{desc}</td>
+                return (<tr key={r.id + t.id}><td style={{ whiteSpace: 'nowrap' }}>{fmtDateLong(t.date)}</td><td><LL r={r} /></td><td>{r.typeLabel[t.type] || t.type}</td><td className="jr-muted">{desc}</td>
                   <td className="n">{amt == null ? '—' : fmtMoney(amt, { decimals: 2 })}</td></tr>);
               })}</tbody>
             </table></div>
           ) : <p className="jr-muted">Geen mutaties in {Y}.</p>}
         </section>
-      )}
-
-      <section className="jr-sec">
-        <H>Toelichting en grondslagen</H>
-        <ul className="jr-fine" style={{ paddingLeft: 16, margin: 0 }}>
-          <li>Waarde op de peildatum = waarde in het economische verkeer bij het begin van 1 januari {Y} (slotwaarde 31 december {Y - 1}), op basis van de koersen in de eigen administratie (beurskoersen, NAV van fondsen, crypto- en edelmetaalkoersen in EUR).</li>
-          <li>Crypto is gewaardeerd tegen de koers op de peildatum; gebruik bij twijfel de koers van het platform waar de crypto wordt aangehouden.</li>
-          <li>Netto gestort = stortingen en aankopen min onttrekkingen en verkopen binnen het jaar; overboekingen tussen eigen bezittingen vallen in het totaal tegen elkaar weg.</li>
-          <li>Bedragen met de vermelding <i>handmatig aangepast</i> zijn overgenomen uit jaaroverzichten van de aanbieder en gaan voor op de berekende waarde.</li>
-          <li>Pensioenvermogen, de eigen woning en eventuele box 2-belangen zijn niet in dit overzicht opgenomen.</li>
-          <li>Dit overzicht is een hulpmiddel bij de aangifte en geen fiscaal advies. Controleer de bedragen met de jaaroverzichten van banken en aanbieders en bewaar die stukken minimaal 7 jaar (fiscale bewaarplicht).</li>
-        </ul>
-        {allWarns.length > 0 && <ul className="jr-warns">{allWarns.map((x, i) => <li key={i}>{x}</li>)}</ul>}
-      </section>
-
-      <div className="jr-sign"><div>Datum</div><div>Handtekening{cfg.name ? ` — ${cfg.name}` : ''}</div></div>
-      <footer className="jr-foot"><span>Vermogensoverzicht box 3 · {Y}</span><span>Opgesteld met Investeringen op {made}</span></footer>
+      </>)}
+      <footer className="jr-foot"><span>Vermogensoverzicht {Y}</span><span>Opgesteld op {made}</span></footer>
     </article>
   );
 }
@@ -491,7 +594,7 @@ function JaaroverzichtView({ app }) {
                   <div key={r.id} className={'jr-asset' + (r.incl ? '' : ' is-off')} data-testid={`jr-asset-${r.id}`}>
                     <div className="jr-asset__head">
                       <input type="checkbox" className="jr-asset__check" checked={r.incl} aria-label={`${r.name} opnemen`} onChange={e => setAsset(r.id, { incl: e.target.checked })} />
-                      <span className="jr-asset__name">{r.name}</span>
+                      <JrLogo party={r.party} small /><span className="jr-asset__name">{r.name}</span>
                       <span className="jr-asset__val">{r.start == null ? '—' : fmtMoney(r.start)}</span>
                     </div>
                     {r.incl && (
