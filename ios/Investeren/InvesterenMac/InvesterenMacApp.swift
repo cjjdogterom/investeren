@@ -23,6 +23,8 @@ struct InvesterenMacApp: App {
                 Button("Vernieuw") { model.reload() }.keyboardShortcut("r")
                 Button("Vernieuw zonder cache") { model.reload(hard: true) }.keyboardShortcut("r", modifiers: [.command, .shift])
                 Divider()
+                Button("Druk af…") { model.printPage(title: nil) }.keyboardShortcut("p")
+                Divider()
                 Button("Ware grootte") { model.zoom(to: 1) }.keyboardShortcut("0")
                 Button("Zoom in") { model.zoom(by: 0.1) }.keyboardShortcut("+")
                 Button("Zoom uit") { model.zoom(by: -0.1) }.keyboardShortcut("-")
@@ -79,6 +81,14 @@ struct OfflineView: View {
     }
 }
 
+final class PrintBridge: NSObject, WKScriptMessageHandler {
+    weak var model: WebModel?
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        let title = (message.body as? [String: Any])?["title"] as? String
+        DispatchQueue.main.async { self.model?.printPage(title: title) }
+    }
+}
+
 struct WebContainer: NSViewRepresentable {
     let webView: WKWebView
     func makeNSView(context: Context) -> WKWebView { webView }
@@ -95,8 +105,11 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()          // persistent localStorage / IndexedDB
         config.preferences.isElementFullscreenEnabled = true
+        let bridge = PrintBridge()
+        config.userContentController.add(bridge, name: "investerenPrint")   // jaaroverzicht → PDF
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
+        bridge.model = self
         webView.underPageBackgroundColor = NSColor(named: "Background")
         webView.setValue(false, forKey: "drawsBackground")
         webView.allowsBackForwardNavigationGestures = true
@@ -120,6 +133,24 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         } else {
             webView.reload()
         }
+    }
+
+    /// Printvenster van macOS (met 'Bewaar als PDF'); marges komen uit de @page-regels van de pagina.
+    func printPage(title: String?) {
+        guard let window = webView.window else { return }
+        let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        info.paperSize = NSSize(width: 595.28, height: 841.89)   // A4
+        info.topMargin = 0; info.bottomMargin = 0; info.leftMargin = 0; info.rightMargin = 0
+        info.horizontalPagination = .automatic
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        let op = webView.printOperation(with: info)
+        op.jobTitle = title ?? "Investeren"
+        op.showsPrintPanel = true
+        op.showsProgressPanel = true
+        op.view?.frame = webView.bounds
+        op.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
     }
 
     func zoom(to value: CGFloat) { webView.pageZoom = value }

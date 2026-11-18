@@ -49,6 +49,14 @@ struct OfflineView: View {
     }
 }
 
+final class PrintBridge: NSObject, WKScriptMessageHandler {
+    weak var model: WebModel?
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        let title = (message.body as? [String: Any])?["title"] as? String
+        DispatchQueue.main.async { self.model?.printPage(title: title) }
+    }
+}
+
 struct WebContainer: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
@@ -65,8 +73,11 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()          // persistent localStorage / IndexedDB
         config.allowsInlineMediaPlayback = true
+        let bridge = PrintBridge()
+        config.userContentController.add(bridge, name: "investerenPrint")   // jaaroverzicht → PDF
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
+        bridge.model = self
         let bg = UIColor(named: "Background")
         webView.isOpaque = false
         webView.backgroundColor = bg
@@ -95,6 +106,19 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         } else {
             webView.reload()
         }
+    }
+
+    /// iOS-printvenster; via Deel → Bewaar in Bestanden ontstaat een PDF. Marges komen uit de @page-regels.
+    func printPage(title: String?) {
+        let formatter = webView.viewPrintFormatter()
+        formatter.perPageContentInsets = .zero
+        let info = UIPrintInfo(dictionary: nil)
+        info.outputType = .general
+        info.jobName = title ?? "Investeren"
+        let pc = UIPrintInteractionController.shared
+        pc.printInfo = info
+        pc.printFormatter = formatter
+        pc.present(animated: true)
     }
 
     private func isInternal(_ url: URL) -> Bool {

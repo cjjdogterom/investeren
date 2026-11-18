@@ -404,11 +404,13 @@ function AlVerdelingView({ app }) {
 }
 
 function PlanScreen({ app }) {
-  const tab = (app.route && app.route.params && app.route.params.tab) === 'pensioen' ? 'pensioen' : 'verdeling';
+  const rt = app.route && app.route.params && app.route.params.tab;
+  const tab = rt === 'pensioen' || rt === 'jaaroverzicht' ? rt : 'verdeling';
   const go = v => app.navigate('/plan/' + v);
   const tabs = [
     { value: 'verdeling', label: 'Verdeling', testId: 'plan-tab-verdeling' },
     { value: 'pensioen', label: 'Pensioen', testId: 'plan-tab-pensioen' },
+    { value: 'jaaroverzicht', label: 'Jaaroverzicht', testId: 'plan-tab-jaaroverzicht' },
   ];
   return (
     <div className="al-page">
@@ -422,7 +424,9 @@ function PlanScreen({ app }) {
       )}
       {tab === 'pensioen'
         ? (window.PensioenView ? <PensioenView app={app} /> : null)
-        : <AlVerdelingView app={app} />}
+        : tab === 'jaaroverzicht'
+          ? (window.JaaroverzichtView ? <JaaroverzichtView app={app} /> : null)
+          : <AlVerdelingView app={app} />}
     </div>
   );
 }
