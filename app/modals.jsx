@@ -26,6 +26,9 @@ injectStyles('modals', `
 .md-addlink { background: none; border: 0; padding: 0; color: var(--fg-muted); font: 500 13px var(--font); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .md-addlink:hover { color: var(--fg); }
 .md-foot { display: flex; align-items: center; gap: 8px; width: 100%; }
+.md-cfd { display: flex; flex-direction: column; gap: 14px; }
+.md-cfd__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.md-cfd .md-foot { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0 2px; }
 .md-foot__reason { flex: 1; font-size: 12.5px; color: var(--fg-subtle); min-width: 0; }
 .md-dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 0; font-size: 14px; }
 .md-dl dt { color: var(--fg-muted); }
@@ -196,6 +199,122 @@ function MdStockPicker({ id, value, name, recent, onPick, error }) {
         </div>
       )}
       {value && <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Houd {value}</Button>}
+    </div>
+  );
+}
+
+// CFD openen/sluiten op de CFD-rekening (Trading 212 CFD): hefboom → margin, cash = accountwaarde − margin.
+const MD_CFD_LEVERAGE = [[50, '1:2 · 50%'], [20, '1:5 · 20%'], [10, '1:10 · 10%'], [5, '1:20 · 5%'], [3.33, '1:30 · 3,33%']];
+function MdCfdTrade({ app, party, type, onDone }) {
+  const ticks = useCfdTicks();
+  const quotes = app.stockQuotes || {};
+  const cfd = cfdNormalize(party.cfd) || { accountValue: 0, cash: 0, margin: 0, health: null, positions: [], trades: [] };
+  const live = cfdLive(cfd, quotes, ticks) || cfd;
+  const open = type === 'koop';
+  const [f, setF] = useState(() => ({ date: todayIsoLocal(), symbol: '', name: '', dir: 'buy', quantity: '', price: '', currency: 'USD', rate: '20', fee: '',
+    positionId: (cfd.positions[0] || {}).id || '', realized: '', note: '' }));
+  const set = patch => setF(x => ({ ...x, ...patch }));
+  const [q, setQ] = useState(null);
+  const sym = open ? f.symbol : ((live.positions.find(x => x.id === f.positionId) || {}).symbol || '');
+  useEffect(() => {
+    if (!sym) { setQ(null); return undefined; }
+    let alive = true;
+    fetch(`${STOCK_API_URL}/koers?s=${encodeURIComponent(sym)}&range=5d`).then(r => r.json())
+      .then(j => { const qq = j && j.quotes && j.quotes[sym]; if (alive && qq) { setQ(qq); if (open) setF(x => ({ ...x, currency: String(qq.currency || x.currency).toUpperCase(), name: x.name || qq.name })); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [sym]); // eslint-disable-line
+  const tk = sym ? ticks[sym] : null;
+  const livePx = tk && tk.price > 0 ? tk.price : (q && q.price) || null;
+  const ccy = open ? f.currency : ((live.positions.find(x => x.id === f.positionId) || {}).currency || 'USD');
+  const fx = ccy === 'EUR' ? 1 : (ticks[`EUR${ccy}=X`] && ticks[`EUR${ccy}=X`].price > 0 ? 1 / ticks[`EUR${ccy}=X`].price : (q && q.price > 0 && q.priceEur > 0 ? q.priceEur / q.price : null));
+  const num = v => cfdNum(v);
+  const qty = num(f.quantity), price = num(f.price) != null ? num(f.price) : livePx, rate = num(f.rate), fee = num(f.fee) || 0;
+  const pmFmt = v => (v == null ? '—' : fmtMoney(v, { decimals: 2 }));
+  const pxFmt = v => (v == null ? '—' : `${ccy === 'USD' ? '$' : ccy === 'EUR' ? '€' : ccy === 'GBP' ? '£' : ''}${new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v)}${['USD', 'EUR', 'GBP'].includes(ccy) ? '' : ' ' + ccy}`);
+
+  // Sluiten: gekozen positie (live), standaard alles, gerealiseerd resultaat volgt uit de sluitkoers.
+  const pos = !open ? live.positions.find(x => x.id === f.positionId) || null : null;
+  const cQty = !open ? (qty != null ? qty : pos && pos.quantity) : null;
+  const autoRealized = pos && cQty > 0 && price != null && fx != null && pos.pnl != null && pos.currentPrice != null
+    ? (pos.pnl * cQty / pos.quantity) + cQty * (pos.dir === 'sell' ? -1 : 1) * (price - pos.currentPrice) * fx : null;
+  const realized = num(f.realized) != null ? num(f.realized) : autoRealized;
+
+  const notional = open && qty > 0 && price > 0 && fx ? qty * price * fx : null;
+  const req = notional != null && rate > 0 ? notional * rate / 100 : null;
+  const valid = open
+    ? !!(f.symbol && qty > 0 && price > 0 && fx && rate > 0 && /^\d{4}-\d{2}-\d{2}$/.test(f.date))
+    : !!(pos && cQty > 0 && cQty <= pos.quantity + 1e-9 && price > 0 && realized != null && Number.isFinite(realized));
+  const short = open && req != null && live.cash != null && req + fee > live.cash + 0.005;
+  const canSubmit = valid && !short;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    const r = open
+      ? cfdOpenTrade(cfd, quotes, ticks, { date: f.date, symbol: f.symbol, name: f.name || f.symbol, dir: f.dir, quantity: qty, price, currency: ccy, fx, marginRate: rate, fee })
+      : cfdCloseTrade(cfd, quotes, ticks, { date: f.date, positionId: pos.id, quantity: cQty, price, fx, realized, fee });
+    if (!r) return;
+    if (f.note.trim()) r.cfd.trades[r.cfd.trades.length - 1].note = f.note.trim();
+    app.saveParty({ ...party, cfd: r.cfd });
+    const same = ((app.state && app.state.transactions) || []).find(t => t.party === party.id && t.type === 'waardering' && t.date === f.date);
+    app.saveTx({ ...(same || { id: makeId(), party: party.id, type: 'waardering', date: f.date }), valueEur: +r.cfd.accountValue.toFixed(2),
+      note: open ? `CFD geopend: ${f.dir === 'sell' ? 'short' : 'long'} ${f.quantity} ${f.symbol} à ${pxFmt(price)} (${rate}% margin)` : `CFD gesloten: ${cQty} ${pos.symbol} à ${pxFmt(price)}, resultaat ${fmtMoney(realized, { sign: true, decimals: 2 })}` });
+    onDone && onDone();
+  };
+
+  return (
+    <div className="md-cfd" data-testid="cfd-trade">
+      <div className="md-live">CFD-rekening nu: accountwaarde <b className="num">{pmFmt(live.accountValue)}</b> · cash <b className="num">{pmFmt(live.cash)}</b> · margin <b className="num">{pmFmt(live.margin)}</b></div>
+      <Field label="Datum" htmlFor="md-cfd-date"><Input id="md-cfd-date" type="date" value={f.date} onChange={e => set({ date: e.target.value })} /></Field>
+      {open ? (<>
+        <Field label="Product" htmlFor="md-cfd-sym">
+          <MdStockPicker id="md-cfd-sym" value={f.symbol} name={f.name} recent={[]} onPick={it => set({ symbol: it.symbol, name: it.name || it.symbol, price: '' })} />
+        </Field>
+        <Field label="Richting">
+          <Segmented ariaLabel="Richting" full value={f.dir} onChange={v => set({ dir: v })} options={[{ value: 'buy', label: 'Long (buy)' }, { value: 'sell', label: 'Short (sell)' }]} />
+        </Field>
+        <div className="md-cfd__grid">
+          <Field label="Aantal" htmlFor="md-cfd-qty"><Input id="md-cfd-qty" inputMode="decimal" value={f.quantity} placeholder="9,9602" onChange={e => set({ quantity: e.target.value })} /></Field>
+          <Field label={`Openingskoers (${ccy})`} htmlFor="md-cfd-px" hint={livePx ? `Nu ${pxFmt(livePx)}` : null}>
+            <Input id="md-cfd-px" inputMode="decimal" value={f.price} placeholder={livePx ? String(livePx).replace('.', ',') : ''} onChange={e => set({ price: e.target.value })} /></Field>
+          <Field label="Hefboom / margin" htmlFor="md-cfd-rate">
+            <Select id="md-cfd-rate" value={MD_CFD_LEVERAGE.some(([v]) => String(v) === f.rate) ? f.rate : 'eigen'} onChange={e => set({ rate: e.target.value === 'eigen' ? '' : e.target.value })}>
+              {MD_CFD_LEVERAGE.map(([v, l]) => <option key={v} value={String(v)}>{l}</option>)}
+              <option value="eigen">Eigen percentage…</option>
+            </Select></Field>
+          {!MD_CFD_LEVERAGE.some(([v]) => String(v) === f.rate) && (
+            <Field label="Margin (%)" htmlFor="md-cfd-rate2"><Input id="md-cfd-rate2" inputMode="decimal" value={f.rate} placeholder="20" onChange={e => set({ rate: e.target.value })} /></Field>)}
+          <Field label="Kosten (€, optioneel)" htmlFor="md-cfd-fee"><Input id="md-cfd-fee" inputMode="decimal" value={f.fee} placeholder="0" onChange={e => set({ fee: e.target.value })} /></Field>
+        </div>
+        <div className="md-live" aria-live="polite">
+          Positiewaarde <b className="num">{pmFmt(notional)}</b> · benodigde margin <b className="num">{pmFmt(req)}</b>
+          {req != null && live.cash != null && <> · cash daarna <b className="num" style={short ? { color: 'var(--negative)' } : undefined}>{pmFmt(live.cash - req - fee)}</b></>}
+          {fx && ccy !== 'EUR' ? <> · koers {ccy}→EUR {new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 4 }).format(fx)}</> : null}
+          {short && <div style={{ color: 'var(--negative)', marginTop: 4 }}>Niet genoeg cash voor deze margin. Boek eerst een inleg op Trading 212 CFD of kies minder stuks of een hogere hefboom.</div>}
+        </div>
+      </>) : (<>
+        {live.positions.length ? (
+          <Field label="Positie" htmlFor="md-cfd-pos">
+            <Select id="md-cfd-pos" value={f.positionId} onChange={e => set({ positionId: e.target.value, quantity: '', price: '', realized: '' })}>
+              {live.positions.map(x => <option key={x.id} value={x.id}>{x.name} · {x.dir === 'sell' ? 'short' : 'long'} · {x.quantity} st.</option>)}
+            </Select></Field>
+        ) : <div className="md-note"><Icon name="info" size={14} />Er staan geen open CFD-posities.</div>}
+        {pos && (<>
+          <div className="md-cfd__grid">
+            <Field label="Aantal sluiten" htmlFor="md-cfd-cqty" hint={`Open: ${pos.quantity}`}><Input id="md-cfd-cqty" inputMode="decimal" value={f.quantity} placeholder={String(pos.quantity).replace('.', ',')} onChange={e => set({ quantity: e.target.value })} /></Field>
+            <Field label={`Sluitkoers (${ccy})`} htmlFor="md-cfd-cpx" hint={livePx ? `Nu ${pxFmt(livePx)}` : null}><Input id="md-cfd-cpx" inputMode="decimal" value={f.price} placeholder={livePx ? String(livePx).replace('.', ',') : ''} onChange={e => set({ price: e.target.value })} /></Field>
+            <Field label="Resultaat (€)" htmlFor="md-cfd-real" hint="Neem het bedrag uit Trading 212 over als het afwijkt"><Input id="md-cfd-real" inputMode="decimal" value={f.realized} placeholder={autoRealized != null ? autoRealized.toFixed(2).replace('.', ',') : ''} onChange={e => set({ realized: e.target.value })} /></Field>
+            <Field label="Kosten (€, optioneel)" htmlFor="md-cfd-cfee"><Input id="md-cfd-cfee" inputMode="decimal" value={f.fee} placeholder="0" onChange={e => set({ fee: e.target.value })} /></Field>
+          </div>
+          <div className="md-live" aria-live="polite">Geopend op {pxFmt(pos.openPrice)} · resultaat <b className="num" style={{ color: realized < 0 ? 'var(--negative)' : realized > 0 ? 'var(--positive)' : undefined }}>{realized == null ? '—' : fmtMoney(realized, { sign: true, decimals: 2 })}</b> · de margin van dit deel komt vrij als cash</div>
+        </>)}
+      </>)}
+      <Field label="Notitie (optioneel)" htmlFor="md-cfd-note"><Textarea id="md-cfd-note" rows={2} value={f.note} onChange={e => set({ note: e.target.value })} /></Field>
+      <div className="md-foot">
+        <span className="md-foot__reason" />
+        <Button variant="ghost" onClick={onDone}>Annuleren</Button>
+        <Button variant="primary" disabled={!canSubmit} onClick={submit} data-testid="cfd-trade-submit">{open ? 'Positie openen' : 'Positie sluiten'}</Button>
+      </div>
     </div>
   );
 }
@@ -440,6 +559,19 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     if (showOptAmount) { const oa = parseNlNumber(form.optAmount) || 0; if (oa > 0) tx.amountEur = oa; }
     if (feeEur > 0) tx.feeEur = +feeEur.toFixed(4);
     app.saveTx(tx);
+    // CFD-rekening: een storting/opname verandert direct cash en accountwaarde van de stand.
+    if (!isEdit && party && party.cfd && (tx.type === 'inleg' || tx.type === 'opname') && +tx.amountEur > 0) {
+      const sign = tx.type === 'inleg' ? 1 : -1;
+      const b = cfdBake(cfdNormalize(party.cfd), app.stockQuotes || {}, cfdTickStore.ticks, tx.date);
+      const acc0 = b.accountValue, m0 = b.margin;
+      b.accountValue = (b.accountValue || 0) + sign * +tx.amountEur - (+tx.feeEur || 0);
+      b.cash = b.accountValue - (b.margin || 0);
+      cfdRehealth(b, acc0, m0);
+      b.trades.push({ date: tx.date, action: tx.type, amount: +tx.amountEur });
+      app.saveParty({ ...party, cfd: b });
+      const same = ((app.state && app.state.transactions) || []).find(t => t.party === party.id && t.type === 'waardering' && t.date === tx.date);
+      app.saveTx({ ...(same || { id: makeId(), party: party.id, type: 'waardering', date: tx.date }), valueEur: +b.accountValue.toFixed(2), note: 'Stand CFD-rekening' });
+    }
     onClose && onClose();
   };
 
@@ -503,7 +635,8 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   const typeOptions = selected ? allowedFor(selected, isEdit ? initial.party : selected.id) : TX_TYPES.map(t => t.key);
   const ids = 'md-tx';
 
-  const footer = step === 2 ? (
+  const cfdMode = !isEdit && isCfdParty(selected) && (form.type === 'koop' || form.type === 'verkoop');
+  const footer = step === 2 && !cfdMode ? (
     <div className="md-foot">
       <span className="md-foot__reason">{!valid && reason ? reason : <span className="sr-only">Ctrl+Enter om op te slaan</span>}</span>
       <Button variant="ghost" onClick={onClose}>Annuleren</Button>
@@ -547,7 +680,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           ) : (
             <div className="md-typebar">
               <span className="md-type__icon"><Icon name={mdTypeIcon(form.type)} size={18} /></span>
-              <span className="md-typebar__label">{TX_LABELS[form.type]}</span>
+              <span className="md-typebar__label">{cfdMode ? (form.type === 'koop' ? 'CFD-positie openen' : 'CFD-positie sluiten') : TX_LABELS[form.type]}</span>
               <span className="md-typebar__hint">{TX_TYPE_META[form.type] ? TX_TYPE_META[form.type].hint : ''}</span>
               {!(preset && preset.type) && <Button size="sm" variant="ghost" onClick={() => setStep(1)}>Wijzig</Button>}
             </div>
@@ -564,7 +697,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           )}
 
           <Field label={isTransfer ? 'Van' : 'Partij'} htmlFor={`${ids}-party`}
-            hint={party && party.unit === 'bundle' && party.id !== STOCK_PARTY_ID ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
+            hint={isCfdParty(party) ? 'CFD: kies Koop om een positie te openen en Verkoop om te sluiten; inleg/opname voor stortingen.' : party && party.unit === 'bundle' && party.id !== STOCK_PARTY_ID ? `${party.name} ondersteunt alleen inleg, opname, kosten en waardering.` : null}>
             {recent.length > 0 && (
               <div className="md-chips">
                 {recent.map(p => (
@@ -579,6 +712,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
             </Select>
           </Field>
 
+          {cfdMode ? <MdCfdTrade key={form.type} app={app} party={selected} type={form.type} onDone={onClose} /> : <>
           {isPost && postCoins.length > 0 && (
             <Field label="Coin" error={tried ? errors.coin : null}>
               <Segmented ariaLabel="Coin" full value={form.coin} onChange={changeCoin}
@@ -726,6 +860,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           </Field>
 
           {liveLine && <div className="md-live" aria-live="polite">{liveLine}</div>}
+          </>}
         </div>
       )}
     </Sheet>

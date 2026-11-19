@@ -1410,7 +1410,9 @@ function PsCfdEdit({ app, s, onClose }) {
       positions: f.positions.filter(x => (x.symbol || x.name).trim()).map(x => ({
         id: x.id, symbol: x.symbol.trim().toUpperCase(), name: (x.name || x.symbol).trim(), dir: x.dir, currency: x.currency,
         quantity: num(x.quantity), openPrice: num(x.openPrice), currentPrice: num(x.currentPrice), pnl: num(x.pnl),
+        marginRate: x.marginRate != null && x.marginRate !== '' ? num(x.marginRate) : null, openedAt: x.openedAt || null,
       })),
+      trades: (c && c.trades) || [],
     };
     app.saveParty({ ...p, cfd });
     // De waarde in totalen en grafiek: één waardering per dag (bestaande van die dag wordt bijgewerkt).

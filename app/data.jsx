@@ -1288,11 +1288,14 @@ function cfdNormalize(c) {
     currentPrice: cfdNum(x.currentPrice),
     currency: String(x.currency || 'EUR').toUpperCase(),
     pnl: cfdNum(x.pnl),
+    marginRate: cfdNum(x.marginRate),
+    openedAt: x.openedAt || null,
   })).filter(x => x.symbol || x.name);
   return {
     asOf: c.asOf || null,
     accountValue: cfdNum(c.accountValue), cash: cfdNum(c.cash), margin: cfdNum(c.margin), health: cfdNum(c.health),
     positions, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0),
+    trades: Array.isArray(c.trades) ? c.trades : [],
   };
 }
 // Live: per positie de koers (stream-tick per seconde, anders de koersen-worker). Het resultaat schuift mee met het
@@ -1308,16 +1311,18 @@ function cfdFxToEur(ccy, quotes, ticks, sym) {
 }
 function cfdLive(cfd, quotes, ticks) {
   if (!cfd) return cfd;
-  let delta = 0, live = false, lastTime = null, stream = false, notional0 = 0, notional1 = 0;
+  let delta = 0, live = false, lastTime = null, stream = false;
+  const nPos = [];
   const positions = cfd.positions.map(x => {
     const t = ticks && x.symbol ? ticks[x.symbol] : null;
     const q = quotes && x.symbol ? quotes[x.symbol] : null;
     const price = t && t.price > 0 ? t.price : (q && +q.price > 0 && (!q.currency || String(q.currency).toUpperCase() === x.currency) ? +q.price : null);
     const fx = cfdFxToEur(x.currency, quotes, ticks, x.symbol);
-    if (price == null || fx == null || x.quantity == null || x.currentPrice == null || x.pnl == null) return x;
+    const n0 = fx != null && x.quantity != null && x.currentPrice != null ? Math.abs(x.quantity * x.currentPrice * fx) : null;
+    if (price == null || fx == null || x.quantity == null || x.currentPrice == null || x.pnl == null) { nPos.push({ x, n0, n1: n0 }); return x; }
     const d = x.quantity * (x.dir === 'sell' ? -1 : 1) * (price - x.currentPrice) * fx;
     delta += d; live = true;
-    notional0 += Math.abs(x.quantity * x.currentPrice * fx); notional1 += Math.abs(x.quantity * price * fx);
+    nPos.push({ x, n0, n1: Math.abs(x.quantity * price * fx) });
     const time = t ? t.time : (q && q.marketTime) || null;
     if (t) stream = true;
     if (time && (!lastTime || time > lastTime)) lastTime = time;
@@ -1326,7 +1331,15 @@ function cfdLive(cfd, quotes, ticks) {
   });
   if (!live) return cfd;
   const accountValue = cfd.accountValue != null ? cfd.accountValue + delta : null;
-  const margin = cfd.margin != null && notional0 > 0 ? cfd.margin * notional1 / notional0 : cfd.margin;
+  // Margin per positie: eigen margepercentage, anders het percentage dat uit de ingevoerde stand volgt.
+  let margin = cfd.margin;
+  if (cfd.margin != null && nPos.every(p => p.n0 != null)) {
+    const rated = nPos.filter(p => p.x.marginRate != null), unrated = nPos.filter(p => p.x.marginRate == null);
+    const ratedM0 = rated.reduce((a, p) => a + p.n0 * p.x.marginRate / 100, 0);
+    const un0 = unrated.reduce((a, p) => a + p.n0, 0);
+    const implied = un0 > 0 ? Math.max(0, cfd.margin - ratedM0) / un0 : 0;
+    margin = rated.reduce((a, p) => a + p.n1 * p.x.marginRate / 100, 0) + unrated.reduce((a, p) => a + p.n1 * implied, 0);
+  }
   const cash = accountValue != null && margin != null ? accountValue - margin : cfd.cash;
   const base0 = cfd.accountValue != null && cfd.margin != null ? cfd.accountValue - cfd.margin / 2 : null;
   const health = cfd.health != null && base0 > 0 && accountValue != null && margin != null
@@ -1335,6 +1348,62 @@ function cfdLive(cfd, quotes, ticks) {
     accountValue, margin, cash, health, healthEstimated: health !== cfd.health,
     openPnl: positions.reduce((acc, x) => acc + (x.pnl || 0), 0) };
 }
+// Leg de live stand vast als nieuwe momentopname (basis voor een transactie op de CFD-rekening).
+function cfdBake(cfd, quotes, ticks, date) {
+  const c = cfdLive(cfd, quotes, ticks) || cfd;
+  return {
+    asOf: date, accountValue: c.accountValue, cash: c.cash, margin: c.margin, health: c.health,
+    positions: c.positions.map(x => ({ id: x.id, symbol: x.symbol, name: x.name, dir: x.dir, quantity: x.quantity, openPrice: x.openPrice,
+      currentPrice: x.currentPrice, currency: x.currency, pnl: x.pnl, marginRate: x.marginRate, openedAt: x.openedAt || null })),
+    trades: (cfd.trades || []).slice(),
+  };
+}
+function cfdRehealth(b, acc0, m0) {
+  const base0 = acc0 != null && m0 != null ? acc0 - m0 / 2 : null;
+  if (b.health != null && base0 > 0) b.health = Math.max(0, Math.min(100, b.health * (b.accountValue - b.margin / 2) / base0));
+  return b;
+}
+// Nieuwe positie: margin = positiewaarde × margepercentage; cash = accountwaarde − margin; kosten gaan van de accountwaarde af.
+function cfdOpenTrade(cfd, quotes, ticks, t) {
+  const b = cfdBake(cfd, quotes, ticks, t.date);
+  const notional = Math.abs(t.quantity * t.price * t.fx);
+  const req = notional * t.marginRate / 100;
+  const fee = t.fee > 0 ? t.fee : 0;
+  const acc0 = b.accountValue, m0 = b.margin;
+  b.positions.push({ id: 'p' + Date.now().toString(36), symbol: t.symbol, name: t.name || t.symbol, dir: t.dir, quantity: t.quantity, openPrice: t.price,
+    currentPrice: t.price, currency: t.currency, pnl: 0, marginRate: t.marginRate, openedAt: t.date });
+  b.accountValue = (b.accountValue || 0) - fee;
+  b.margin = (b.margin || 0) + req;
+  b.cash = b.accountValue - b.margin;
+  cfdRehealth(b, acc0, m0);
+  b.trades.push({ date: t.date, action: 'open', symbol: t.symbol, name: t.name, dir: t.dir, quantity: t.quantity, price: t.price, currency: t.currency,
+    marginRate: t.marginRate, margin: +req.toFixed(2), notionalEur: +notional.toFixed(2), fee });
+  return { cfd: b, margin: req, notional };
+}
+// Positie (deels) sluiten: het gerealiseerde resultaat vervangt het open resultaat van dat deel; de margin komt vrij.
+function cfdCloseTrade(cfd, quotes, ticks, t) {
+  const b = cfdBake(cfd, quotes, ticks, t.date);
+  const i = b.positions.findIndex(x => x.id === t.positionId);
+  if (i < 0) return null;
+  const x = b.positions[i];
+  const frac = Math.min(1, t.quantity / x.quantity);
+  // Margin van deze positie: eigen percentage, anders naar rato van de positiewaarde (in euro).
+  const nEur = y => { const fx = cfdFxToEur(y.currency, quotes, ticks, y.symbol); return fx != null && y.quantity != null && y.currentPrice != null ? Math.abs(y.quantity * y.currentPrice * fx) : 0; };
+  const totalN = b.positions.reduce((a, y) => a + nEur(y), 0);
+  const posMargin = x.marginRate != null ? nEur(x) * x.marginRate / 100 : (totalN > 0 ? (b.margin || 0) * nEur(x) / totalN : 0);
+  const fee = t.fee > 0 ? t.fee : 0;
+  const acc0 = b.accountValue, m0 = b.margin;
+  b.accountValue = (b.accountValue || 0) - (x.pnl || 0) * frac + t.realized - fee;
+  b.margin = Math.max(0, (b.margin || 0) - posMargin * frac);
+  if (frac >= 1 - 1e-9) b.positions.splice(i, 1);
+  else b.positions[i] = { ...x, quantity: x.quantity - t.quantity, pnl: (x.pnl || 0) * (1 - frac) };
+  b.cash = b.accountValue - b.margin;
+  cfdRehealth(b, acc0, m0);
+  b.trades.push({ date: t.date, action: 'close', symbol: x.symbol, name: x.name, dir: x.dir, quantity: t.quantity, price: t.price, currency: x.currency,
+    openPrice: x.openPrice, realized: +t.realized.toFixed(2), fee });
+  return { cfd: b, freed: posMargin * frac };
+}
+function isCfdParty(p) { return !!(p && (p.cfd || p.id === 'trading212-cfd')); }
 function summarizeParty(party, transactions, spots, ctx) {
   const s = summarizePartyBase(party, transactions, spots, ctx);
   if (!s || !party || !party.cfd) return s;
@@ -2079,6 +2148,7 @@ function allowedTxTypes(party) {
     if (k === 'overboeking') return !!(party && party.unit === 'crypto' && party.postId);
     if (k === 'cashback' && !(party && party.id === 'trading212')) return false;
     if (party && party.id === STOCK_PARTY_ID) return k !== 'rente';
+    if (isCfdParty(party) && (k === 'koop' || k === 'verkoop')) return true;
     if (party && party.unit === 'bundle' && ['koop', 'verkoop', 'cashback', 'dividend', 'rente'].includes(k)) return false;
     return true;
   });
@@ -2824,7 +2894,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdTickStore, useCfdTicks,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdBake, cfdOpenTrade, cfdCloseTrade, isCfdParty, cfdRehealth, cfdTickStore, useCfdTicks,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,
