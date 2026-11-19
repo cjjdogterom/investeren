@@ -778,17 +778,17 @@ injectStyles('shell', `
   .sh-mheader .icon-btn--warn { color: var(--warn); }
   .sh-mheader .icon-btn--off { color: var(--fg-subtle); }
   .sh-mcontent { padding-bottom: calc(var(--tabbar-h) + 24px); min-width: 0; }
-  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 60px; align-items: center; padding-left: 4px; padding-right: 8px; background: var(--bg); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
-  .sh-tab { position: relative; height: 100%; min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fg-subtle); font-size: 10.5px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
+  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; padding-left: 4px; padding-right: 4px; background: var(--bg); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  .sh-tab { position: relative; height: 100%; min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fg-subtle); font-size: 11px; font-weight: 500; letter-spacing: -0.005em; white-space: nowrap; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
   .sh-tab[aria-current="page"] { font-weight: 600; }
   .sh-tab__pip { position: absolute; top: 9px; left: calc(50% + 7px); width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg); }
   .sh-tab[aria-current="page"] { color: var(--fg); }
-  .sh-tab-add { justify-self: end; width: 48px; height: 44px; border-radius: 16px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; cursor: pointer; transition: transform var(--d-1) var(--ease); }
+  .sh-tab-add { justify-self: center; width: 56px; height: 42px; border-radius: 15px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; cursor: pointer; transition: transform var(--d-1) var(--ease); }
   .sh-tab-add:active { transform: scale(.94); }
   .sh-tab-add svg { transition: transform var(--d-2) var(--ease); }
   .sh-tab-add[aria-expanded="true"] svg { transform: rotate(45deg); }
   /* Plus-menu: snelle acties boven de plusknop */
-  .sh-addmenu.popover { min-width: 248px; padding: 6px; border-radius: 18px; }
+  .sh-addmenu.popover { min-width: 272px; padding: 6px; border-radius: 18px; }
   .sh-addmenu .menu__item { height: 52px; gap: 12px; padding: 0 12px 0 8px; border-radius: 12px; font-size: 15px; font-weight: 500; }
   .sh-addmenu__ic { width: 36px; height: 36px; flex: none; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--fg); }
   .sh-addmenu .menu__item:first-child .sh-addmenu__ic { background: var(--ink); color: var(--on-ink); }
@@ -967,6 +967,8 @@ function ShMobileHeader({ app }) {
   } else if (r.name === 'instellingen' && r.params.section) {
     back = '/instellingen';
     title = SH_SECTION_TITLES[r.params.section] || 'Instellingen';
+  } else if (r.name === 'plan') {
+    back = '/overzicht';   // Plan heeft geen eigen tab; je komt er via het plus-menu of het Overzicht
   }
   return (
     <header className="sh-mheader">
@@ -982,7 +984,7 @@ function ShMobileHeader({ app }) {
   );
 }
 
-// Plus-menu (mobiel): de snelle acties die eerder onder de grafiek stonden, plus synchronisatie.
+// Plus-menu (mobiel): de snelle acties die eerder onder de grafiek stonden, plus Plan en synchronisatie.
 function ShAddMenu({ app }) {
   const [open, setOpen] = React.useState(false);
   const anchor = React.useRef(null);
@@ -1001,6 +1003,7 @@ function ShAddMenu({ app }) {
     { icon: 'calculator', label: 'Storting plannen', testId: 'quick-storten', run: () => app.navigate('/plan/verdeling?focus=storten') },
     { icon: 'refresh-cw', label: 'Koersen verversen', testId: 'quick-koersen', run: () => app.openPrices() },
     null,
+    { icon: 'target', label: 'Plan', testId: 'nav-plan', run: () => app.navigate('/plan/verdeling'), meta: 'Verdeling · pensioen' },
     { icon: info.icon === 'loader' ? 'cloud' : info.icon, label: 'Synchronisatie', testId: 'sync-status', run: () => app.openSync(),
       meta: info.time || (info.status === 'ok' ? null : info.label), warn: info.status === 'error' },
   ];
@@ -1017,7 +1020,7 @@ function ShAddMenu({ app }) {
         data-testid="add-tx" onClick={() => setOpen(o => !o)}>
         <Icon name="plus" size={24} strokeWidth={2.2} />
       </button>
-      <Popover open={open} onClose={() => setOpen(false)} anchorRef={anchor} align="end" role="presentation" popRef={popRef} className="sh-addmenu">
+      <Popover open={open} onClose={() => setOpen(false)} anchorRef={anchor} align="center" role="presentation" popRef={popRef} className="sh-addmenu">
         <div role="menu" aria-label="Snelle acties" className="menu" onKeyDown={onKey}>
           {items.map((it, i) => (it ? (
             <button key={i} type="button" role="menuitem" tabIndex={-1} className="menu__item" data-testid={it.testId}
@@ -1039,13 +1042,14 @@ function ShTabBar({ app }) {
   const tabs = [
     { name: 'overzicht', to: '/overzicht', icon: 'layout-dashboard', label: 'Overzicht' },
     { name: 'posities', to: '/posities', icon: 'layers', label: 'Posities' },
+    null,
     { name: 'transacties', to: '/transacties', icon: 'arrow-left-right', label: 'Transacties' },
-    { name: 'plan', to: '/plan/verdeling', icon: 'target', label: 'Plan' },
     { name: 'instellingen', to: '/instellingen', icon: 'settings', label: 'Instellingen', pip: syncErr },
   ];
   return (
     <nav className="sh-tabbar" aria-label="Hoofdnavigatie">
       {tabs.map(t => {
+        if (!t) return <ShAddMenu key="add" app={app} />;
         const active = r.name === t.name;
         return (
           <a key={t.name} href={'#' + t.to} className="sh-tab" aria-current={active ? 'page' : undefined} data-testid={'nav-' + t.name}
@@ -1061,7 +1065,6 @@ function ShTabBar({ app }) {
           </a>
         );
       })}
-      <ShAddMenu app={app} />
     </nav>
   );
 }

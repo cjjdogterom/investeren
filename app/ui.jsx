@@ -727,7 +727,7 @@ function Popover({ open, onClose, anchorRef, align = 'end', children, ariaLabel,
       const r = a.getBoundingClientRect();
       const w = el.offsetWidth, h = el.offsetHeight;
       const vw = window.innerWidth, vh = window.innerHeight;
-      let left = align === 'start' ? r.left : r.right - w;
+      let left = align === 'start' ? r.left : align === 'center' ? r.left + r.width / 2 - w / 2 : r.right - w;
       left = Math.max(8, Math.min(left, vw - w - 8));
       let top = r.bottom + 6;
       if (top + h > vh - 8 && r.top - h - 6 > 8) top = r.top - h - 6;

@@ -124,6 +124,8 @@ injectStyles('overzicht', `
 .ov-m__mode { height: 40px; padding: 0 12px; border: 0; background: none; cursor: pointer; font: 500 13.5px/1 var(--font); color: var(--fg-subtle); position: relative; }
 .ov-m__mode[aria-checked="true"] { color: var(--fg); font-weight: 600; }
 .ov-m__mode[aria-checked="true"]::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 7px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--chart-a), var(--chart-b)); }
+.ov-secthead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.ov-secthead .ov-sect { margin: 0; }
 .ov-sect { margin: 0 0 10px; font: 650 18px/24px var(--font); letter-spacing: -0.006em; }
 .ov-fy { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 4px; scrollbar-width: none; overscroll-behavior-x: contain; }
 .ov-fy::-webkit-scrollbar { display: none; }
@@ -801,7 +803,10 @@ function OvVoorJou({ app, items }) {
   };
   return (
     <section aria-labelledby="ov-fy-title">
-      <h2 className="ov-sect" id="ov-fy-title">Voor jou</h2>
+      <div className="ov-secthead">
+        <h2 className="ov-sect" id="ov-fy-title">Voor jou</h2>
+        <button type="button" className="ov-link" data-testid="ov-plan-link" onClick={() => app.navigate('/plan/verdeling')}>Plan <Icon name="chevron-right" size={14} /></button>
+      </div>
       <div className="ov-fy" ref={ref} onScroll={onScroll}>{cards}</div>
       {cards.length > 1 && <div className="ov-dots" aria-hidden="true">{cards.map((_, i) => <span key={i} className={i === page ? 'is-on' : undefined} />)}</div>}
     </section>
