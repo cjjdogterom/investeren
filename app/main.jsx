@@ -1023,8 +1023,9 @@ function ShAddMenu({ app }) {
   }, [open]);
   const items = [
     { icon: 'plus', label: 'Transactie toevoegen', testId: 'quick-transactie', run: () => app.openTx() },
-    { icon: 'pencil', label: 'Waardering bijwerken', testId: 'quick-waardering', run: () => app.openTx({ type: 'waardering' }) },
     ...(((app.model && app.model.allParties) || []).some(p => p && isCfdParty(p)) ? [{ icon: 'trending-up', label: 'CFD-positie openen', testId: 'quick-cfd', run: () => app.openTx({ type: 'koop', party: ((app.model.allParties || []).find(p => p && isCfdParty(p)) || {}).id }) }] : []),
+    { icon: 'pencil', label: 'Waardering bijwerken', testId: 'quick-waardering', run: () => app.openTx({ type: 'waardering' }) },
+    { icon: 'circle-plus', label: 'Bezitting toevoegen', testId: 'quick-asset', run: () => app.openPartyForm(), meta: 'Foto · categorie · soort' },
     { icon: 'calculator', label: 'Storting plannen', testId: 'quick-storten', run: () => app.navigate('/plan/verdeling?focus=storten') },
     { icon: 'refresh-cw', label: 'Koersen verversen', testId: 'quick-koersen', run: () => app.openPrices() },
     null,

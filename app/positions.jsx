@@ -232,6 +232,8 @@ injectStyles('positions', `
 .ps-del__check input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--loss); }
 .ps-del__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .ps-formfoot { display: flex; gap: 8px; justify-content: flex-end; }
+.ps-logo-pick { display: flex; align-items: center; gap: 12px; }
+.ps-logo-pick__btn { cursor: pointer; }
 .ps-cfd-detail { display: flex; flex-direction: column; gap: 10px; }
 .ps-cfd-alert-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: stretch; margin-top: 8px; }
 .ps-cfd-alert-form > * { min-width: 0; width: 100%; height: 40px; font-size: 14px; }
@@ -2034,6 +2036,36 @@ const PS_SPOT_KEYS = [
   { value: '', label: 'Geen' },
 ];
 
+// Soort product → hoe de bezitting gewaardeerd wordt (waarderingsmethode), met een passende standaardcategorie.
+const PS_PRODUCTS = [
+  { key: 'share',  label: 'Aandeel, ETF of fonds', unit: 'part',   unitLabel: 'st.', category: 'Indexfondsen', how: 'Aantal × koers. Koop/verkoop in stuks; de koers werk je bij met een waardering.' },
+  { key: 'crypto', label: 'Crypto',                unit: 'crypto', unitLabel: 'TOKEN', category: 'Crypto', how: 'Aantal tokens × live koers (Bitcoin, Ethereum of PAX Gold) of een handmatige koers.' },
+  { key: 'gold',   label: 'Goud (gram)',           unit: 'gram',   unitLabel: 'g',   category: 'Edelmetaal', how: 'Gram × de live goudprijs.' },
+  { key: 'silver', label: 'Zilver (ounce)',        unit: 'ounce',  unitLabel: 'oz',  category: 'Edelmetaal', how: 'Ounce × de live zilverprijs.' },
+  { key: 'cash',   label: 'Spaargeld of cash',     unit: 'eur',    unitLabel: '€',   category: 'Liquide', how: 'Het saldo in euro: inleg min opnames plus rente.' },
+  { key: 'value',  label: 'Vastgoed, participatie, crowdfunding of overig', unit: 'bundle', unitLabel: '€', category: 'Overig', how: 'Totale waarde. Je boekt inleg/opname en werkt de waarde zelf bij met een waardering.' },
+];
+function psProductOf(unit) { return (PS_PRODUCTS.find(o => o.unit === unit) || PS_PRODUCTS[PS_PRODUCTS.length - 1]).key; }
+// Foto verkleinen tot een vierkant logo (data-URL), klein genoeg om mee te synchroniseren.
+function psReadLogo(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) return reject(new Error('Kies een afbeelding'));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const S = 128, c = document.createElement('canvas'); c.width = S; c.height = S;
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, S, S);
+      const k = Math.max(S / img.width, S / img.height), w = img.width * k, h = img.height * k;
+      g.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Afbeelding kon niet worden gelezen')); };
+    img.src = url;
+  });
+}
+
 function psBlankForm(p) {
   const unit = p ? (p.isMixed ? 'mixed' : (p.unit || 'bundle')) : 'bundle';
   const opt = PARTY_UNIT_OPTIONS.find(o => o.value === unit);
@@ -2048,6 +2080,8 @@ function psBlankForm(p) {
     color: p?.color || COLOR_PRESETS[0],
     useOwnColor: p?.useOwnColor === true,
     spotKey: p?.spotKey || '',
+    logo: p?.logo || '',
+    ticker: p?.ticker || '',
     includeInTotal: (p?.includeInTotal ?? p?.includeInPortfolio) !== false,
     includeInTimeChart: (p?.includeInTimeChart ?? p?.includeInPortfolio) !== false,
   };
@@ -2105,6 +2139,8 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
     };
     delete p.includeInPortfolio;
     if (form.unit === 'crypto' && form.spotKey) p.spotKey = form.spotKey; else delete p.spotKey;
+    if (form.logo) p.logo = form.logo; else delete p.logo;
+    if (form.unit === 'part' && form.ticker.trim()) p.ticker = form.ticker.trim().toUpperCase(); else delete p.ticker;
     if (isPost) { p.unit = 'post'; p.unitLabel = party.unitLabel || '€'; p.isMixed = false; }
     app.saveParty(p);
     onClose && onClose();
@@ -2123,8 +2159,8 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
 
   return (
     <Sheet open onClose={onClose} testId="party-form" width={480} initialFocusRef={confirmDel ? undefined : nameRef}
-      title={party ? 'Partij bewerken' : 'Partij toevoegen'}
-      subtitle={party ? party.name : 'Maak een eigen beleggingscategorie aan.'}
+      title={party ? 'Bezitting bewerken' : 'Bezitting toevoegen'}
+      subtitle={party ? party.name : 'Naam, foto, categorie en soort product.'}
       footer={footer}>
       {confirmDel && party ? (
         <div className="ps-del" role="group" aria-labelledby="ps-del-title">
@@ -2150,6 +2186,17 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
               aria-describedby={touched && !nameOk ? 'ps-f-name-err' : undefined} aria-invalid={(touched && !nameOk) || undefined}
               onBlur={() => setTouched(true)} autoComplete="off" />
           </Field>
+          <Field label="Foto of logo (optioneel)">
+            <div className="ps-logo-pick">
+              <Monogram party={{ ...(party || {}), name: form.name || '?', category: finalCategory, logo: form.logo || undefined, unit: form.unit }} size={48} />
+              <label className="btn btn--secondary btn--sm ps-logo-pick__btn">
+                {form.logo ? 'Andere foto' : 'Foto kiezen'}
+                <input type="file" accept="image/*" hidden data-testid="party-logo-input"
+                  onChange={e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) psReadLogo(f).then(u => set('logo', u)).catch(err => app.toast && app.toast(err.message)); }} />
+              </label>
+              {form.logo && <button type="button" className="ps-link" onClick={() => set('logo', '')}>Verwijderen</button>}
+            </div>
+          </Field>
           <Field label="Omschrijving (optioneel)" htmlFor="ps-f-sub">
             <Input id="ps-f-sub" value={form.subtitle} onChange={e => set('subtitle', e.target.value)} autoComplete="off" />
           </Field>
@@ -2169,6 +2216,17 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
           {isPost ? (
             <p className="ps-classline" style={{ margin: 0 }}>Crypto-post: waarde = som van de coins (BTC, ETH) × live koers.{party.selfCustody ? ' Publieke adressen stel je in bij Instellingen → Wallet.' : ''}</p>
           ) : (<>
+          <Field label="Soort product" htmlFor="ps-f-prod" hint={(PS_PRODUCTS.find(o => o.key === psProductOf(form.unit)) || {}).how}>
+            <Select id="ps-f-prod" value={psProductOf(form.unit)} data-testid="party-product"
+              onChange={e => { const o = PS_PRODUCTS.find(x => x.key === e.target.value); if (!o) return; setUnit(o.unit); if (!party) setForm(f => ({ ...f, category: o.category, customCategory: '' })); }}>
+              {PS_PRODUCTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </Select>
+          </Field>
+          {form.unit === 'part' && (
+            <Field label="Ticker (optioneel)" htmlFor="ps-f-ticker" hint="Yahoo Finance-symbool, bijv. VWCE.DE of AAPL. Toont de koersgrafiek van het product.">
+              <Input id="ps-f-ticker" value={form.ticker} onChange={e => set('ticker', e.target.value)} autoComplete="off" autoCapitalize="characters" />
+            </Field>
+          )}
           <Field label="Waarderingsmethode" htmlFor="ps-f-unit">
             <Select id="ps-f-unit" value={form.unit} onChange={e => setUnit(e.target.value)}>
               {PARTY_UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
