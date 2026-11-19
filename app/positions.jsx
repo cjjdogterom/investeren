@@ -77,12 +77,13 @@ injectStyles('positions', `
 .ps-lgroup__label { color: var(--fg); font-weight: 550; }
 .ps-lgroup__gain { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
 .ps-lgroup__gain + .ps-lgroup__val { margin-left: 6px; }
-.ps-pgains { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
-.ps-pgains > div { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
-.ps-pgains dt { font-size: 11.5px; color: var(--fg-muted); margin-bottom: 2px; }
-.ps-pgains dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ps-pgains small { display: block; font-weight: 500; font-size: 11.5px; }
-@media (max-width: 420px) { .ps-pgains { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ps-pgains { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 8px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.ps-pgains > div { min-width: 0; padding: 0 10px; display: flex; flex-direction: column; gap: 1px; }
+.ps-pgains > div:first-child { padding-left: 0; }
+.ps-pgains > div + div { border-left: 1px solid var(--border); }
+.ps-pgains dt { font-size: 11px; line-height: 14px; color: var(--fg-muted); }
+.ps-pgains dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; line-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-pgains small { display: block; font-weight: 500; font-size: 11px; line-height: 14px; opacity: .85; }
 .ps-lgroup__val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .ps-lrow { display: flex; align-items: center; gap: 12px; min-height: 64px; width: 100%; padding: 8px 0; border: 0; background: none; text-align: left; color: var(--fg); font: inherit; cursor: pointer; border-radius: 12px; }
 .ps-lrow:active { background: var(--surface-2); }
@@ -161,7 +162,7 @@ injectStyles('positions', `
 .ps-coin__chain { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--fg-muted); }
 .ps-coin__warn { color: var(--warn); display: inline-flex; align-items: center; gap: 4px; }
 .ps-stk__tick { width: 32px; height: 32px; border-radius: var(--r-2); background: var(--surface-2); display: grid; place-items: center; font: 650 10.5px/1 var(--font); letter-spacing: -0.01em; color: var(--fg-muted); overflow: hidden; }
-.ps-stk__foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--fg-muted); }
+.ps-stk__foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 8px; font-size: 12px; line-height: 17px; color: var(--fg-muted); }
 .ps-pies { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-2); overflow: hidden; }
 .ps-pie + .ps-pie { border-top: 1px solid var(--border); }
 .ps-pie__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; width: 100%; padding: 10px 12px;
@@ -232,7 +233,14 @@ injectStyles('positions', `
 .ps-del__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .ps-formfoot { display: flex; gap: 8px; justify-content: flex-end; }
 .ps-cfd-detail { display: flex; flex-direction: column; gap: 10px; }
-.ps-cfd-alert-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; align-items: center; }
+.ps-cfd-alert-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: stretch; margin-top: 8px; }
+.ps-cfd-alert-form > * { min-width: 0; width: 100%; height: 40px; font-size: 14px; }
+.ps-cfd-alert-form > .ps-cfd-alert-form__wide { grid-column: 1 / -1; }
+.ps-cfd-alerts .ps-coin { grid-template-columns: minmax(0, 1fr) auto; }
+.ps-cfd-alerts .ps-coin__name { font-size: 14px; line-height: 19px; }
+.ps-cfd-alerts .switch { width: auto; padding: 0; min-height: 0; }
+.ps-cfd-alerts .switch__text { display: none; }
+.ps-cfd-note { margin: 0; font-size: 12px; line-height: 17px; color: var(--fg-muted); }
 .ps-cfd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .ps-cfd-pos { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-2); }
 
@@ -1385,10 +1393,7 @@ function PsCfdAccount({ app, s }) {
         </span>
       </div>
       {!c ? <p className="ps-subtle" style={{ margin: 0, fontSize: 13 }}>Vul de stand uit Trading 212 (CFD) in: accountwaarde, cash, margin en je open posities.</p> : (<>
-        <div className="ps-stk__foot">
-          {c.live && <span>Koers {c.stream ? 'live per tick' : 'live'} via Yahoo Finance{c.marketTime ? ` · ${fmtRelDay(c.marketTime.slice(0, 10))} ${new Date(c.marketTime).toLocaleTimeString('nl-NL')}` : ''} · resultaat, accountwaarde, margin en cash rekenen mee ({privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand)</span>}
-          <span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · health is een schatting tot je de stand bijwerkt</span>
-        </div>
+        <p className="ps-cfd-note">{c.stream ? 'Koers live per tick' : c.live ? 'Koers per 10 min' : 'Laatste stand'}{c.live ? ` · ${privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand` : ''}{c.asOf ? ` van ${fmtDateLong(c.asOf)}` : ''}. Health is een schatting tot je de stand bijwerkt.</p>
       </>)}
       {edit && <PsCfdEdit app={app} s={s} onClose={() => setEdit(false)} />}
     </div>
@@ -1425,7 +1430,6 @@ function PsCfdAlerts({ app, s }) {
             const { hit, v } = cfdAlertHit(r, live);
             return (
               <div className="ps-coin" key={r.id}>
-                <span className="ps-stk__tick" aria-hidden="true"><Icon name={hit ? 'triangle-alert' : 'clock'} size={14} /></span>
                 <div style={{ minWidth: 0 }}>
                   <div className="ps-coin__name">{cfdAlertLabel(r, live)}</div>
                   <div className="ps-coin__sub">Nu {v == null ? '—' : r.kind === 'health' ? `${Math.round(v)}%` : r.kind === 'price' ? String(Math.round(v * 100) / 100).replace('.', ',') : fmtMoney(v, { sign: r.kind === 'pnl', decimals: 2 })}{hit ? ' · voorwaarde bereikt' : ''}</div>
@@ -1452,10 +1456,10 @@ function PsCfdAlerts({ app, s }) {
         <Select aria-label="Richting" value={f.op} onChange={e => setF(x => ({ ...x, op: e.target.value }))}>
           <option value="below">onder</option><option value="above">boven</option>
         </Select>
-        <Input inputMode="decimal" aria-label="Waarde" placeholder={f.kind === 'pnl' ? '-100' : f.kind === 'health' ? '30' : ''} value={f.value} onChange={e => setF(x => ({ ...x, value: e.target.value }))} />
-        <Button variant="primary" size="sm" disabled={!ok} onClick={add} data-testid="cfd-alert-add">Toevoegen</Button>
+        <Input className={(f.kind === 'pnl' || f.kind === 'price') ? undefined : 'ps-cfd-alert-form__wide'} inputMode="decimal" aria-label="Waarde" placeholder={f.kind === 'pnl' ? '-100' : f.kind === 'health' ? '30' : ''} value={f.value} onChange={e => setF(x => ({ ...x, value: e.target.value }))} />
+        <Button className="ps-cfd-alert-form__wide" variant="primary" disabled={!ok} onClick={add} data-testid="cfd-alert-add">Melding toevoegen</Button>
       </div>
-      <p className="ps-subtle" style={{ margin: '6px 0 0', fontSize: 12 }}>Nu: {curTxt(cur)}. Meldingen komen binnen zolang de app open is of net op de achtergrond staat (iPhone, Mac of browser).</p>
+      <p className="ps-cfd-note" style={{ marginTop: 8 }}>Nu: {curTxt(cur)}. Meldingen komen binnen zolang de app open is of net op de achtergrond staat.</p>
     </div>
   );
 }
@@ -1805,7 +1809,7 @@ function PsPartyBody({ app, s }) {
           })}
         </dl>
       )}
-      {p.cfd && <div className="ps-cfd-detail">{window.OvCfdLive && <OvCfdLive app={app} s={s} embedded />}<PsCfdAccount app={app} s={s} /><PsCfdAlerts app={app} s={s} /></div>}
+      {p.cfd && <div className="ps-cfd-detail">{window.OvCfdLive && <OvCfdLive app={app} s={s} embedded />}<PsCfdAccount app={app} s={s} /></div>}
       {hasChart && (
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}
@@ -1817,6 +1821,7 @@ function PsPartyBody({ app, s }) {
         </div>
       )}
       <PsPriceChart app={app} s={s} />
+      {p.cfd && <PsCfdAlerts app={app} s={s} />}
       <dl className="ps-kgrid">
         <div><dt>Ingelegd</dt><dd><Money value={s.invested} /></dd></div>
         <div><dt>Aandeel</dt><dd className="num">{inc && model.totals.value > 0 ? fmtPct(s.currentValueEur / model.totals.value * 100, { decimals: 1, sign: false }) : '—'}</dd></div>
