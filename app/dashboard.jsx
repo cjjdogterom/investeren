@@ -18,9 +18,9 @@ injectStyles('overzicht', `
 .ov-cfd__val { font: 650 28px/1.1 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .ov-cfd__pnl { font: 600 15px/20px var(--font); font-variant-numeric: tabular-nums; }
 .ov-cfd__live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.ov-cfd__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pos, #16a34a); box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos, #16a34a) 60%, transparent); animation: ov-cfd-pulse 1.6s ease-out infinite; }
+.ov-cfd__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); box-shadow: 0 0 0 0 color-mix(in srgb, var(--positive) 60%, transparent); animation: ov-cfd-pulse 1.6s ease-out infinite; }
 .ov-cfd__dot--off { background: var(--fg-subtle); animation: none; }
-@keyframes ov-cfd-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos, #16a34a) 55%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+@keyframes ov-cfd-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--positive) 55%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
 @media (prefers-reduced-motion: reduce) { .ov-cfd__dot { animation: none; } }
 .ov-cfd__pos { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); margin-top: 12px; }
 .ov-cfd__tick { width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font: 650 10px/1 var(--font); color: var(--fg-muted); grid-row: span 2; }
@@ -28,7 +28,7 @@ injectStyles('overzicht', `
 .ov-cfd__sub { font-size: 12.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .ov-cfd__end { text-align: right; font-variant-numeric: tabular-nums; grid-row: span 2; display: flex; flex-direction: column; gap: 2px; }
 .ov-cfd__px { font: 650 15px/20px var(--font); transition: color .3s; }
-.ov-cfd__px.is-up { color: var(--pos, #16a34a); } .ov-cfd__px.is-down { color: var(--neg, #dc2626); }
+.ov-cfd__px.is-up { color: var(--positive); } .ov-cfd__px.is-down { color: var(--negative); }
 .ov-cfd__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--border); padding-top: 10px; }
 .ov-cfd__grid > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ov-cfd__grid dt { font-size: 12px; color: var(--fg-muted); }
@@ -566,7 +566,7 @@ function OvCfdPos({ x, privacy }) {
       <span className="ov-cfd__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</span>
       <span className="ov-cfd__end">
         <span className={'ov-cfd__px' + (dir ? ' ' + dir : '')}>{px(x.currentPrice)}</span>
-        <span className={'ov-cfd__pnl ' + (tone ? `tone-${tone}` : '')} style={{ color: tone === 'neg' ? 'var(--neg)' : tone === 'pos' ? 'var(--pos)' : undefined }}>
+        <span className={'ov-cfd__pnl ' + (tone ? `tone-${tone}` : '')} style={{ color: tone === 'neg' ? 'var(--negative)' : tone === 'pos' ? 'var(--positive)' : undefined }}>
           {x.pnl == null ? '—' : privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true, decimals: 2 })}</span>
       </span>
       <span className="ov-cfd__sub">{fmtQty(x.quantity, '', { decimals: x.quantity % 1 === 0 ? 0 : 4 }).trim()} st. · geopend {px(x.openPrice)}{x.openPrice > 0 && x.currentPrice != null ? ` · ${fmtPct((x.currentPrice / x.openPrice - 1) * 100 * (x.dir === 'sell' ? -1 : 1), { decimals: 2 })}` : ''}</span>
@@ -584,7 +584,7 @@ function OvCfdLive({ app }) {
   const total = c.accountValue - netIn;
   const fresh = c.stream && c.marketTime && (Date.now() - Date.parse(c.marketTime) < 120000);
   const hpct = c.health == null ? null : Math.max(0, Math.min(100, c.health));
-  const hcol = hpct == null ? 'var(--fg-subtle)' : hpct < 25 ? 'var(--neg)' : hpct < 50 ? 'var(--warn)' : 'var(--pos)';
+  const hcol = hpct == null ? 'var(--fg-subtle)' : hpct < 25 ? 'var(--negative)' : hpct < 50 ? 'var(--warn)' : 'var(--positive)';
   const M = v => <Money value={v} decimals={2} />;
   return (
     <Card padding={app.isMobile ? 14 : 16} data-testid="ov-cfd-live"
@@ -597,7 +597,7 @@ function OvCfdLive({ app }) {
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Open resultaat</div>
-          <div className="ov-cfd__pnl" style={{ color: c.openPnl < -0.005 ? 'var(--neg)' : c.openPnl > 0.005 ? 'var(--pos)' : undefined }}>
+          <div className="ov-cfd__pnl" style={{ color: c.openPnl < -0.005 ? 'var(--negative)' : c.openPnl > 0.005 ? 'var(--positive)' : undefined }}>
             {privacy ? '€ •••••' : fmtMoney(c.openPnl, { sign: true, decimals: 2 })}
             {c.accountValue - c.openPnl > 0 ? <span style={{ fontWeight: 500, color: 'var(--fg-muted)' }}> · {fmtPct(c.openPnl / (c.accountValue - c.openPnl) * 100, { decimals: 2 })}</span> : null}
           </div>
@@ -609,7 +609,7 @@ function OvCfdLive({ app }) {
         <div><dt>Margin</dt><dd>{M(c.margin)}</dd></div>
         <div><dt>Health{c.healthEstimated ? ' ≈' : ''}</dt><dd>{hpct == null ? '—' : `${Math.round(hpct)}%`}</dd>
           {hpct != null && <div className="ov-cfd__bar"><i style={{ width: hpct + '%', background: hcol }} /></div>}</div>
-        <div><dt>Winst totaal</dt><dd style={{ color: total < -0.005 ? 'var(--neg)' : total > 0.005 ? 'var(--pos)' : undefined }}>{privacy ? '€ •••••' : fmtMoney(total, { sign: true, decimals: 2 })}</dd></div>
+        <div><dt>Winst totaal</dt><dd style={{ color: total < -0.005 ? 'var(--negative)' : total > 0.005 ? 'var(--positive)' : undefined }}>{privacy ? '€ •••••' : fmtMoney(total, { sign: true, decimals: 2 })}</dd></div>
       </dl>
     </Card>
   );

@@ -84,6 +84,40 @@ async function koers(symbol, range) {
   };
 }
 
+// Koersgrafiek van één product in de eigen valuta (aandelen, ETF's, fondsen, crypto, grondstoffen).
+const GRAPH = {
+  "1d": { interval: "5m", ttl: 60, prepost: true },
+  "5d": { interval: "15m", ttl: 120, prepost: true },
+  "1mo": { interval: "60m", ttl: 600 },
+  "3mo": { interval: "1d", ttl: 1800 },
+  "6mo": { interval: "1d", ttl: 1800 },
+  "1y": { interval: "1d", ttl: 3600 },
+  "5y": { interval: "1wk", ttl: 21600 },
+  "max": { interval: "1mo", ttl: 21600 },
+};
+async function grafiek(symbol, range) {
+  const g = GRAPH[range];
+  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${g.interval}${g.prepost ? "&includePrePost=true" : ""}`, {
+    headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)", accept: "application/json" },
+    cf: { cacheTtl: g.ttl, cacheEverything: true },
+  });
+  if (!res.ok) throw new Error(`Yahoo gaf ${res.status}`);
+  const j = await res.json();
+  const r = j.chart && j.chart.result && j.chart.result[0];
+  if (!r) throw new Error(`Geen koers voor ${symbol}`);
+  const closes = (r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || [];
+  const points = [];
+  (r.timestamp || []).forEach((ts, i) => { if (closes[i] != null) points.push([ts, +closes[i].toFixed(6)]); });
+  const m = r.meta || {};
+  return {
+    symbol: m.symbol || symbol, name: m.longName || m.shortName || symbol, currency: m.currency || "EUR",
+    exchange: m.fullExchangeName || m.exchangeName || "", price: m.regularMarketPrice ?? null,
+    previousClose: m.chartPreviousClose ?? m.previousClose ?? null,
+    marketTime: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString() : null,
+    range, interval: g.interval, points, ttl: g.ttl,
+  };
+}
+
 export default {
   async fetch(req) {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-max-age": "86400" } });
@@ -104,7 +138,14 @@ export default {
         out.forEach((r, i) => { if (r.status === "fulfilled") quotes[syms[i]] = r.value; else errors[syms[i]] = r.reason.message; });
         return json({ quotes, errors, fetchedAt: new Date().toISOString() });
       }
-      return json({ error: "Onbekend pad. Gebruik /zoek?q= of /koers?s=" }, 404, 0);
+      if (url.pathname === "/grafiek") {
+        const s = (url.searchParams.get("s") || "").trim();
+        if (!SYM.test(s)) return json({ error: "Ongeldig symbool" }, 400, 0);
+        const range = GRAPH[url.searchParams.get("range")] ? url.searchParams.get("range") : "1y";
+        const g = await grafiek(s, range);
+        return json(g, 200, Math.min(g.ttl, 300));
+      }
+      return json({ error: "Onbekend pad. Gebruik /zoek?q=, /koers?s= of /grafiek?s=&range=" }, 404, 0);
     } catch (e) {
       return json({ error: e.message || "Fout" }, 502, 0);
     }

@@ -130,6 +130,19 @@ injectStyles('positions', `
 .ps-pvalue { font: 600 30px/36px var(--font); letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; color: var(--fg); }
 .ps-pdelta { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-muted); }
 .ps-chartbox { display: flex; flex-direction: column; gap: 8px; }
+.ps-px { display: flex; flex-direction: column; gap: 8px; }
+.ps-px__chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.ps-px__chip { flex: none; border: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); border-radius: 999px; padding: 5px 11px; font: 500 12.5px/16px var(--font); cursor: pointer; white-space: nowrap; }
+.ps-px__chip.is-on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.ps-px__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.ps-px__val { font: 650 24px/1.15 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ps-px__chg { font: 600 13.5px/18px var(--font); font-variant-numeric: tabular-nums; }
+.ps-px__when { font-size: 12.5px; color: var(--fg-muted); }
+.ps-px__plot { position: relative; height: 150px; touch-action: pan-y; cursor: crosshair; }
+.ps-px__plot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.ps-px__hi, .ps-px__lo { position: absolute; right: 0; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 0 2px; pointer-events: none; }
+.ps-px__hi { top: 0; } .ps-px__lo { bottom: 0; }
+.ps-px__empty { height: 100%; display: grid; place-items: center; font-size: 13px; color: var(--fg-muted); border: 1px dashed var(--border); border-radius: var(--r-2); }
 .ps-kgrid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: var(--r-2); overflow: hidden; }
 .ps-kgrid > div { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ps-kgrid > div:nth-child(odd) { border-right: 1px solid var(--border); }
@@ -1471,6 +1484,141 @@ function PsCfdEdit({ app, s, onClose }) {
   );
 }
 
+// ===================================================================
+// Koers van het product zelf (niet de waarde van je positie): via de koersen-worker (/grafiek, Yahoo Finance).
+// ===================================================================
+const PS_PX_RANGES = [['1d', '1D'], ['5d', '1W'], ['1mo', '1M'], ['3mo', '3M'], ['1y', '1J'], ['5y', '5J'], ['max', 'Max']];
+const PS_COIN_YH = { BTC: 'BTC-EUR', ETH: 'ETH-EUR', PAXG: 'PAXG-USD' };
+const psPxCache = new Map();
+function psPriceSymbols(s) {
+  const p = s.party || {};
+  const out = [];
+  const add = (sym, label) => { if (sym && !out.some(o => o.sym === sym)) out.push({ sym, label: label || sym }); };
+  if (p.cfd && Array.isArray(p.cfd.positions)) p.cfd.positions.forEach(x => add(String(x.symbol || '').toUpperCase(), x.name || x.symbol));
+  if (s.stocks && s.stocks.positions) s.stocks.positions.forEach(x => add(x.symbol, x.name));
+  if (p.ticker) add(String(p.ticker).toUpperCase(), p.name);
+  if (p.id === 'meesman') add('0P0001IJJX.F', 'Meesman Aandelen Wereldwijd Totaal');
+  const coin = c => PS_COIN_YH[String(c || '').toUpperCase()];
+  if (p.unit === 'crypto') add(coin(p.coin || p.unitLabel), (CRYPTO_COIN_BY_KEY[String(p.coin || p.unitLabel || '').toUpperCase()] || {}).label);
+  (s.leaves || []).forEach(l => { const lp = l.party || l; add(coin(lp.coin || lp.unitLabel), (CRYPTO_COIN_BY_KEY[String(lp.coin || '').toUpperCase()] || {}).label); });
+  if (p.id === 'finst-paxg') add('PAXG-USD', 'PAX Gold');
+  if (p.id === 'goud' || p.unit === 'gram' || p.isMixed || p.id === 'goldrepublic') add('GC=F', 'Goud (troy ounce)');
+  if (p.id === 'zilver' || p.unit === 'ounce' || p.isMixed || p.id === 'goldrepublic') add('SI=F', 'Zilver (troy ounce)');
+  return out.filter(o => o.sym);
+}
+function psPxFmt(v, ccy) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const d = Math.abs(v) >= 1000 ? 0 : Math.abs(v) >= 1 ? 2 : 4;
+  const body = new Intl.NumberFormat('nl-NL', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+  const sym = { USD: '$', EUR: '€', GBP: '£', GBp: 'p', CHF: 'CHF ' }[ccy];
+  return sym === 'p' ? body + 'p' : sym ? sym + body : `${body} ${ccy || ''}`.trim();
+}
+function psPxWhen(ts, range) {
+  const d = new Date(ts * 1000);
+  if (range === '1d') return d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+  if (range === '5d' || range === '1mo') return d.toLocaleString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function PsPriceChart({ app, s }) {
+  const syms = React.useMemo(() => psPriceSymbols(s), [s]);
+  const [pick, setPick] = useState(null);
+  const [range, setRange] = useState(() => (app.prefs && app.prefs.pxRange) || '1mo');
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [hover, setHover] = useState(null);
+  const ticks = useCfdTicks();
+  const cur = syms.find(o => o.sym === pick) || syms[0];
+  const sym = cur && cur.sym;
+  React.useEffect(() => {
+    if (!sym) return undefined;
+    let dead = false;
+    const key = sym + '|' + range;
+    const load = async () => {
+      const c = psPxCache.get(key);
+      if (c && Date.now() - c.at < (range === '1d' ? 60000 : 300000)) { setData(c.data); setErr(null); return; }
+      try {
+        const res = await fetch(`${STOCK_API_URL}/grafiek?s=${encodeURIComponent(sym)}&range=${range}`, { cache: 'no-store' });
+        const j = await res.json();
+        if (!res.ok || j.error) throw new Error(j.error || `Koersdienst gaf ${res.status}`);
+        psPxCache.set(key, { at: Date.now(), data: j });
+        if (!dead) { setData(j); setErr(null); }
+      } catch (e) { if (!dead) setErr(e.message || 'Koers ophalen mislukt'); }
+    };
+    setData(d => (d && d.symbol === sym && d.range === range ? d : null));
+    load();
+    const id = range === '1d' || range === '5d' ? setInterval(load, 60000) : null;
+    return () => { dead = true; if (id) clearInterval(id); };
+  }, [sym, range]);
+  if (!syms.length) return null;
+  const pts = data && data.symbol && data.points ? data.points.slice() : [];
+  // Live tick (CFD-stream) als laatste punt.
+  const tk = sym && ticks[sym];
+  if (tk && tk.price > 0 && pts.length && (range === '1d' || range === '5d')) pts.push([Math.floor(Date.parse(tk.time) / 1000), tk.price]);
+  const last = tk && tk.price > 0 ? tk.price : (data && data.price != null ? data.price : (pts.length ? pts[pts.length - 1][1] : null));
+  const ref = range === '1d' && data && data.previousClose != null ? data.previousClose : (pts.length ? pts[0][1] : null);
+  const hv = hover != null && pts[hover] ? pts[hover] : null;
+  const shown = hv ? hv[1] : last;
+  const chg = shown != null && ref ? shown - ref : null;
+  const chgPct = chg != null && ref ? chg / ref * 100 : null;
+  const tone = chg == null ? '' : chg > 0 ? 'pos' : chg < 0 ? 'neg' : '';
+  const W = 1000, H = 150;
+  let path = null, area = null, mn = 0, mx = 0, xOf = null, yOf = null;
+  if (pts.length >= 2) {
+    mn = Math.min(...pts.map(q => q[1])); mx = Math.max(...pts.map(q => q[1]));
+    if (mx === mn) { mx += 1; mn -= 1; }
+    const pad = (mx - mn) * 0.08;
+    const lo = mn - pad, hi = mx + pad;
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+    xOf = i => (range === '1d' || range === '5d' ? i / (pts.length - 1) : (pts[i][0] - t0) / ((t1 - t0) || 1)) * W;
+    yOf = v => H - (v - lo) / (hi - lo) * H;
+    path = pts.map((q, i) => `${i ? 'L' : 'M'}${xOf(i).toFixed(1)},${yOf(q[1]).toFixed(1)}`).join('');
+    area = `${path}L${W},${H}L0,${H}Z`;
+  }
+  const col = tone === 'neg' ? 'var(--negative)' : tone === 'pos' ? 'var(--positive)' : 'var(--fg-muted)';
+  const onMove = e => {
+    if (!pts.length) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const cx = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width * W;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < pts.length; i++) { const d = Math.abs(xOf(i) - cx); if (d < bd) { bd = d; best = i; } }
+    setHover(best);
+  };
+  const refLabel = range === '1d' ? 'sinds slot gisteren' : `in ${(PS_PX_RANGES.find(x => x[0] === range) || [])[1] || ''}`;
+  return (
+    <section className="ps-px" data-testid="price-chart">
+      <div className="ps-sec-head">
+        <h3 className="ps-sec-title">Koers{cur && syms.length === 1 ? ` · ${cur.label}` : ''}</h3>
+        <span className="ps-subtle" style={{ fontSize: 12 }}>{data ? `${data.symbol}${data.exchange ? ' · ' + data.exchange : ''}` : sym}</span>
+      </div>
+      {syms.length > 1 && (
+        <div className="ps-px__chips" role="tablist" aria-label="Product">
+          {syms.map(o => <button key={o.sym} type="button" role="tab" aria-selected={o.sym === sym} className={'ps-px__chip' + (o.sym === sym ? ' is-on' : '')} onClick={() => { setPick(o.sym); setHover(null); }}>{o.label}</button>)}
+        </div>
+      )}
+      <div className="ps-px__head">
+        <span className="ps-px__val">{psPxFmt(shown, data && data.currency)}</span>
+        {chg != null && <span className={'ps-px__chg ' + psTone(chg)}>{chg > 0 ? '+' : chg < 0 ? '−' : ''}{psPxFmt(Math.abs(chg), data && data.currency)} ({fmtPct(chgPct, { decimals: 2 })})</span>}
+        <span className="ps-px__when">{hv ? psPxWhen(hv[0], range) : tk && tk.price > 0 ? 'live' : refLabel}</span>
+      </div>
+      <div className="ps-px__plot" onMouseMove={onMove} onMouseLeave={() => setHover(null)} onTouchStart={onMove} onTouchMove={onMove} onTouchEnd={() => setHover(null)}>
+        {path ? (
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Koersverloop ${cur ? cur.label : ''}`}>
+            <defs><linearGradient id={'pxg-' + sym.replace(/[^a-z0-9]/gi, '')} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={col} stopOpacity=".18" /><stop offset="1" stopColor={col} stopOpacity="0" /></linearGradient></defs>
+            {range === '1d' && ref != null && yOf(ref) >= 0 && yOf(ref) <= H && <line x1="0" x2={W} y1={yOf(ref)} y2={yOf(ref)} stroke="var(--border-strong, var(--border))" strokeDasharray="4 5" vectorEffect="non-scaling-stroke" />}
+            <path d={area} fill={`url(#pxg-${sym.replace(/[^a-z0-9]/gi, '')})`} />
+            <path d={path} fill="none" stroke={col} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+            {hv && <line x1={xOf(hover)} x2={xOf(hover)} y1="0" y2={H} stroke="var(--fg-muted)" strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+          </svg>
+        ) : <div className="ps-px__empty">{err ? `Koers niet beschikbaar: ${err}` : data ? 'Geen koersen in deze periode' : 'Koers laden…'}</div>}
+        {path && <><span className="ps-px__hi">{psPxFmt(mx, data.currency)}</span><span className="ps-px__lo">{psPxFmt(mn, data.currency)}</span></>}
+      </div>
+      <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode koers" value={range}
+        onChange={k => { setRange(k); setHover(null); app.setPrefs({ pxRange: k }); }} options={PS_PX_RANGES.map(([v, label]) => ({ value: v, label }))} />
+      <div className="ps-stk__foot"><span>Koers van het product zelf via Yahoo Finance{data && data.currency ? `, in ${data.currency}` : ''}{range === '1d' ? ' · incl. voor- en nabeurs' : ''}{tk && tk.price > 0 ? ((range === '1d' || range === '5d') ? ' · laatste punt live' : ' · prijs bovenaan live') : ''}</span></div>
+    </section>
+  );
+}
+
 function PsPostCoins({ app, s }) {
   const privacy = !!(app.prefs && app.prefs.privacy);
   const leaves = s.leaves || [];
@@ -1620,6 +1768,7 @@ function PsPartyBody({ app, s }) {
             valueText={i => `${fmtDateLong(chartDates[i])}: ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i])}`} />
         </div>
       )}
+      <PsPriceChart app={app} s={s} />
       <dl className="ps-kgrid">
         <div><dt>Ingelegd</dt><dd><Money value={s.invested} /></dd></div>
         <div><dt>Aandeel</dt><dd className="num">{inc && model.totals.value > 0 ? fmtPct(s.currentValueEur / model.totals.value * 100, { decimals: 1, sign: false }) : '—'}</dd></div>
