@@ -20,6 +20,20 @@ injectStyles('overzicht', `
 .ov-cfd__new { margin: 10px 0 2px; align-self: flex-start; border: 1px dashed var(--border); background: transparent; color: var(--fg); border-radius: 999px; padding: 6px 12px; font: 600 13px/18px var(--font); cursor: pointer; }
 .ov-cfd__close { align-self: flex-end; margin-top: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 2px 10px; font: 600 12px/18px var(--font); cursor: pointer; }
 .ov-cfd__close:hover { border-color: var(--fg-muted); }
+.ov-intra-desk { padding: 12px 28px 4px; border-top: 1px solid var(--border); }
+.ov-intra-desk__title { font: 600 13px/18px var(--font); margin-bottom: 6px; }
+.ov-intra { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ov-intra__days { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.ov-intra__day { flex: none; border: 1px solid var(--border); background: transparent; color: var(--fg-muted); border-radius: 999px; padding: 3px 10px; font: 500 12px/16px var(--font); cursor: pointer; white-space: nowrap; }
+.ov-intra__day.is-on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.ov-intra__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; }
+.ov-intra__chg { font: 600 14px/19px var(--font); font-variant-numeric: tabular-nums; }
+.ov-intra__meta { font-size: 12px; line-height: 17px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.ov-intra__plot { position: relative; touch-action: pan-y; cursor: crosshair; }
+.ov-intra__plot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.ov-intra__axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.ov-intra__empty { display: grid; place-items: center; text-align: center; padding: 0 16px; font-size: 13px; color: var(--fg-muted); border: 1px dashed var(--border); border-radius: var(--r-2, 12px); }
+.ov-m__chart .ov-intra { padding: 0 16px; }
 .ov-cfd__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ov-cfd__val { font: 650 28px/1.1 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .ov-cfd__pnl { font: 600 15px/20px var(--font); font-variant-numeric: tabular-nums; }
@@ -631,6 +645,80 @@ function OvCfdLive({ app, s: sProp = null, embedded = false }) {
 }
 
 // ===================================================================
+// Dagverloop: de totale waarde binnen één dag (punten per 5 minuten uit app.intraday)
+// ===================================================================
+function ovDayKey(ts) { const x = new Date(ts * 1000); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
+function OvIntraday({ app, height = 176, mode = 'value' }) {
+  const pts = app.intraday || [];
+  const privacy = !!app.prefs.privacy;
+  const days = useMemo(() => [...new Set(pts.map(p => ovDayKey(p[0])))].slice(-7), [pts]);
+  const today = todayIsoLocal();
+  const [pick, setPick] = useState(null);
+  const [hover, setHover] = useState(null);
+  const day = pick && days.includes(pick) ? pick : (days.includes(today) ? today : days[days.length - 1]);
+  // Vandaag: het actuele totaal als laatste punt, zodat de lijn tot nu loopt.
+  const dayPts = useMemo(() => {
+    const list = pts.filter(p => ovDayKey(p[0]) === day).map(p => p.slice());
+    const t = app.model && app.model.totals;
+    if (day === today && t && t.value > 0 && list.length) list.push([Date.now() / 1000, t.value, t.netInvested || 0]);
+    return list;
+  }, [pts, day, today, app.model]);
+  const prev = useMemo(() => { let b = null; for (const p of pts) { if (ovDayKey(p[0]) < day) b = p; else break; } return b; }, [pts, day]);
+  const val = p => (mode === 'value' ? p[1] : p[1] - p[2]);
+  const base = prev || dayPts[0] || null;
+  const chips = days.length > 1 && (
+    <div className="ov-intra__days" role="tablist" aria-label="Dag">
+      {days.map(k => <button key={k} type="button" role="tab" aria-selected={k === day} className={'ov-intra__day' + (k === day ? ' is-on' : '')} onClick={() => { setPick(k); setHover(null); }}>{k === today ? 'Vandaag' : fmtDateShort(k)}</button>)}
+    </div>);
+  if (dayPts.length < 2) {
+    return (<div className="ov-intra" data-testid="ov-intraday">{chips}
+      <div className="ov-intra__empty" style={{ height }}>Nog te weinig metingen{day === today ? ' vandaag' : ''}. De app legt elke 5 minuten de waarde vast zolang hij open is.</div></div>);
+  }
+  const vals = dayPts.map(val);
+  const b0 = val(base);
+  let mn = Math.min(...vals, b0), mx = Math.max(...vals, b0);
+  if (mx - mn < 1) { mx += 1; mn -= 1; }
+  const pad = (mx - mn) * 0.1, lo = mn - pad, hi = mx + pad;
+  const W = 1000, H = height;
+  const t0 = dayPts[0][0], t1 = dayPts[dayPts.length - 1][0];
+  const x = i => (dayPts[i][0] - t0) / ((t1 - t0) || 1) * W;
+  const y = v => H - (v - lo) / (hi - lo) * H;
+  const path = dayPts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val(p)).toFixed(1)}`).join('');
+  const hp = hover != null && dayPts[hover] ? dayPts[hover] : dayPts[dayPts.length - 1];
+  const chg = val(hp) - b0;
+  const pct = base[1] > 0 ? chg / base[1] * 100 : null;
+  const col = chg < -0.005 ? 'var(--negative)' : chg > 0.005 ? 'var(--positive)' : 'var(--fg-muted)';
+  const onMove = e => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const cx = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width * W;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < dayPts.length; i++) { const dd = Math.abs(x(i) - cx); if (dd < bd) { bd = dd; best = i; } }
+    setHover(best);
+  };
+  const hm = ts => new Date(ts * 1000).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+  const money = v => (privacy ? '€ •••••' : fmtMoney(v, { decimals: 0 }));
+  return (
+    <div className="ov-intra" data-testid="ov-intraday">
+      {chips}
+      <div className="ov-intra__head">
+        <span className="ov-intra__chg" style={{ color: col }}>{privacy ? '€ •••••' : fmtMoney(chg, { sign: true, decimals: 2 })}{pct != null ? ` · ${fmtPct(pct, { decimals: 2 })}` : ''}</span>
+        <span className="ov-intra__meta">{hover != null ? `${hm(hp[0])} · ${money(hp[1])} · ingelegd ${money(hp[2])}` : `${prev ? 'sinds slot vorige dag' : 'sinds eerste meting'} · laag ${money(Math.min(...dayPts.map(p => p[1])))} · hoog ${money(Math.max(...dayPts.map(p => p[1])))}`}</span>
+      </div>
+      <div className="ov-intra__plot" style={{ height }} onMouseMove={onMove} onMouseLeave={() => setHover(null)} onTouchStart={onMove} onTouchMove={onMove} onTouchEnd={() => setHover(null)}>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Waardeverloop binnen de dag">
+          <defs><linearGradient id="ov-intra-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={col} stopOpacity=".16" /><stop offset="1" stopColor={col} stopOpacity="0" /></linearGradient></defs>
+          <line x1="0" x2={W} y1={y(b0)} y2={y(b0)} stroke="var(--border-strong, var(--border))" strokeDasharray="4 5" vectorEffect="non-scaling-stroke" />
+          <path d={`${path}L${W},${H}L0,${H}Z`} fill="url(#ov-intra-g)" />
+          <path d={path} fill="none" stroke={col} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+          {hover != null && <line x1={x(hover)} x2={x(hover)} y1="0" y2={H} stroke="var(--fg-muted)" strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+        </svg>
+      </div>
+      <div className="ov-intra__axis"><span>{hm(t0)}</span><span>{dayPts.length - (day === today ? 1 : 0)} metingen</span><span>{hm(t1)}</span></div>
+    </div>
+  );
+}
+
+// ===================================================================
 // Verdeling card
 // ===================================================================
 function OvVerdelingCard({ app, pinIndex }) {
@@ -770,6 +858,12 @@ function OvPrestatiesCard({ app, pf }) {
           valueText={pf.valueText} privacy={privacy}
           emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
       </div>
+      {(app.intraday || []).length >= 2 && (
+        <div className="ov-intra-desk">
+          <div className="ov-intra-desk__title">Dagverloop</div>
+          <OvIntraday app={app} height={110} mode={pf.mode === 'gain' ? 'gain' : 'value'} />
+        </div>
+      )}
       {twrGapNote && <div className="ov-chartnote">Koershistorie onvolledig; dagen zonder koers zijn overgeslagen.</div>}
       {pf.setsDiffer && <div className="ov-chartnote">Grafiek: {pf.notInChart} partij(en) niet meegeteld</div>}
       <div className="ov-kpis" data-testid="kpi-strip">
@@ -1021,6 +1115,7 @@ function OvMobile({ app }) {
         <div className="ov-m__delta" data-testid="hero-delta">
           <Delta value={pf.deltaGain} pct={pf.deltaPct} size="md" showGlyph={false} />
           <span className="ov-m__ctx">{mobileCtx}</span>
+          {pf.ci != null && <span className="ov-m__ctx" data-testid="hero-net">· ingelegd {privacy ? '€ •••••' : fmtMoney(pf.heroNet)}</span>}
           <button type="button" className="ov-m__info" aria-label="Hoe berekenen we je winst?" onClick={() => setExplain(true)}>
             <Icon name="info" size={14} />
           </button>
@@ -1029,13 +1124,14 @@ function OvMobile({ app }) {
 
       <div className="ov-m__chartblock">
         <div className="ov-m__chart">
+          {pf.periodKey === '1D' && (app.intraday || []).length >= 2 ? <OvIntraday app={app} height={150} mode={pf.mode === 'gain' ? 'gain' : 'value'} /> :
           <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
             kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} onCursor={pf.onCursor}
             ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
             valueText={pf.valueText} privacy={privacy}
-            emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
+            emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />}
         </div>
         <div className="ov-m__periods" role="radiogroup" aria-label="Periode">
           {pf.periodOptions.map(o => (

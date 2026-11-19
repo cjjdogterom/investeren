@@ -327,6 +327,30 @@ async function supabaseSaveSettings(client, state) {
 // Schrijf alleen data.widgetSnapshot (voor de iOS-widget). Read-modify-write op het REMOTE
 // document: lokale instellingen worden nooit meegestuurd, dus dit overschrijft geen wijzigingen
 // van anderen. Bestaat de rij nog niet, dan niets doen.
+// Dagverloop: de totale waarde meermaals per dag in een eigen rij (portfolio/id 'intraday'), los van het hoofddocument.
+// points = [[epochSeconden, totaal, nettoIngelegd], …], één punt per 5 minuten, 8 dagen bewaard.
+const INTRADAY_STEP_S = 300, INTRADAY_KEEP_S = 8 * 86400;
+function intradayMerge(a, b) {
+  const map = new Map();
+  for (const p of [...(a || []), ...(b || [])]) {
+    if (!Array.isArray(p) || !(p[0] > 0) || !Number.isFinite(+p[1])) continue;
+    map.set(Math.floor(p[0] / INTRADAY_STEP_S), [Math.round(p[0]), Math.round(p[1] * 100) / 100, Math.round((+p[2] || 0) * 100) / 100]);
+  }
+  const min = Date.now() / 1000 - INTRADAY_KEEP_S;
+  return [...map.values()].filter(p => p[0] >= min).sort((x, y) => x[0] - y[0]);
+}
+async function supabaseLoadIntraday(client) {
+  const { data, error } = await client.from('portfolio').select('data').eq('id', 'intraday').maybeSingle();
+  if (error) throw new Error(error.message);
+  return intradayMerge(data && data.data && data.data.points, []);
+}
+async function supabaseAppendIntraday(client, point) {
+  const points = intradayMerge(await supabaseLoadIntraday(client), [point]);
+  const { error } = await client.from('portfolio').upsert({ id: 'intraday', data: { points } }, { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+  return points;
+}
+
 async function supabaseSaveWidgetSnapshot(client, snapshot) {
   const { data: current, error: readError } = await client
     .from('portfolio')
@@ -2211,6 +2235,33 @@ function App() {
     return () => clearTimeout(widgetSnapTimerRef.current);
   }, [sbOk, model, prefs.exclPE, prefs.period, syncStatus, spotStatus, supabaseConfig, state.transactions]);
 
+  // ── Dagverloop: elke 5 minuten de totale waarde vastleggen (alleen met verse koersen en een geslaagde sync) ──
+  const [intraday, setIntraday] = React.useState(() => { try { return intradayMerge(JSON.parse(localStorage.getItem('investeringen-intraday-v1')), []); } catch (e) { return []; } });
+  React.useEffect(() => { try { localStorage.setItem('investeringen-intraday-v1', JSON.stringify(intraday)); } catch (e) { /* ignore */ } }, [intraday]);
+  const intradayRef = React.useRef({ model: null, ok: false });
+  intradayRef.current = { model, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0 };
+  React.useEffect(() => {
+    if (!sbOk) return undefined;
+    const client = getSupabaseClient(supabaseConfig);
+    if (!client) return undefined;
+    let dead = false;
+    supabaseLoadIntraday(client).then(p => { if (!dead) setIntraday(p); }).catch(() => {});
+    const tick = () => {
+      const cur = intradayRef.current;
+      if (dead || !cur.ok || document.hidden || !supabaseLoadedRef.current || !transactionsLoadedRef.current) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const t = cur.model && cur.model.totals;
+      if (!t || !Number.isFinite(t.value) || !(t.value > 0)) return;
+      supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0])
+        .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
+    };
+    const first = setTimeout(tick, 20000);
+    const id = setInterval(tick, INTRADAY_STEP_S * 1000);
+    const onVis = () => { if (!document.hidden) setTimeout(tick, 8000); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { dead = true; clearTimeout(first); clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [sbOk, supabaseConfig]); // eslint-disable-line
+
   // ── Navigation ──
   const doNavigate = React.useCallback((path, { replace = false } = {}) => {
     const norm = shNormalizePath(path);
@@ -2494,11 +2545,11 @@ function App() {
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
-    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify,
+    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,
-    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live,
+    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live, intraday,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
