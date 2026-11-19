@@ -1770,9 +1770,15 @@ function PsPartyBody({ app, s }) {
   const netP = model.series.netByParty[id];
   const [cursor, setCursor] = useState(null);
   const [allTx, setAllTx] = useState(false);
-  const chartDates = r.i1 >= 0 ? dates.slice(r.i0, r.i1 + 1) : [];
-  const primary = byP && r.i1 >= 0 ? byP.slice(r.i0, r.i1 + 1) : [];
-  const secondary = netP && r.i1 >= 0 ? netP.slice(r.i0, r.i1 + 1) : null;
+  // De grafiek begint pas op de eerste dag met waarde (of inleg), niet met een vlakke nul-lijn ervoor.
+  let c0 = r.i0;
+  if (byP && r.i1 >= 0) {
+    while (c0 < r.i1 && !(Math.abs(byP[c0] || 0) > 0.5 || Math.abs((netP && netP[c0]) || 0) > 0.5)) c0++;
+    if (c0 > r.i1 - 1) c0 = Math.max(r.i0, r.i1 - 1);   // minstens twee punten
+  }
+  const chartDates = r.i1 >= 0 ? dates.slice(c0, r.i1 + 1) : [];
+  const primary = byP && r.i1 >= 0 ? byP.slice(c0, r.i1 + 1) : [];
+  const secondary = netP && r.i1 >= 0 ? netP.slice(c0, r.i1 + 1) : null;
   const hasChart = primary.length >= 2 && primary.some(v => Math.abs(v) > 0.5);
   const cg = cagrOf(s);
   const gp = goalProgress(s);
