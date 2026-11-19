@@ -1255,6 +1255,18 @@ function summarizePartyBase(party, transactions, spots, ctx) {
   };
 }
 
+// Opslag voor live ticks (los van de React-state van de app, zodat alleen de CFD-onderdelen elke seconde hertekenen).
+const cfdTickStore = {
+  ticks: {}, subs: new Set(),
+  set(next) { this.ticks = next; this.subs.forEach(f => f(next)); },
+  subscribe(f) { this.subs.add(f); return () => this.subs.delete(f); },
+};
+function useCfdTicks() {
+  const [t, setT] = React.useState(cfdTickStore.ticks);
+  React.useEffect(() => cfdTickStore.subscribe(setT), []);
+  return t;
+}
+
 // ----- CFD-rekening (Trading 212 CFD) -----
 // Geen API voor CFD's: de stand (accountwaarde, cash, margin, open posities) staat als momentopname op de partij
 // (party.cfd) en reist mee met de partijlijst. De waarde in totalen/grafiek komt uit de waardering die bij elke
@@ -1283,30 +1295,50 @@ function cfdNormalize(c) {
     positions, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0),
   };
 }
-// Live: per positie de koers uit de koersen-worker (zelfde bron als de aandelen). Het resultaat schuift mee met
-// het koersverschil t.o.v. de ingevoerde stand (zo blijven spread/kosten van Trading 212 in het startpunt zitten);
-// de accountwaarde beweegt met hetzelfde bedrag.
-function cfdApplyQuotes(cfd, quotes) {
-  if (!cfd || !quotes) return cfd;
-  let delta = 0, live = false, marketTime = null;
+// Live: per positie de koers (stream-tick per seconde, anders de koersen-worker). Het resultaat schuift mee met het
+// koersverschil t.o.v. de ingevoerde stand (zo blijven spread/kosten van Trading 212 in het startpunt zitten).
+// Accountwaarde beweegt met hetzelfde bedrag; margin schaalt met de positiewaarde (zelfde margepercentage als bij
+// de stand); cash = accountwaarde − margin (zoals bij Trading 212); health is een schatting op basis van de stand.
+function cfdFxToEur(ccy, quotes, ticks, sym) {
+  if (!ccy || ccy === 'EUR') return 1;
+  const t = ticks && ticks[`EUR${ccy}=X`];
+  if (t && t.price > 0) return 1 / t.price;
+  const q = quotes && sym ? quotes[sym] : null;
+  return q && +q.price > 0 && +q.priceEur > 0 ? q.priceEur / q.price : null;
+}
+function cfdLive(cfd, quotes, ticks) {
+  if (!cfd) return cfd;
+  let delta = 0, live = false, lastTime = null, stream = false, notional0 = 0, notional1 = 0;
   const positions = cfd.positions.map(x => {
-    const q = x.symbol ? quotes[x.symbol] : null;
-    if (!q || !(+q.price > 0) || !(+q.priceEur > 0) || x.quantity == null || x.currentPrice == null || x.pnl == null) return x;
-    if (q.currency && x.currency && String(q.currency).toUpperCase() !== x.currency) return x;
-    const fx = q.priceEur / q.price;
-    const d = x.quantity * (x.dir === 'sell' ? -1 : 1) * (q.price - x.currentPrice) * fx;
+    const t = ticks && x.symbol ? ticks[x.symbol] : null;
+    const q = quotes && x.symbol ? quotes[x.symbol] : null;
+    const price = t && t.price > 0 ? t.price : (q && +q.price > 0 && (!q.currency || String(q.currency).toUpperCase() === x.currency) ? +q.price : null);
+    const fx = cfdFxToEur(x.currency, quotes, ticks, x.symbol);
+    if (price == null || fx == null || x.quantity == null || x.currentPrice == null || x.pnl == null) return x;
+    const d = x.quantity * (x.dir === 'sell' ? -1 : 1) * (price - x.currentPrice) * fx;
     delta += d; live = true;
-    if (q.marketTime && (!marketTime || q.marketTime > marketTime)) marketTime = q.marketTime;
-    return { ...x, snapshotPrice: x.currentPrice, snapshotPnl: x.pnl, currentPrice: q.price, pnl: x.pnl + d, live: true, marketTime: q.marketTime || null };
+    notional0 += Math.abs(x.quantity * x.currentPrice * fx); notional1 += Math.abs(x.quantity * price * fx);
+    const time = t ? t.time : (q && q.marketTime) || null;
+    if (t) stream = true;
+    if (time && (!lastTime || time > lastTime)) lastTime = time;
+    return { ...x, snapshotPrice: x.currentPrice, snapshotPnl: x.pnl, currentPrice: price, pnl: x.pnl + d, valueEur: x.quantity * price * fx,
+      live: true, stream: !!t, marketTime: time, marketHours: t ? t.marketHours : null };
   });
   if (!live) return cfd;
-  return { ...cfd, positions, live: true, marketTime, liveDelta: delta, snapshotValue: cfd.accountValue,
-    accountValue: cfd.accountValue != null ? cfd.accountValue + delta : null, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0) };
+  const accountValue = cfd.accountValue != null ? cfd.accountValue + delta : null;
+  const margin = cfd.margin != null && notional0 > 0 ? cfd.margin * notional1 / notional0 : cfd.margin;
+  const cash = accountValue != null && margin != null ? accountValue - margin : cfd.cash;
+  const base0 = cfd.accountValue != null && cfd.margin != null ? cfd.accountValue - cfd.margin / 2 : null;
+  const health = cfd.health != null && base0 > 0 && accountValue != null && margin != null
+    ? Math.max(0, Math.min(100, cfd.health * (accountValue - margin / 2) / base0)) : cfd.health;
+  return { ...cfd, positions, live: true, stream, marketTime: lastTime, liveDelta: delta, snapshotValue: cfd.accountValue,
+    accountValue, margin, cash, health, healthEstimated: health !== cfd.health,
+    openPnl: positions.reduce((acc, x) => acc + (x.pnl || 0), 0) };
 }
 function summarizeParty(party, transactions, spots, ctx) {
   const s = summarizePartyBase(party, transactions, spots, ctx);
   if (!s || !party || !party.cfd) return s;
-  const cfd = cfdApplyQuotes(cfdNormalize(party.cfd), spots && spots.stockQuotes);
+  const cfd = cfdLive(cfdNormalize(party.cfd), spots && spots.stockQuotes, spots && spots.liveTicks);
   if (!cfd) return s;
   // Accountwaarde (live) is de waarde van de positie zolang de stand de laatste waardering is.
   const lastVal = s.lastValuationDate || null;
@@ -2792,7 +2824,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdTickStore, useCfdTicks,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,

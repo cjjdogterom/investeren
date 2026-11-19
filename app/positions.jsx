@@ -779,9 +779,13 @@ function cfdPrice(v, ccy) {
   return sym ? `${sym}${body}` : `${body} ${ccy}`;
 }
 function cfdQty(q) { return q == null ? '—' : fmtQty(q, '', { decimals: q % 1 === 0 ? 0 : 4 }).trim(); }
+function usePsCfd(app, s) {
+  const ticks = useCfdTicks();
+  return (s.party && s.party.cfd ? cfdLive(cfdNormalize(s.party.cfd), app.stockQuotes, ticks) : null) || s.cfd;
+}
 function PsCfdRows({ app, s }) {
   const privacy = !!app.prefs.privacy;
-  const c = s.cfd;
+  const c = usePsCfd(app, s);
   const pm = v => (privacy ? '€ •••••' : fmtMoney(v, { sign: true, decimals: 2 }));
   return (
     <div className="ps-lsub" data-testid={`holding-cfd-${s.party.id}`}>
@@ -1349,7 +1353,7 @@ function PsStockPositions({ app, s }) {
 function PsCfdAccount({ app, s }) {
   const privacy = !!(app.prefs && app.prefs.privacy);
   const [edit, setEdit] = useState(false);
-  const c = s.cfd;
+  const c = usePsCfd(app, s);
   const netIn = s.costBasis - (s.realizedPnl || 0);
   const pm = (v, d = 0) => (privacy ? '€ •••••' : fmtMoney(v, { sign: true, decimals: d }));
   return (
@@ -1368,6 +1372,8 @@ function PsCfdAccount({ app, s }) {
           <div><dt>Open resultaat</dt><dd className={psTone(c.openPnl)}>{pm(c.openPnl, 2)}</dd></div>
           <div><dt>Margin</dt><dd><Money value={c.margin} decimals={2} /></dd></div>
           <div><dt>Cash</dt><dd><Money value={c.cash} decimals={2} /></dd></div>
+          <div><dt>Health{c.healthEstimated ? ' (schatting)' : ''}</dt><dd className="num">{c.health == null ? '—' : `${cfdNf(0).format(c.health)}%`}</dd></div>
+          <div><dt>Koers</dt><dd className="num">{c.stream ? 'Live (per tick)' : c.live ? 'Elke 10 min' : 'Stand'}</dd></div>
         </dl>
         <div className="ps-coins" data-testid="cfd-positions">
           {c.positions.map(x => (
@@ -1387,8 +1393,8 @@ function PsCfdAccount({ app, s }) {
           {!c.positions.length && <div className="ps-coin"><span className="ps-subtle">Geen open posities</span></div>}
         </div>
         <div className="ps-stk__foot">
-          {c.live && <span>Koers live via Yahoo Finance{c.marketTime ? ` · ${fmtRelDay(c.marketTime.slice(0, 10))} ${fmtTime(c.marketTime)}` : ''} · resultaat en accountwaarde rekenen mee ({privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand)</span>}
-          <span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · cash en margin bewegen niet live</span>
+          {c.live && <span>Koers {c.stream ? 'live per tick' : 'live'} via Yahoo Finance{c.marketTime ? ` · ${fmtRelDay(c.marketTime.slice(0, 10))} ${new Date(c.marketTime).toLocaleTimeString('nl-NL')}` : ''} · resultaat, accountwaarde, margin en cash rekenen mee ({privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand)</span>}
+          <span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · health is een schatting tot je de stand bijwerkt</span>
         </div>
       </>)}
       {edit && <PsCfdEdit app={app} s={s} onClose={() => setEdit(false)} />}

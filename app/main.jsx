@@ -1125,6 +1125,51 @@ class ShErrorBoundary extends React.Component {
   }
 }
 
+// ── Live koersen (Yahoo Finance-stream, per tick) ──
+// Websocket met protobuf-berichten (base64). We lezen alleen id (1), prijs (2), tijd (3) en markturen (7).
+function yhDecode(b64) {
+  let bin; try { bin = atob(b64); } catch (e) { return null; }
+  const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  const dv = new DataView(b.buffer); const out = {}; let i = 0;
+  const varint = () => { let r = 0n, s = 0n; for (;;) { const x = b[i++]; r |= BigInt(x & 0x7f) << s; if (!(x & 0x80)) break; s += 7n; } return r; };
+  while (i < b.length) {
+    const key = Number(varint()); const f = key >> 3, wt = key & 7;
+    if (wt === 0) { const v = varint(); if (f === 3) out.time = Number((v >> 1n) ^ -(v & 1n)); else if (f === 7) out.marketHours = Number(v); }
+    else if (wt === 1) i += 8;
+    else if (wt === 2) { const len = Number(varint()); if (f === 1) out.id = new TextDecoder().decode(b.subarray(i, i + len)); i += len; }
+    else if (wt === 5) { if (f === 2) out.price = dv.getFloat32(i, true); i += 4; }
+    else break;
+  }
+  return out.id && out.price > 0 ? out : null;
+}
+function useLiveTicks(symbols) {
+  const setTicks = fn => cfdTickStore.set(fn(cfdTickStore.ticks));
+  const sig = symbols.join(',');
+  React.useEffect(() => {
+    if (!sig || typeof WebSocket === 'undefined') return undefined;
+    const subs = sig.split(',');
+    let ws = null, closed = false, retry = 0, timer = null;
+    let buf = {}, dirty = false;
+    const flush = setInterval(() => { if (dirty) { const b = buf; buf = {}; dirty = false; setTicks(t => ({ ...t, ...b })); } }, 1000);
+    const open = () => {
+      if (closed || document.hidden) return;
+      try { ws = new WebSocket('wss://streamer.finance.yahoo.com/?version=2'); } catch (e) { return; }
+      ws.onopen = () => { retry = 0; ws.send(JSON.stringify({ subscribe: subs })); };
+      ws.onmessage = e => {
+        let msg = e.data; try { const j = JSON.parse(msg); msg = j && j.message; } catch (err) { /* v1: kale base64 */ }
+        const t = msg && yhDecode(msg);
+        if (t) { buf[t.id] = { price: t.price, time: t.time ? new Date(t.time).toISOString() : new Date().toISOString(), marketHours: t.marketHours, at: Date.now() }; dirty = true; }
+      };
+      ws.onclose = () => { ws = null; if (!closed && !document.hidden) timer = setTimeout(open, Math.min(30000, 1000 * 2 ** retry++)); };
+      ws.onerror = () => { try { ws && ws.close(); } catch (e) { /* ignore */ } };
+    };
+    const onVis = () => { if (document.hidden) { try { ws && ws.close(); } catch (e) { /* ignore */ } } else if (!ws) { clearTimeout(timer); open(); } };
+    document.addEventListener('visibilitychange', onVis);
+    open();
+    return () => { closed = true; clearInterval(flush); clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); try { ws && ws.close(); } catch (e) { /* ignore */ } };
+  }, [sig]);
+}
+
 // ─────────────────────────────────────────────────────────────
 function App() {
   const [state, setState]           = React.useState(() => loadState());
@@ -1140,6 +1185,23 @@ function App() {
   const refreshChainRef = React.useRef(null);
   React.useEffect(() => { try { localStorage.setItem(CHAIN_CACHE_KEY, JSON.stringify(chainBalances)); } catch (e) { /* ignore */ } }, [chainBalances]);
   const [stockQuotes, setStockQuotes] = React.useState(loadStockCache);
+  // CFD-posities: live ticks (per seconde in beeld) plus de wisselkoers naar euro.
+  const cfdLiveSymbols = React.useMemo(() => {
+    const syms = cfdSymbolsOf(state.parties);
+    if (!syms.length) return [];
+    const ccys = new Set();
+    (state.parties || []).forEach(p => p && p.cfd && (p.cfd.positions || []).forEach(x => { const c = String(x.currency || '').toUpperCase(); if (c && c !== 'EUR') ccys.add(c); }));
+    return [...syms, ...[...ccys].map(c => `EUR${c}=X`)].sort();
+  }, [state.parties]);
+  useLiveTicks(cfdLiveSymbols);
+  // Het model (totalen, grafiek) rekent elke 15 s met de laatste ticks; de CFD-kaart zelf elke seconde.
+  const [modelTicks, setModelTicks] = React.useState({});
+  React.useEffect(() => {
+    if (!cfdLiveSymbols.length) return undefined;
+    const id = setInterval(() => setModelTicks(cfdTickStore.ticks), 15000);
+    const first = setTimeout(() => setModelTicks(cfdTickStore.ticks), 3000);
+    return () => { clearInterval(id); clearTimeout(first); };
+  }, [cfdLiveSymbols.join(',')]); // eslint-disable-line
   const [stockStatus, setStockStatus] = React.useState({ loading: false, error: null, fetchedAt: null });
   const stockQuotesRef = React.useRef(stockQuotes);
   stockQuotesRef.current = stockQuotes;
@@ -1880,11 +1942,12 @@ function App() {
     paxgHistory:           state.paxgHistory   || [],
     chainBalances:         chainBalances || {},
     stockQuotes:           stockQuotes || {},
+    liveTicks:             modelTicks,
     stockNames:            tweaks.stockNames || {},
     t212Live:              t212Live,
     // Rendement Trading 212 vanaf deze datum (standaard 11-11-2026; leeg = vanaf het begin).
     t212Start:             tweaks.t212Start === undefined ? '2026-11-11' : (tweaks.t212Start || null),
-  }), [spotsKey, stockQuotes, tweaks.stockNames, t212Live, tweaks.t212Start]); // eslint-disable-line
+  }), [spotsKey, stockQuotes, modelTicks, tweaks.stockNames, t212Live, tweaks.t212Start]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.

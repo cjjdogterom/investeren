@@ -13,6 +13,29 @@ injectStyles('overzicht', `
 .ov-fin__list > .list-row + .list-row { border-top: 1px solid var(--border); }
 .ov-fin .list-row__subtitle { white-space: normal; }
 .ov-fin__more { padding-top: 8px; }
+/* Live CFD-kaart */
+.ov-cfd__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ov-cfd__val { font: 650 28px/1.1 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ov-cfd__pnl { font: 600 15px/20px var(--font); font-variant-numeric: tabular-nums; }
+.ov-cfd__live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.ov-cfd__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pos, #16a34a); box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos, #16a34a) 60%, transparent); animation: ov-cfd-pulse 1.6s ease-out infinite; }
+.ov-cfd__dot--off { background: var(--fg-subtle); animation: none; }
+@keyframes ov-cfd-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos, #16a34a) 55%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+@media (prefers-reduced-motion: reduce) { .ov-cfd__dot { animation: none; } }
+.ov-cfd__pos { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); margin-top: 12px; }
+.ov-cfd__tick { width: 36px; height: 36px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font: 650 10px/1 var(--font); color: var(--fg-muted); grid-row: span 2; }
+.ov-cfd__name { font: 600 14px/19px var(--font); }
+.ov-cfd__sub { font-size: 12.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.ov-cfd__end { text-align: right; font-variant-numeric: tabular-nums; grid-row: span 2; display: flex; flex-direction: column; gap: 2px; }
+.ov-cfd__px { font: 650 15px/20px var(--font); transition: color .3s; }
+.ov-cfd__px.is-up { color: var(--pos, #16a34a); } .ov-cfd__px.is-down { color: var(--neg, #dc2626); }
+.ov-cfd__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--border); padding-top: 10px; }
+.ov-cfd__grid > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ov-cfd__grid dt { font-size: 12px; color: var(--fg-muted); }
+.ov-cfd__grid dd { margin: 0; font: 600 14px/19px var(--font); font-variant-numeric: tabular-nums; }
+.ov-cfd__bar { height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; margin-top: 4px; }
+.ov-cfd__bar > i { display: block; height: 100%; border-radius: 2px; }
+@media (max-width: 520px) { .ov-cfd__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 10px; } }
 .ov-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .ov-left { flex: 7 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .ov-right { flex: 5 1 380px; min-width: 0; display: flex; flex-direction: column; }
@@ -519,6 +542,80 @@ function OvFinOpen({ app }) {
 }
 
 // ===================================================================
+// CFD live (Trading 212 CFD): accountwaarde, open resultaat en koers per tick
+// ===================================================================
+function OvCfdPos({ x, privacy }) {
+  const prev = React.useRef(x.currentPrice);
+  const [dir, setDir] = useState(null);
+  React.useEffect(() => {
+    if (prev.current != null && x.currentPrice !== prev.current) {
+      setDir(x.currentPrice > prev.current ? 'is-up' : 'is-down');
+      const t = setTimeout(() => setDir(null), 700);
+      prev.current = x.currentPrice;
+      return () => clearTimeout(t);
+    }
+    prev.current = x.currentPrice;
+    return undefined;
+  }, [x.currentPrice]);
+  const sym = { USD: '$', EUR: '€', GBP: '£' }[x.currency] || '';
+  const px = v => (v == null ? '—' : sym + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v));
+  const tone = x.pnl > 0.005 ? 'pos' : x.pnl < -0.005 ? 'neg' : '';
+  return (
+    <div className="ov-cfd__pos" data-testid={`ov-cfd-pos-${x.symbol}`}>
+      <span className="ov-cfd__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
+      <span className="ov-cfd__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</span>
+      <span className="ov-cfd__end">
+        <span className={'ov-cfd__px' + (dir ? ' ' + dir : '')}>{px(x.currentPrice)}</span>
+        <span className={'ov-cfd__pnl ' + (tone ? `tone-${tone}` : '')} style={{ color: tone === 'neg' ? 'var(--neg)' : tone === 'pos' ? 'var(--pos)' : undefined }}>
+          {x.pnl == null ? '—' : privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true, decimals: 2 })}</span>
+      </span>
+      <span className="ov-cfd__sub">{fmtQty(x.quantity, '', { decimals: x.quantity % 1 === 0 ? 0 : 4 }).trim()} st. · geopend {px(x.openPrice)}{x.openPrice > 0 && x.currentPrice != null ? ` · ${fmtPct((x.currentPrice / x.openPrice - 1) * 100 * (x.dir === 'sell' ? -1 : 1), { decimals: 2 })}` : ''}</span>
+    </div>
+  );
+}
+function OvCfdLive({ app }) {
+  const ticks = useCfdTicks();
+  const s = ((app.model && app.model.summaries) || []).find(x => x && x.party && x.party.cfd && x.party.includeInTotal !== false);
+  if (!s) return null;
+  const c = cfdLive(cfdNormalize(s.party.cfd), app.stockQuotes, ticks);
+  if (!c || c.accountValue == null) return null;
+  const privacy = !!app.prefs.privacy;
+  const netIn = s.costBasis - (s.realizedPnl || 0);
+  const total = c.accountValue - netIn;
+  const fresh = c.stream && c.marketTime && (Date.now() - Date.parse(c.marketTime) < 120000);
+  const hpct = c.health == null ? null : Math.max(0, Math.min(100, c.health));
+  const hcol = hpct == null ? 'var(--fg-subtle)' : hpct < 25 ? 'var(--neg)' : hpct < 50 ? 'var(--warn)' : 'var(--pos)';
+  const M = v => <Money value={v} decimals={2} />;
+  return (
+    <Card padding={app.isMobile ? 14 : 16} data-testid="ov-cfd-live"
+      title={<button type="button" className="ov-link ov-link--strong" style={{ padding: 0 }} onClick={() => app.navigate('/posities/' + encodeURIComponent(s.party.id))}>{s.party.name}</button>}
+      meta={<span className="ov-cfd__live"><span className={'ov-cfd__dot' + (fresh ? '' : ' ov-cfd__dot--off')} />{c.stream ? (fresh ? 'Live' : 'Markt dicht') : c.live ? 'Koers per 10 min' : 'Laatste stand'}{c.marketTime ? ' · ' + new Date(c.marketTime).toLocaleTimeString('nl-NL') : ''}</span>}>
+      <div className="ov-cfd__head">
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Accountwaarde</div>
+          <div className="ov-cfd__val">{M(c.accountValue)}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Open resultaat</div>
+          <div className="ov-cfd__pnl" style={{ color: c.openPnl < -0.005 ? 'var(--neg)' : c.openPnl > 0.005 ? 'var(--pos)' : undefined }}>
+            {privacy ? '€ •••••' : fmtMoney(c.openPnl, { sign: true, decimals: 2 })}
+            {c.accountValue - c.openPnl > 0 ? <span style={{ fontWeight: 500, color: 'var(--fg-muted)' }}> · {fmtPct(c.openPnl / (c.accountValue - c.openPnl) * 100, { decimals: 2 })}</span> : null}
+          </div>
+        </div>
+      </div>
+      {c.positions.map(x => <OvCfdPos key={x.id} x={x} privacy={privacy} />)}
+      <dl className="ov-cfd__grid" style={{ margin: 0 }}>
+        <div><dt>Cash</dt><dd>{M(c.cash)}</dd></div>
+        <div><dt>Margin</dt><dd>{M(c.margin)}</dd></div>
+        <div><dt>Health{c.healthEstimated ? ' ≈' : ''}</dt><dd>{hpct == null ? '—' : `${Math.round(hpct)}%`}</dd>
+          {hpct != null && <div className="ov-cfd__bar"><i style={{ width: hpct + '%', background: hcol }} /></div>}</div>
+        <div><dt>Winst totaal</dt><dd style={{ color: total < -0.005 ? 'var(--neg)' : total > 0.005 ? 'var(--pos)' : undefined }}>{privacy ? '€ •••••' : fmtMoney(total, { sign: true, decimals: 2 })}</dd></div>
+      </dl>
+    </Card>
+  );
+}
+
+// ===================================================================
 // Verdeling card
 // ===================================================================
 function OvVerdelingCard({ app, pinIndex }) {
@@ -777,6 +874,7 @@ function OvDesktop({ app }) {
   return (
     <div className="ov-desk">
       <OvFinOpen app={app} />
+      <OvCfdLive app={app} />
       <div className="ov-top" ref={topRef}>
         <div className="ov-left">
           <OvPrestatiesCard app={app} pf={pf} />
@@ -953,6 +1051,8 @@ function OvMobile({ app }) {
           ))}
         </div>
       </div>
+
+      <OvCfdLive app={app} />
 
       {on('party_grid') && (
         <section className="ov-hold ov-hold--m" aria-labelledby="ov-mhold-title" data-testid="ov-holdings">
