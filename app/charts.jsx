@@ -14,7 +14,7 @@ injectStyles('charts', `
 .ch-ylab { position: absolute; right: 0; width: 48px; transform: translateY(-50%); text-align: right; font: 500 11px/14px var(--font); letter-spacing: .01em; color: var(--fg-subtle); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
 .ch-ylab--in { right: auto; left: 16px; width: auto; text-align: left; font-size: 11px; margin-top: -9px; z-index: 1; }
 .ch-root--compact .ch-svg { clip-path: inset(-12px -20px -12px -16px); }
-.ch-root--compact .ch-line { stroke-width: 2.75; }
+.ch-root--compact .ch-line { stroke-width: 2; }
 .ch-root--compact .ch-glow { stroke-width: 10; opacity: .14; }
 .ch-root--compact .ch-grid { opacity: .55; }
 .ch-xaxis { position: absolute; left: 0; height: 22px; pointer-events: none; }
@@ -270,8 +270,8 @@ function PerformanceChart({
     const nt = chNiceTicks(lo, hi, 4);
     const y = v => H - (v - nt.lo) / (nt.hi - nt.lo || 1) * H;
     const x = i => (n > 1 ? i / (n - 1) * 1000 : 0);
-    // Compact: minder punten zodat de monotone kubische curve dagstappen gelijkmatig afrondt (geen overshoot).
-    const idx = chSampleIdx(n, compact ? 48 : 500);
+    // Zelfde detail op telefoon en desktop (dagpunten).
+    const idx = chSampleIdx(n, 500);
     const xs = idx.map(x);
     const yp = idx.map(i => (primary[i] == null || !Number.isFinite(primary[i]) ? null : y(primary[i])));
     const ys = showSecondary ? idx.map(i => (secondary[i] == null ? null : y(secondary[i]))) : null;
