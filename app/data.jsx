@@ -1283,11 +1283,48 @@ function cfdNormalize(c) {
     positions, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0),
   };
 }
+// Live: per positie de koers uit de koersen-worker (zelfde bron als de aandelen). Het resultaat schuift mee met
+// het koersverschil t.o.v. de ingevoerde stand (zo blijven spread/kosten van Trading 212 in het startpunt zitten);
+// de accountwaarde beweegt met hetzelfde bedrag.
+function cfdApplyQuotes(cfd, quotes) {
+  if (!cfd || !quotes) return cfd;
+  let delta = 0, live = false, marketTime = null;
+  const positions = cfd.positions.map(x => {
+    const q = x.symbol ? quotes[x.symbol] : null;
+    if (!q || !(+q.price > 0) || !(+q.priceEur > 0) || x.quantity == null || x.currentPrice == null || x.pnl == null) return x;
+    if (q.currency && x.currency && String(q.currency).toUpperCase() !== x.currency) return x;
+    const fx = q.priceEur / q.price;
+    const d = x.quantity * (x.dir === 'sell' ? -1 : 1) * (q.price - x.currentPrice) * fx;
+    delta += d; live = true;
+    if (q.marketTime && (!marketTime || q.marketTime > marketTime)) marketTime = q.marketTime;
+    return { ...x, snapshotPrice: x.currentPrice, snapshotPnl: x.pnl, currentPrice: q.price, pnl: x.pnl + d, live: true, marketTime: q.marketTime || null };
+  });
+  if (!live) return cfd;
+  return { ...cfd, positions, live: true, marketTime, liveDelta: delta, snapshotValue: cfd.accountValue,
+    accountValue: cfd.accountValue != null ? cfd.accountValue + delta : null, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0) };
+}
 function summarizeParty(party, transactions, spots, ctx) {
   const s = summarizePartyBase(party, transactions, spots, ctx);
   if (!s || !party || !party.cfd) return s;
-  const cfd = cfdNormalize(party.cfd);
-  return cfd ? { ...s, cfd } : s;
+  const cfd = cfdApplyQuotes(cfdNormalize(party.cfd), spots && spots.stockQuotes);
+  if (!cfd) return s;
+  // Accountwaarde (live) is de waarde van de positie zolang de stand de laatste waardering is.
+  const lastVal = s.lastValuationDate || null;
+  if (cfd.accountValue != null && (!lastVal || !cfd.asOf || cfd.asOf >= lastVal)) {
+    const diff = cfd.accountValue - (s.currentValueEur || 0);
+    const pnl = (s.pnl || 0) + diff;
+    return { ...s, cfd, currentValueEur: cfd.accountValue, pnl, pnlPct: s.invested > 0 ? pnl / s.invested * 100 : 0 };
+  }
+  return { ...s, cfd };
+}
+// Tickers van CFD-posities, zodat de app er live koersen voor ophaalt.
+function cfdSymbolsOf(parties) {
+  const out = new Set();
+  (parties || []).forEach(p => p && p.cfd && Array.isArray(p.cfd.positions) && p.cfd.positions.forEach(x => {
+    const sym = String(x.symbol || '').trim().toUpperCase();
+    if (/^[A-Z0-9.^=-]{1,15}$/.test(sym)) out.add(sym);
+  }));
+  return [...out];
 }
 function cfdSymbolOf(x) { return (x.symbol || x.name || '?').replace(/\..*$/, '').slice(0, 4); }
 function cfdSummaryText(s) {
@@ -2755,7 +2792,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,

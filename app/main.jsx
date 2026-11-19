@@ -1943,7 +1943,7 @@ function App() {
   React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
 
   // ── Aandelenkoersen voor alle tickers in Trading 212-boekingen ──
-  const stockSymbols = React.useMemo(() => stockSymbolsOf(state.transactions), [state.transactions]);
+  const stockSymbols = React.useMemo(() => [...new Set([...stockSymbolsOf(state.transactions), ...cfdSymbolsOf(state.parties)])].sort(), [state.transactions, state.parties]);
   const stockSig = stockSymbols.join(',');
   const refreshStocks = React.useCallback(async ({ force = false, symbols } = {}) => {
     const list = symbols || stockSig.split(',').filter(Boolean);

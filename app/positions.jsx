@@ -790,7 +790,7 @@ function PsCfdRows({ app, s }) {
           <span className="ps-lstock__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
           <span className="ps-lrow__main">
             <span className="ps-lstock__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</span>
-            <span className="ps-lrow__sub">{cfdQty(x.quantity)} st. · {cfdPrice(x.openPrice, x.currency)} → {cfdPrice(x.currentPrice, x.currency)}</span>
+            <span className="ps-lrow__sub">{cfdQty(x.quantity)} st. · {cfdPrice(x.openPrice, x.currency)} → {cfdPrice(x.currentPrice, x.currency)}{x.live ? ' live' : ''}</span>
           </span>
           <span className="ps-lrow__end">
             <span className={psCx('ps-lstock__val', psTone(x.pnl))}>{x.pnl == null ? '—' : pm(x.pnl)}</span>
@@ -1375,7 +1375,7 @@ function PsCfdAccount({ app, s }) {
               <span className="ps-stk__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
               <div style={{ minWidth: 0 }}>
                 <div className="ps-coin__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</div>
-                <div className="ps-coin__sub">{x.symbol} · {cfdQty(x.quantity)} st. · geopend {cfdPrice(x.openPrice, x.currency)} · nu {cfdPrice(x.currentPrice, x.currency)}</div>
+                <div className="ps-coin__sub">{x.symbol} · {cfdQty(x.quantity)} st. · geopend {cfdPrice(x.openPrice, x.currency)} · nu {cfdPrice(x.currentPrice, x.currency)}{x.live ? ' (live)' : ''}</div>
               </div>
               <div className="ps-coin__end">
                 <span className={psCx('ps-coin__val', psTone(x.pnl))}>{x.pnl == null ? '—' : pm(x.pnl, 2)}</span>
@@ -1386,7 +1386,10 @@ function PsCfdAccount({ app, s }) {
           ))}
           {!c.positions.length && <div className="ps-coin"><span className="ps-subtle">Geen open posities</span></div>}
         </div>
-        <div className="ps-stk__foot"><span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · handmatig bijgewerkt</span></div>
+        <div className="ps-stk__foot">
+          {c.live && <span>Koers live via Yahoo Finance{c.marketTime ? ` · ${fmtRelDay(c.marketTime.slice(0, 10))} ${fmtTime(c.marketTime)}` : ''} · resultaat en accountwaarde rekenen mee ({privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand)</span>}
+          <span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · cash en margin bewegen niet live</span>
+        </div>
       </>)}
       {edit && <PsCfdEdit app={app} s={s} onClose={() => setEdit(false)} />}
     </div>
@@ -1395,7 +1398,7 @@ function PsCfdAccount({ app, s }) {
 
 function PsCfdEdit({ app, s, onClose }) {
   const p = s.party;
-  const c = s.cfd;
+  const c = cfdNormalize(p.cfd); // de ingevoerde stand, niet de live doorgerekende
   const str = v => (v == null ? '' : String(v).replace('.', ','));
   const blank = () => ({ id: 'p' + Date.now().toString(36), symbol: '', name: '', dir: 'buy', quantity: '', openPrice: '', currentPrice: '', currency: 'USD', pnl: '' });
   const [f, setF] = useState(() => ({
