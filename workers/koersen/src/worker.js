@@ -118,8 +118,77 @@ async function grafiek(symbol, range) {
   };
 }
 
+// ── Dagverloop (cron, elke 5 minuten): totale waarde doorrekenen en opslaan, ook als de app dicht is ──
+// De app publiceert een recept (portfolio/id 'intraday-recipe': totaal + aantallen per symbool). Bij een nieuw recept
+// leggen we de koersen van dat moment vast als referentie; daarna: totaal + Σ aantal × (koers nu − referentie), in euro.
+const INTRA_STEP = 300, INTRA_KEEP = 8 * 86400;
+async function sb(env, method, path, body) {
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+    method, body: body ? JSON.stringify(body) : undefined,
+    headers: { apikey: env.SUPABASE_ANON_KEY, authorization: `Bearer ${env.SUPABASE_ANON_KEY}`, "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+  });
+  if (!res.ok) throw new Error(`Supabase ${method} ${res.status}`);
+  return method === "GET" ? res.json() : null;
+}
+async function rawPrice(symbol) {
+  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m&includePrePost=true`, {
+    headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)", accept: "application/json" }, cf: { cacheTtl: 60, cacheEverything: true },
+  });
+  if (!res.ok) throw new Error(`Yahoo ${res.status}`);
+  const r = (await res.json()).chart?.result?.[0];
+  if (!r) throw new Error("geen data");
+  const closes = r.indicators?.quote?.[0]?.close || [];
+  let last = null; for (let i = closes.length - 1; i >= 0; i--) if (closes[i] != null) { last = closes[i]; break; }
+  const price = last ?? r.meta?.regularMarketPrice;
+  if (!(price > 0)) throw new Error("geen koers");
+  return { price, currency: r.meta?.currency || "EUR" };
+}
+async function eurPrices(symbols) {
+  const raw = {};
+  await Promise.all(symbols.map(async s => { try { raw[s] = await rawPrice(s); } catch (e) { /* overslaan */ } }));
+  const fx = { EUR: 1 }, scale = {};
+  const curOf = c => (c === "GBp" || c === "GBX" ? ["GBP", 0.01] : c === "ZAc" ? ["ZAR", 0.01] : c === "ILA" ? ["ILS", 0.01] : [String(c).toUpperCase(), 1]);
+  const need = [...new Set(Object.values(raw).map(r => curOf(r.currency)[0]))].filter(c => c !== "EUR");
+  await Promise.all(need.map(async c => { try { fx[c] = (await rawPrice(`${c}EUR=X`)).price; } catch (e) { /* overslaan */ } }));
+  const out = {};
+  for (const [s, r] of Object.entries(raw)) { const [c, k] = curOf(r.currency); if (fx[c] > 0) out[s] = r.price * k * fx[c]; }
+  return out;
+}
+async function intradayTick(env) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return "geen configuratie";
+  const rows = await sb(env, "GET", "portfolio?id=in.(intraday,intraday-recipe,intraday-ref)&select=id,data");
+  const get = id => (rows.find(r => r.id === id) || {}).data || null;
+  const recipe = get("intraday-recipe");
+  if (!recipe || !(recipe.total > 0) || !Array.isArray(recipe.items)) return "geen recept";
+  // Recept ouder dan 14 dagen: niet meer doorrekenen (aantallen kunnen verouderd zijn).
+  if (Date.now() - Date.parse(recipe.asOf) > 14 * 86400e3) return "recept te oud";
+  const prices = await eurPrices(recipe.items.map(i => i.s));
+  let ref = get("intraday-ref");
+  if (!ref || ref.asOf !== recipe.asOf) {
+    ref = { asOf: recipe.asOf, prices };
+    await sb(env, "POST", "portfolio?on_conflict=id", { id: "intraday-ref", data: ref });
+  }
+  let total = recipe.total;
+  for (const it of recipe.items) {
+    const now = prices[it.s], was = ref.prices[it.s];
+    if (now > 0 && was > 0) total += it.q * (now - was);
+    else if (now > 0 && !(was > 0)) { ref.prices[it.s] = now; }
+  }
+  const t = Math.floor(Date.now() / 1000);
+  const map = new Map();
+  for (const p of [...((get("intraday") || {}).points || []), [t, Math.round(total * 100) / 100, recipe.net || 0]]) {
+    if (Array.isArray(p) && p[0] > t - INTRA_KEEP && Number.isFinite(+p[1])) map.set(Math.floor(p[0] / INTRA_STEP), p);
+  }
+  const points = [...map.values()].sort((a, b) => a[0] - b[0]);
+  await sb(env, "POST", "portfolio?on_conflict=id", { id: "intraday", data: { points } });
+  return `ok ${points.length} punten, ${Object.keys(prices).length}/${recipe.items.length} koersen`;
+}
+
 export default {
-  async fetch(req) {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(intradayTick(env).then(r => console.log("[dagverloop]", r), e => console.log("[dagverloop] fout", e.message)));
+  },
+  async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-max-age": "86400" } });
     if (req.method !== "GET") return json({ error: "Alleen GET" }, 405, 0);
     const url = new URL(req.url);
@@ -138,6 +207,7 @@ export default {
         out.forEach((r, i) => { if (r.status === "fulfilled") quotes[syms[i]] = r.value; else errors[syms[i]] = r.reason.message; });
         return json({ quotes, errors, fetchedAt: new Date().toISOString() });
       }
+      if (url.pathname === "/dagverloop") return json({ status: await intradayTick(env) }, 200, 0);
       if (url.pathname === "/grafiek") {
         const s = (url.searchParams.get("s") || "").trim();
         if (!SYM.test(s)) return json({ error: "Ongeldig symbool" }, 400, 0);

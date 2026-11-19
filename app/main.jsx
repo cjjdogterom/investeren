@@ -2254,10 +2254,13 @@ function App() {
       if (!t || !Number.isFinite(t.value) || !(t.value > 0)) return;
       supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0])
         .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
+      // Recept voor de server, zodat die ook meet als de app dicht is.
+      const recipe = buildIntradayRecipe(cur.model);
+      if (recipe) client.from('portfolio').upsert({ id: 'intraday-recipe', data: recipe }, { onConflict: 'id' }).then(() => {}, () => {});
     };
     const first = setTimeout(tick, 20000);
     const id = setInterval(tick, INTRADAY_STEP_S * 1000);
-    const onVis = () => { if (!document.hidden) setTimeout(tick, 8000); };
+    const onVis = () => { if (!document.hidden) { supabaseLoadIntraday(client).then(p => { if (!dead) setIntraday(p); }).catch(() => {}); setTimeout(tick, 8000); } };
     document.addEventListener('visibilitychange', onVis);
     return () => { dead = true; clearTimeout(first); clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [sbOk, supabaseConfig]); // eslint-disable-line

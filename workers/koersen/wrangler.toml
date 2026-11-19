@@ -3,3 +3,12 @@ main = "src/worker.js"
 compatibility_date = "2025-09-01"
 workers_dev = true
 preview_urls = false
+
+# Dagverloop: elke 5 minuten de totale waarde doorrekenen (zie intradayTick in src/worker.js).
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Publieke Supabase-gegevens (dezelfde anon-sleutel als in app/main.jsx).
+[vars]
+SUPABASE_URL = "https://xlmbpohjlcwjubgiyjaw.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsbWJwb2hqbGN3anViZ2l5amF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNjIyODksImV4cCI6MjA5MzYzODI4OX0.BXbY5_stirCdFLuXleBHu1VouYm1cguVZd3bjkygHlo"

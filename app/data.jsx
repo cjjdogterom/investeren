@@ -2660,6 +2660,30 @@ function sumPeriodGains(list) {
   return any ? { gain, base, pct: base > 0.5 ? gain / base * 100 : null } : null;
 }
 
+// Recept voor het dagverloop op de server (koersen-worker, elke 5 min): het totaal van nu plus de aantallen per
+// koersgevoelig product. De server rekent door met totaal + Σ aantal × (koers nu − koers bij het recept), in euro.
+function buildIntradayRecipe(model) {
+  if (!model || !model.totals || !(model.totals.value > 0)) return null;
+  const items = {};
+  const add = (sym, q) => { if (sym && Number.isFinite(q) && Math.abs(q) > 1e-9) items[sym] = (items[sym] || 0) + q; };
+  const COIN = { BTC: 'BTC-EUR', ETH: 'ETH-EUR', PAXG: 'PAXG-USD' };
+  const one = x => {
+    const p = x.party || {};
+    if (p.cfd && x.cfd) { x.cfd.positions.forEach(c => add(c.symbol, (c.quantity || 0) * (c.dir === 'sell' ? -1 : 1))); return; }
+    if (x.stocks && x.stocks.positions) { x.stocks.positions.forEach(c => add(c.symbol, c.quantity || 0)); return; }
+    if (x.leaves && x.leaves.length) { x.leaves.forEach(one); return; }
+    if (p.id === 'meesman') return add('0P0001IJJX.F', +x.quantity || 0);
+    if (p.unit === 'crypto') return add(COIN[String(p.coin || p.unitLabel || '').toUpperCase()], +x.quantity || 0);
+    if (p.isMixed || p.unit === 'mixed') { add('GC=F', (+x.goldQty || 0) / 31.1034768); add('SI=F', +x.silverQty || 0); return; }
+    if (p.unit === 'gram') return add('GC=F', (+x.quantity || 0) / 31.1034768);
+    if (p.unit === 'ounce') return add('SI=F', +x.quantity || 0);
+    if (p.unit === 'part' && p.ticker) return add(String(p.ticker).toUpperCase(), +x.quantity || 0);
+  };
+  (model.included || []).forEach(one);
+  const list = Object.entries(items).filter(([k]) => /^[A-Za-z0-9.\-=^]{1,24}$/.test(k)).slice(0, 40).map(([s2, q]) => ({ s: s2, q: Math.round(q * 1e8) / 1e8 }));
+  return { asOf: new Date().toISOString(), total: Math.round(model.totals.value * 100) / 100, net: Math.round((model.totals.netInvested || 0) * 100) / 100, items: list };
+}
+
 // Compacte momentopname voor de iOS-widget: exact dezelfde getallen als de Overzicht-hero
 // in rust (geen cursor), incl. Excl. PE- en periodekeuze uit prefs. Zie useOvPerformance.
 function buildWidgetSnapshot(model, prefs = {}) {
@@ -2941,7 +2965,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdBake, cfdOpenTrade, cfdCloseTrade, isCfdParty, cfdRehealth, cfdCommit, cfdFxToEur, CFD_ALERT_KINDS, cfdAlertValue, cfdAlertLabel, cfdAlertHit, cfdTickStore, useCfdTicks,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, buildIntradayRecipe, cfdSymbolsOf, cfdLive, cfdBake, cfdOpenTrade, cfdCloseTrade, isCfdParty, cfdRehealth, cfdCommit, cfdFxToEur, CFD_ALERT_KINDS, cfdAlertValue, cfdAlertLabel, cfdAlertHit, cfdTickStore, useCfdTicks,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,
