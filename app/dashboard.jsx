@@ -592,22 +592,8 @@ function OvCfdLive({ app, s: sProp = null, embedded = false }) {
   const hpct = c.health == null ? null : Math.max(0, Math.min(100, c.health));
   const hcol = hpct == null ? 'var(--fg-subtle)' : hpct < 25 ? 'var(--negative)' : hpct < 50 ? 'var(--warn)' : 'var(--positive)';
   const M = v => <Money value={v} decimals={2} />;
-  // Sluiten tegen de huidige koers met het huidige resultaat (alleen vastleggen in de app).
-  const closeAt = async x => {
-    const sym = { USD: '$', EUR: '€', GBP: '£' }[x.currency] || '';
-    const pxs = sym + new Intl.NumberFormat('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x.currentPrice);
-    const res = await app.confirm({ title: `${x.name} ${x.dir === 'sell' ? 'short' : 'long'} sluiten?`,
-      body: `Sluit ${x.quantity} st. tegen ${pxs} met een resultaat van ${fmtMoney(x.pnl, { sign: true, decimals: 2 })}. De margin komt vrij als cash. Dit legt de sluiting vast in de app; sluit de positie zelf in Trading 212.`,
-      confirmLabel: `Sluiten (${fmtMoney(x.pnl, { sign: true, decimals: 2 })})` });
-    if (!res || !res.ok) return;
-    const quotes = app.stockQuotes || {};
-    const date = todayIsoLocal();
-    const r = cfdCloseTrade(cfdNormalize(s.party.cfd), quotes, ticks, { date, positionId: x.id, quantity: x.quantity, price: x.currentPrice,
-      fx: cfdFxToEur(x.currency, quotes, ticks, x.symbol), realized: x.pnl, fee: 0 });
-    if (!r) return;
-    cfdCommit(app, s.party, r.cfd, date, `CFD gesloten: ${x.quantity} ${x.symbol} à ${pxs}, resultaat ${fmtMoney(x.pnl, { sign: true, decimals: 2 })}`);
-    app.toast && app.toast(`${x.name} gesloten · ${fmtMoney(x.pnl, { sign: true, decimals: 2 })}`);
-  };
+  // Sluiten: het sluitformulier met deze positie; live waarden staan klaar, de echte cijfers uit Trading 212 kun je invullen.
+  const closeAt = x => app.openTx({ type: 'verkoop', party: s.party.id, cfdPosition: x.id });
   const live = <span className="ov-cfd__live"><span className={'ov-cfd__dot' + (fresh ? '' : ' ov-cfd__dot--off')} />{c.stream ? (fresh ? 'Live' : 'Markt dicht') : c.live ? 'Koers per 10 min' : 'Laatste stand'}{c.marketTime ? ' · ' + new Date(c.marketTime).toLocaleTimeString('nl-NL') : ''}</span>;
   const inner = (
     <>
@@ -624,7 +610,7 @@ function OvCfdLive({ app, s: sProp = null, embedded = false }) {
           </div>
         </div>
       </div>
-      {c.positions.map(x => <OvCfdPos key={x.id} x={x} privacy={privacy} onClose={app.confirm ? () => closeAt(x) : null} />)}
+      {c.positions.map(x => <OvCfdPos key={x.id} x={x} privacy={privacy} onClose={app.openTx ? () => closeAt(x) : null} />)}
       <dl className="ov-cfd__grid" style={{ margin: 0 }}>
         <div><dt>Cash</dt><dd>{M(c.cash)}</dd></div>
         <div><dt>Margin</dt><dd>{M(c.margin)}</dd></div>

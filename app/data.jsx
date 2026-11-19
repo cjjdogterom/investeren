@@ -1407,6 +1407,7 @@ function cfdCloseTrade(cfd, quotes, ticks, t) {
   else b.positions[i] = { ...x, quantity: x.quantity - t.quantity, pnl: (x.pnl || 0) * (1 - frac) };
   b.cash = b.accountValue - b.margin;
   cfdRehealth(b, acc0, m0);
+  if (!b.positions.length) b.health = 100;
   b.trades.push({ date: t.date, action: 'close', symbol: x.symbol, name: x.name, dir: x.dir, quantity: t.quantity, price: t.price, currency: x.currency,
     openPrice: x.openPrice, realized: +t.realized.toFixed(2), fee });
   return { cfd: b, freed: posMargin * frac };
