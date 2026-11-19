@@ -1375,9 +1375,14 @@ function PsCfdAccount({ app, s }) {
     <div data-testid="cfd-account">
       <div className="ps-sec-head" style={{ marginBottom: 8 }}>
         <h3 className="ps-sec-title">CFD-rekening</h3>
-        <button type="button" className="ps-link" onClick={() => setEdit(true)} data-testid="cfd-edit">
-          <Icon name="pencil" size={12} /> {c ? 'Stand bijwerken' : 'Stand invullen'}
-        </button>
+        <span style={{ display: 'flex', gap: 14 }}>
+          <button type="button" className="ps-link" onClick={() => app.openTx({ type: 'koop', party: s.party.id })} data-testid="cfd-open-new">
+            <Icon name="plus" size={12} /> Positie openen
+          </button>
+          <button type="button" className="ps-link" onClick={() => setEdit(true)} data-testid="cfd-edit">
+            <Icon name="pencil" size={12} /> {c ? 'Stand bijwerken' : 'Stand invullen'}
+          </button>
+        </span>
       </div>
       {!c ? <p className="ps-subtle" style={{ margin: 0, fontSize: 13 }}>Vul de stand uit Trading 212 (CFD) in: accountwaarde, cash, margin en je open posities.</p> : (<>
         <div className="ps-stk__foot">

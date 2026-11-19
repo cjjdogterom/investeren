@@ -17,6 +17,7 @@ injectStyles('overzicht', `
 .ov-cfd-embed { display: flex; flex-direction: column; padding: 12px 14px; margin: 0 0 10px 52px; border: 1px solid var(--border); border-radius: var(--r-2, 12px); background: var(--surface); }
 .ov-cfd-embed__top { display: flex; justify-content: flex-end; margin-bottom: 4px; }
 .ps-cfd-detail .ov-cfd-embed { margin-left: 0; }
+.ov-cfd__new { margin: 10px 0 2px; align-self: flex-start; border: 1px dashed var(--border); background: transparent; color: var(--fg); border-radius: 999px; padding: 6px 12px; font: 600 13px/18px var(--font); cursor: pointer; }
 .ov-cfd__close { align-self: flex-end; margin-top: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 2px 10px; font: 600 12px/18px var(--font); cursor: pointer; }
 .ov-cfd__close:hover { border-color: var(--fg-muted); }
 .ov-cfd__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -611,6 +612,7 @@ function OvCfdLive({ app, s: sProp = null, embedded = false }) {
         </div>
       </div>
       {c.positions.map(x => <OvCfdPos key={x.id} x={x} privacy={privacy} onClose={app.openTx ? () => closeAt(x) : null} />)}
+      {app.openTx && <button type="button" className="ov-cfd__new" onClick={() => app.openTx({ type: 'koop', party: s.party.id })} data-testid="cfd-new">+ Nieuwe CFD-positie openen</button>}
       <dl className="ov-cfd__grid" style={{ margin: 0 }}>
         <div><dt>Cash</dt><dd>{M(c.cash)}</dd></div>
         <div><dt>Margin</dt><dd>{M(c.margin)}</dd></div>
