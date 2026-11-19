@@ -861,7 +861,13 @@ function t212StockState(txs, date = null, opts = {}) {
       }
       case 'dividend': case 'cashback': case 'rente': {
         const a = stockTxGross(t);
-        cash += a; realized += a; income += a;
+        // Herbelegd (accumulerend) dividend: extra aandelen i.p.v. cash.
+        if (t.type === 'dividend' && +t.quantity > 0 && isStockTx(t)) {
+          const sym = normalizeTicker(t.instrument);
+          const h = holdings[sym] || (holdings[sym] = { symbol: sym, quantity: 0, cost: 0, firstDate: t.date });
+          h.quantity += +t.quantity; h.cost += a;
+        } else cash += a;
+        realized += a; income += a;
         if (t.type === 'dividend') dividends += a;
         if (t.type === 'cashback') cashback += a;
         break;
@@ -1170,6 +1176,8 @@ function summarizePartyBase(party, transactions, spots, ctx) {
         }
         totalDividend += divValue;
         totalIncome   += divValue;
+        // Uitkerend (alleen een bedrag, geen extra eenheden): uitbetaald, telt als gerealiseerd resultaat.
+        if (!(qty > 0 && px > 0) && party.unit !== 'bundle' && party.unit !== 'eur') realizedPnl += divValue;
         break;
       }
       case 'rente':  totalIncome += +t.amountEur || 0; break;
@@ -1402,6 +1410,43 @@ function cfdCloseTrade(cfd, quotes, ticks, t) {
   b.trades.push({ date: t.date, action: 'close', symbol: x.symbol, name: x.name, dir: x.dir, quantity: t.quantity, price: t.price, currency: x.currency,
     openPrice: x.openPrice, realized: +t.realized.toFixed(2), fee });
   return { cfd: b, freed: posMargin * frac };
+}
+// Nieuwe stand van de CFD-rekening opslaan + waardering van die dag (zodat totalen en grafiek meelopen).
+function cfdCommit(app, party, cfd, date, note) {
+  app.saveParty({ ...party, cfd });
+  const same = ((app.state && app.state.transactions) || []).find(t => t.party === party.id && t.type === 'waardering' && t.date === date);
+  app.saveTx({ ...(same || { id: makeId(), party: party.id, type: 'waardering', date }), valueEur: +(+cfd.accountValue || 0).toFixed(2), note: note || 'Stand CFD-rekening' });
+}
+// ----- CFD-meldingen -----
+// Regel: { id, kind: 'pnl'|'price'|'health'|'account'|'cash', symbol (pnl/price; leeg = totaal), op: 'below'|'above', value, on }
+const CFD_ALERT_KINDS = [
+  { key: 'pnl', label: 'Resultaat (€)' }, { key: 'price', label: 'Koers' }, { key: 'account', label: 'Accountwaarde (€)' },
+  { key: 'cash', label: 'Cash (€)' }, { key: 'health', label: 'Health (%)' },
+];
+function cfdAlertValue(rule, live) {
+  if (!live) return null;
+  const pos = rule.symbol ? live.positions.find(x => x.symbol === rule.symbol) : null;
+  switch (rule.kind) {
+    case 'pnl': return rule.symbol ? (pos ? pos.pnl : null) : live.openPnl;
+    case 'price': return pos ? pos.currentPrice : null;
+    case 'account': return live.accountValue;
+    case 'cash': return live.cash;
+    case 'health': return live.health;
+    default: return null;
+  }
+}
+function cfdAlertLabel(rule, live) {
+  const pos = rule.symbol && live ? live.positions.find(x => x.symbol === rule.symbol) : null;
+  const what = rule.kind === 'pnl' ? `Resultaat ${rule.symbol ? (pos ? pos.name : rule.symbol) : 'CFD totaal'}`
+    : rule.kind === 'price' ? `Koers ${pos ? pos.name : rule.symbol}`
+    : rule.kind === 'account' ? 'Accountwaarde CFD' : rule.kind === 'cash' ? 'Cash CFD' : 'Health CFD';
+  const unit = rule.kind === 'health' ? `${rule.value}%` : rule.kind === 'price' ? `${rule.value}${pos && pos.currency ? ' ' + pos.currency : ''}` : fmtMoney(rule.value, { decimals: 2 });
+  return `${what} ${rule.op === 'above' ? 'boven' : 'onder'} ${unit}`;
+}
+function cfdAlertHit(rule, live) {
+  const v = cfdAlertValue(rule, live);
+  if (v == null || !Number.isFinite(v) || rule.value == null) return { hit: false, v };
+  return { hit: rule.op === 'above' ? v >= rule.value : v <= rule.value, v };
 }
 function isCfdParty(p) { return !!(p && (p.cfd || p.id === 'trading212-cfd')); }
 function summarizeParty(party, transactions, spots, ctx) {
@@ -2894,7 +2939,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdBake, cfdOpenTrade, cfdCloseTrade, isCfdParty, cfdRehealth, cfdTickStore, useCfdTicks,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum, cfdSymbolsOf, cfdLive, cfdBake, cfdOpenTrade, cfdCloseTrade, isCfdParty, cfdRehealth, cfdCommit, cfdFxToEur, CFD_ALERT_KINDS, cfdAlertValue, cfdAlertLabel, cfdAlertHit, cfdTickStore, useCfdTicks,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,

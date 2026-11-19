@@ -316,6 +316,13 @@ struct InvesterenWidgetView: View {
 }
 
 @main
+struct InvesterenWidgets: WidgetBundle {
+    var body: some Widget {
+        InvesterenWidget()
+        CFDWidget()
+    }
+}
+
 struct InvesterenWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "InvesterenPortfolio", provider: Provider()) { entry in

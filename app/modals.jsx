@@ -77,9 +77,10 @@ function mdNum(v) {
   return new Intl.NumberFormat('nl-NL', { useGrouping: false, maximumFractionDigits: 8 }).format(n);
 }
 
-function mdNeeds(type, party) {
+function mdNeeds(type, party, divMode) {
   const unit = party ? party.unit : null;
-  if (party && party.id === STOCK_PARTY_ID && (type === 'dividend' || type === 'cashback')) return ['amountEur'];
+  if (type === 'dividend') return divMode === 'acc' ? ['quantity', 'unitPriceEur'] : ['amountEur'];
+  if (party && party.id === STOCK_PARTY_ID && type === 'cashback') return ['amountEur'];
   switch (type) {
     case 'inleg': case 'rente': case 'kosten': return ['amountEur'];
     case 'opname': return mdUnitBased(party) ? ['quantity'] : ['amountEur'];
@@ -120,6 +121,7 @@ function mdBlank(initial, preset, today, allParties) {
     toPost: toLeaf ? toLeaf.postId : '',
     feeQty: mdNum(i.feeQty),
     type: i.type || p.type || '',
+    divMode: i.type === 'dividend' ? (+i.quantity > 0 ? 'acc' : 'dist') : ((p.party || i.party) === 'meesman' ? 'acc' : 'dist'),
     date: i.date || today,
     amountEur: mdNum(i.amountEur),
     quantity: mdNum(i.quantity),
@@ -455,7 +457,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
     return n;
   });
 
-  const needs = mdNeeds(form.type, party);
+  const needs = mdNeeds(form.type, party, form.divMode);
   const unitLabel = mdFormUnitLabel(form, party);
   const calculatedPx = isGoldOrder && !isStockOrder ? calcPx(form.quantity, form.orderValueEur) : null;
   const parsed = {
@@ -713,6 +715,14 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           </Field>
 
           {cfdMode ? <MdCfdTrade key={form.type} app={app} party={selected} type={form.type} onDone={onClose} /> : <>
+          {form.type === 'dividend' && (
+            <Field label="Soort dividend" hint={form.divMode === 'acc'
+              ? 'Herbelegd: het dividend wordt omgezet in extra aandelen/participaties. Vul het aantal en de koers in; geen cash.'
+              : 'Uitkerend: het dividend wordt als geld uitbetaald (naar cash of je rekening) en telt als gerealiseerd resultaat.'}>
+              <Segmented ariaLabel="Soort dividend" full value={form.divMode} onChange={v => set('divMode', v)}
+                options={[{ value: 'dist', label: 'Uitkerend' }, { value: 'acc', label: 'Accumulerend (herbelegd)' }]} />
+            </Field>
+          )}
           {isPost && postCoins.length > 0 && (
             <Field label="Coin" error={tried ? errors.coin : null}>
               <Segmented ariaLabel="Coin" full value={form.coin} onChange={changeCoin}
@@ -774,7 +784,7 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
             </Field>
           )}
 
-          {['koop', 'verkoop', 'cashback', 'dividend'].includes(form.type) && !(isT212 && ['cashback', 'dividend'].includes(form.type)) && (
+          {(['koop', 'verkoop', 'cashback'].includes(form.type) && !(isT212 && form.type === 'cashback') || (form.type === 'dividend' && form.divMode === 'acc')) && (
             <div className="md-row2">
               <Field label={isT212 ? 'Aantal aandelen' : `Aantal (${unitLabel})`} htmlFor={`${ids}-qty`} error={errFor('quantity')}>
                 <MoneyInput id={`${ids}-qty`} prefix="" value={form.quantity} onChange={setQuantity} placeholder="0" />

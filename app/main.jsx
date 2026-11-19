@@ -1170,6 +1170,58 @@ function useLiveTicks(symbols) {
   }, [sig]);
 }
 
+// CFD-meldingen: controleer de regels bij elke koersupdate (max. elke 5 s); melden bij overschrijden, opnieuw scherp zodra
+// de waarde weer terug is. Via de iPhone-/Mac-app een systeemmelding; in de browser de Notification-API.
+const CFD_ALERT_FIRED_KEY = 'investeringen-cfd-alerts-fired-v1';
+function cfdNotify(title, body, id) {
+  try {
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.investerenNotify;
+    if (h) { h.postMessage({ title, body, id }); return; }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification(title, { body, tag: id });
+  } catch (e) { /* ignore */ }
+}
+function cfdRequestNotify() {
+  try {
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.investerenNotify;
+    if (h) { h.postMessage({ request: true }); return; }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+  } catch (e) { /* ignore */ }
+}
+function useCfdAlerts(parties, quotesRef, toast) {
+  const partiesRef = React.useRef(parties); partiesRef.current = parties;
+  React.useEffect(() => {
+    let last = 0;
+    const check = ticks => {
+      const now = Date.now();
+      if (now - last < 5000) return;
+      last = now;
+      let fired = {};
+      try { fired = JSON.parse(localStorage.getItem(CFD_ALERT_FIRED_KEY)) || {}; } catch (e) { fired = {}; }
+      let changed = false;
+      for (const p of partiesRef.current || []) {
+        if (!p || !p.cfd || !Array.isArray(p.cfdAlerts) || !p.cfdAlerts.length) continue;
+        const live = cfdLive(cfdNormalize(p.cfd), quotesRef.current || {}, ticks);
+        for (const r of p.cfdAlerts) {
+          if (!r || r.on === false) continue;
+          const { hit, v } = cfdAlertHit(r, live);
+          if (hit && !fired[r.id]) {
+            fired[r.id] = now; changed = true;
+            const unit = r.kind === 'health' ? `${Math.round(v)}%` : r.kind === 'price' ? String(Math.round(v * 100) / 100).replace('.', ',') : fmtMoney(v, { sign: r.kind === 'pnl', decimals: 2 });
+            const title = cfdAlertLabel(r, live);
+            const body = `Nu ${unit}.`;
+            cfdNotify(title, body, 'cfd-' + r.id + '-' + now);
+            toast && toast(`${title} · nu ${unit}`);
+          } else if (!hit && fired[r.id]) { delete fired[r.id]; changed = true; }
+        }
+      }
+      if (changed) { try { localStorage.setItem(CFD_ALERT_FIRED_KEY, JSON.stringify(fired)); } catch (e) { /* ignore */ } }
+    };
+    const unsub = cfdTickStore.subscribe(check);
+    const id = setInterval(() => check(cfdTickStore.ticks), 60000);
+    return () => { unsub(); clearInterval(id); };
+  }, []); // eslint-disable-line
+}
+
 // ─────────────────────────────────────────────────────────────
 function App() {
   const [state, setState]           = React.useState(() => loadState());
@@ -1956,6 +2008,7 @@ function App() {
     return (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? migrateCryptoPosts(list, tomb) : PARTIES;
   }, [state.parties, state.deletedPartyIds]);
   const allPartiesRef = React.useRef(allParties);
+  useCfdAlerts(allParties, stockQuotesRef, toast);
   allPartiesRef.current = allParties;
 
   // ── On-chain saldi (alleen-lezen, publieke adressen van self-custody sub-holdings) ──
@@ -2440,7 +2493,7 @@ function App() {
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
-    overlayOpen: overlay !== null, confirm: confirmFn, toast,
+    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,

@@ -232,6 +232,7 @@ injectStyles('positions', `
 .ps-del__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .ps-formfoot { display: flex; gap: 8px; justify-content: flex-end; }
 .ps-cfd-detail { display: flex; flex-direction: column; gap: 10px; }
+.ps-cfd-alert-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; align-items: center; }
 .ps-cfd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .ps-cfd-pos { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-2); }
 
@@ -1389,6 +1390,71 @@ function PsCfdAccount({ app, s }) {
   );
 }
 
+// Meldingen voor de CFD-rekening (opgeslagen op de partij als cfdAlerts, dus op al je apparaten dezelfde regels).
+function PsCfdAlerts({ app, s }) {
+  const party = s.party;
+  const ticks = useCfdTicks();
+  const live = cfdLive(cfdNormalize(party.cfd), app.stockQuotes || {}, ticks);
+  const rules = Array.isArray(party.cfdAlerts) ? party.cfdAlerts : [];
+  const syms = live ? live.positions.map(x => ({ sym: x.symbol, name: x.name })) : [];
+  const [f, setF] = useState({ kind: 'pnl', symbol: '', op: 'below', value: '' });
+  const save = list => app.saveParty({ ...party, cfdAlerts: list });
+  const val = cfdNum(f.value);
+  const needSym = f.kind === 'price';
+  const sym = needSym ? (f.symbol || (syms[0] && syms[0].sym) || '') : (f.kind === 'pnl' ? f.symbol : '');
+  const ok = val != null && (!needSym || sym);
+  const add = () => {
+    if (!ok) return;
+    if (app.requestNotify) app.requestNotify();
+    save([...rules, { id: 'a' + Date.now().toString(36), kind: f.kind, symbol: sym || '', op: f.op, value: val, on: true }]);
+    setF(x => ({ ...x, value: '' }));
+  };
+  const cur = ok || f.kind ? cfdAlertValue({ kind: f.kind, symbol: sym }, live) : null;
+  const curTxt = v => (v == null ? '—' : f.kind === 'health' ? `${Math.round(v)}%` : f.kind === 'price' ? String(Math.round(v * 100) / 100).replace('.', ',') : fmtMoney(v, { sign: f.kind === 'pnl', decimals: 2 }));
+  return (
+    <div className="ps-cfd-alerts" data-testid="cfd-alerts">
+      <div className="ps-sec-head" style={{ marginBottom: 6 }}><h3 className="ps-sec-title">Meldingen</h3></div>
+      {rules.length > 0 ? (
+        <div className="ps-coins">
+          {rules.map(r => {
+            const { hit, v } = cfdAlertHit(r, live);
+            return (
+              <div className="ps-coin" key={r.id}>
+                <span className="ps-stk__tick" aria-hidden="true"><Icon name={hit ? 'triangle-alert' : 'clock'} size={14} /></span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="ps-coin__name">{cfdAlertLabel(r, live)}</div>
+                  <div className="ps-coin__sub">Nu {v == null ? '—' : r.kind === 'health' ? `${Math.round(v)}%` : r.kind === 'price' ? String(Math.round(v * 100) / 100).replace('.', ',') : fmtMoney(v, { sign: r.kind === 'pnl', decimals: 2 })}{hit ? ' · voorwaarde bereikt' : ''}</div>
+                </div>
+                <div className="ps-coin__end" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Switch checked={r.on !== false} onChange={on => save(rules.map(x => (x.id === r.id ? { ...x, on } : x)))} label="" aria-label="Melding aan" />
+                  <IconButton icon="trash-2" label="Verwijderen" onClick={() => save(rules.filter(x => x.id !== r.id))} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : <p className="ps-subtle" style={{ margin: '0 0 8px', fontSize: 13 }}>Nog geen meldingen. Krijg een melding als bijvoorbeeld je verlies groter wordt dan een bedrag of de health te laag wordt.</p>}
+      <div className="ps-cfd-alert-form">
+        <Select aria-label="Waarop" value={f.kind} onChange={e => setF(x => ({ ...x, kind: e.target.value }))}>
+          {CFD_ALERT_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+        </Select>
+        {(f.kind === 'pnl' || f.kind === 'price') && (
+          <Select aria-label="Positie" value={sym} onChange={e => setF(x => ({ ...x, symbol: e.target.value }))}>
+            {f.kind === 'pnl' && <option value="">Alle posities</option>}
+            {syms.map(o => <option key={o.sym} value={o.sym}>{o.name}</option>)}
+          </Select>
+        )}
+        <Select aria-label="Richting" value={f.op} onChange={e => setF(x => ({ ...x, op: e.target.value }))}>
+          <option value="below">onder</option><option value="above">boven</option>
+        </Select>
+        <Input inputMode="decimal" aria-label="Waarde" placeholder={f.kind === 'pnl' ? '-100' : f.kind === 'health' ? '30' : ''} value={f.value} onChange={e => setF(x => ({ ...x, value: e.target.value }))} />
+        <Button variant="primary" size="sm" disabled={!ok} onClick={add} data-testid="cfd-alert-add">Toevoegen</Button>
+      </div>
+      <p className="ps-subtle" style={{ margin: '6px 0 0', fontSize: 12 }}>Nu: {curTxt(cur)}. Meldingen komen binnen zolang de app open is of net op de achtergrond staat (iPhone, Mac of browser).</p>
+    </div>
+  );
+}
+
 function PsCfdEdit({ app, s, onClose }) {
   const p = s.party;
   const c = cfdNormalize(p.cfd); // de ingevoerde stand, niet de live doorgerekende
@@ -1734,7 +1800,7 @@ function PsPartyBody({ app, s }) {
           })}
         </dl>
       )}
-      {p.cfd && <div className="ps-cfd-detail">{window.OvCfdLive && <OvCfdLive app={app} s={s} embedded />}<PsCfdAccount app={app} s={s} /></div>}
+      {p.cfd && <div className="ps-cfd-detail">{window.OvCfdLive && <OvCfdLive app={app} s={s} embedded />}<PsCfdAccount app={app} s={s} /><PsCfdAlerts app={app} s={s} /></div>}
       {hasChart && (
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}

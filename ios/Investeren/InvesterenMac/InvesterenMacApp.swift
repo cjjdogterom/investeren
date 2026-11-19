@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import UserNotifications
 import AppKit
 
 let appURL = URL(string: "https://cjjdogterom.github.io/investeren/")!
@@ -81,6 +82,36 @@ struct OfflineView: View {
     }
 }
 
+/// Meldingen vanuit de web-app (CFD-meldingen): lokale melding via het meldingencentrum.
+final class NotifyBridge: NSObject, WKScriptMessageHandler, UNUserNotificationCenterDelegate {
+    override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        let center = UNUserNotificationCenter.current()
+        if (body["request"] as? Bool) == true {
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            return
+        }
+        let title = body["title"] as? String ?? "Investeren"
+        let text = body["body"] as? String ?? ""
+        let id = body["id"] as? String ?? UUID().uuidString
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { ok, _ in
+            guard ok else { return }
+            let c = UNMutableNotificationContent()
+            c.title = title; c.body = text; c.sound = .default
+            center.add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
+        }
+    }
+    // Ook tonen als de app open is.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
+    }
+}
+
 final class PrintBridge: NSObject, WKScriptMessageHandler {
     weak var model: WebModel?
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -91,6 +122,7 @@ final class PrintBridge: NSObject, WKScriptMessageHandler {
 
 struct WebContainer: NSViewRepresentable {
     let webView: WKWebView
+    let notifyBridge: NotifyBridge
     func makeNSView(context: Context) -> WKWebView { webView }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
@@ -107,6 +139,9 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         config.preferences.isElementFullscreenEnabled = true
         let bridge = PrintBridge()
         config.userContentController.add(bridge, name: "investerenPrint")   // jaaroverzicht → PDF
+        let nb = NotifyBridge()
+        notifyBridge = nb
+        config.userContentController.add(nb, name: "investerenNotify")   // CFD-meldingen
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
         bridge.model = self
