@@ -1020,7 +1020,7 @@ function summarizeT212Stocks(party, txs, st, spots) {
   };
 }
 
-function summarizeParty(party, transactions, spots, ctx) {
+function summarizePartyBase(party, transactions, spots, ctx) {
   const txs = transactions
     .filter(t => txTouchesParty(t, party.id))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -1253,6 +1253,48 @@ function summarizeParty(party, transactions, spots, ctx) {
     bookedQuantity, chainCheckedAt,
     pendingEur,
   };
+}
+
+// ----- CFD-rekening (Trading 212 CFD) -----
+// Geen API voor CFD's: de stand (accountwaarde, cash, margin, open posities) staat als momentopname op de partij
+// (party.cfd) en reist mee met de partijlijst. De waarde in totalen/grafiek komt uit de waardering die bij elke
+// nieuwe stand wordt opgeslagen; winst = accountwaarde − netto ingelegd.
+function cfdNum(v) {
+  if (v == null || v === '') return null;
+  const t = typeof v === 'string' ? (v.includes(',') ? v.replace(/[.\s€$]/g, '').replace(',', '.') : v.replace(/[\s€$]/g, '')) : v;
+  const n = +t; return Number.isFinite(n) ? n : null;
+}
+function cfdNormalize(c) {
+  if (!c || typeof c !== 'object') return null;
+  const positions = (Array.isArray(c.positions) ? c.positions : []).map((x, i) => ({
+    id: x.id || 'p' + i,
+    symbol: String(x.symbol || '').trim().toUpperCase(),
+    name: String(x.name || x.symbol || '').trim(),
+    dir: x.dir === 'sell' ? 'sell' : 'buy',
+    quantity: cfdNum(x.quantity),
+    openPrice: cfdNum(x.openPrice),
+    currentPrice: cfdNum(x.currentPrice),
+    currency: String(x.currency || 'EUR').toUpperCase(),
+    pnl: cfdNum(x.pnl),
+  })).filter(x => x.symbol || x.name);
+  return {
+    asOf: c.asOf || null,
+    accountValue: cfdNum(c.accountValue), cash: cfdNum(c.cash), margin: cfdNum(c.margin), health: cfdNum(c.health),
+    positions, openPnl: positions.reduce((a, x) => a + (x.pnl || 0), 0),
+  };
+}
+function summarizeParty(party, transactions, spots, ctx) {
+  const s = summarizePartyBase(party, transactions, spots, ctx);
+  if (!s || !party || !party.cfd) return s;
+  const cfd = cfdNormalize(party.cfd);
+  return cfd ? { ...s, cfd } : s;
+}
+function cfdSymbolOf(x) { return (x.symbol || x.name || '?').replace(/\..*$/, '').slice(0, 4); }
+function cfdSummaryText(s) {
+  const c = s.cfd;
+  const pos = c.positions.slice(0, 2).map(x => `${cfdSymbolOf(x)} ${x.dir === 'sell' ? 'short' : 'long'}`).join(' · ') + (c.positions.length > 2 ? ` +${c.positions.length - 2}` : '');
+  const cash = c.cash != null ? `${fmtMoney(c.cash, { decimals: 2 })} cash` : '';
+  return [pos || 'Geen open posities', cash].filter(Boolean).join(' · ');
 }
 
 // Per-allocation daily value time series.
@@ -1861,6 +1903,7 @@ function holdingPriceText(s, spots = {}) {
   const p = s.party, px = s.currentUnitPrice;
   if (s.external && s.external.kind === 'financieelOver') return 'Live · Financieel Systeem';
   if (s.stocks) return stockSummaryText(s);
+  if (s.cfd) return cfdSummaryText(s);
   switch (dtUnitKind(p)) {
     case 'part': {
       const date = (p.id === 'meesman' ? dtLastHistDate(spots.meesmanNavHistory) : null) || s.lastValuationDate;
@@ -1882,6 +1925,7 @@ function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
     return { text: p.subtitle || financieelOverSubtitle(s.external.financieelOver), staleDays: s.external.staleDays };
   }
   if (s.stocks) return { text: stockSummaryText(s), staleDays: null };
+  if (s.cfd) return { text: cfdSummaryText(s), staleDays: null };
   const kind = dtUnitKind(p);
   switch (kind) {
     case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
@@ -2711,7 +2755,7 @@ Object.assign(window, {
   DEFAULT_MEESMAN_NAV_EUR, MEESMAN_NAV_SEED_HISTORY, mergePriceHistory, normalizeMeesmanHistory,
   WIDGET_REGISTRY, DEFAULT_WIDGETS,
   OZ_TO_GRAM, silverToOz, goldToGram,
-  loadState, saveState, makeId,
+  loadState, saveState, makeId, cfdNormalize, cfdSymbolOf, cfdNum,
   summarizeParty, buildValueTimeSeries, buildPartyTimeSeries, buildMonthlyFlows,
   calcYTDReturn, fmtEur, fmtPct, fmtQty, fmtDate, fmtMonth,
   spotEurForParty, findNavForDate,

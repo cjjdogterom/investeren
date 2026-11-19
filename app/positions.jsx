@@ -218,6 +218,8 @@ injectStyles('positions', `
 .ps-del__check input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--loss); }
 .ps-del__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .ps-formfoot { display: flex; gap: 8px; justify-content: flex-end; }
+.ps-cfd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.ps-cfd-pos { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-2); }
 
 @media (max-width: 767.98px) {
   .ps-page { padding: 12px 16px; }
@@ -768,13 +770,60 @@ function PsStockRows({ app, s }) {
   );
 }
 
+// CFD-rekening: open posities (richting, aantal, openings- en huidige koers, winst/verlies), margin en cash.
+const cfdNf = d => new Intl.NumberFormat('nl-NL', { minimumFractionDigits: d, maximumFractionDigits: d });
+function cfdPrice(v, ccy) {
+  if (v == null) return '—';
+  const sym = { USD: '$', EUR: '€', GBP: '£' }[ccy] || '';
+  const body = cfdNf(2).format(v);
+  return sym ? `${sym}${body}` : `${body} ${ccy}`;
+}
+function cfdQty(q) { return q == null ? '—' : fmtQty(q, '', { decimals: q % 1 === 0 ? 0 : 4 }).trim(); }
+function PsCfdRows({ app, s }) {
+  const privacy = !!app.prefs.privacy;
+  const c = s.cfd;
+  const pm = v => (privacy ? '€ •••••' : fmtMoney(v, { sign: true, decimals: 2 }));
+  return (
+    <div className="ps-lsub" data-testid={`holding-cfd-${s.party.id}`}>
+      {c.positions.map(x => (
+        <div className="ps-lstock" key={x.id}>
+          <span className="ps-lstock__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
+          <span className="ps-lrow__main">
+            <span className="ps-lstock__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</span>
+            <span className="ps-lrow__sub">{cfdQty(x.quantity)} st. · {cfdPrice(x.openPrice, x.currency)} → {cfdPrice(x.currentPrice, x.currency)}</span>
+          </span>
+          <span className="ps-lrow__end">
+            <span className={psCx('ps-lstock__val', psTone(x.pnl))}>{x.pnl == null ? '—' : pm(x.pnl)}</span>
+            <span className="ps-lrow__sec">open resultaat</span>
+          </span>
+        </div>
+      ))}
+      {c.margin != null && (
+        <div className="ps-lstock">
+          <span className="ps-lstock__tick" aria-hidden="true"><Icon name="percent" size={14} /></span>
+          <span className="ps-lrow__main"><span className="ps-lstock__name">Margin</span><span className="ps-lrow__sub">{c.health != null ? `Health ${cfdNf(0).format(c.health)}%` : 'Vastgezet voor open posities'}</span></span>
+          <span className="ps-lrow__end"><span className="ps-lstock__val"><Money value={c.margin} decimals={2} /></span></span>
+        </div>
+      )}
+      {c.cash != null && (
+        <div className="ps-lstock">
+          <span className="ps-lstock__tick" aria-hidden="true"><Icon name="wallet" size={14} /></span>
+          <span className="ps-lrow__main"><span className="ps-lstock__name">Cash</span><span className="ps-lrow__sub">Vrij op de CFD-rekening</span></span>
+          <span className="ps-lrow__end"><span className="ps-lstock__val"><Money value={c.cash} decimals={2} /></span></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, gain }) {
   const p = s.party;
   const privacy = !!app.prefs.privacy;
   const inc = psIncluded(p);
   const stocks = !closed && !empty && s.stocks && s.stocks.positions && s.stocks.positions.length > 0 ? s.stocks : null;
   const openIds = app.prefs.openHoldings || [];
-  const isOpen = !!stocks && openIds.includes(p.id);
+  const cfd = !closed && !empty && !stocks && s.cfd ? s.cfd : null;
+  const isOpen = !!(stocks || cfd) && openIds.includes(p.id);
   const row = (
     <button type="button" className={psCx('ps-lrow', (!inc || closed) && 'ps-lrow--muted')} data-testid={`holding-row-${p.id}`}
       onClick={() => app.navigate('/posities/' + encodeURIComponent(p.id))}>
@@ -793,6 +842,20 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
       </span>
     </button>
   );
+  if (cfd) {
+    const k = cfd.positions.length;
+    return (
+      <>
+        {row}
+        <button type="button" className="ps-lmore" aria-expanded={isOpen} data-testid={`holding-expand-${p.id}`}
+          onClick={() => app.setPrefs({ openHoldings: isOpen ? openIds.filter(id => id !== p.id) : [...openIds, p.id] })}>
+          <span>{isOpen ? 'Posities verbergen' : `${k === 1 ? '1 positie' : k + ' posities'}, margin en cash bekijken`}</span>
+          <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} />
+        </button>
+        {isOpen && <PsCfdRows app={app} s={s} />}
+      </>
+    );
+  }
   if (!stocks) return row;
   const n = stocks.positions.length;
   return (
@@ -1282,6 +1345,123 @@ function PsStockPositions({ app, s }) {
   );
 }
 
+// Detailpagina CFD-rekening: kerncijfers, open posities en de stand bijwerken.
+function PsCfdAccount({ app, s }) {
+  const privacy = !!(app.prefs && app.prefs.privacy);
+  const [edit, setEdit] = useState(false);
+  const c = s.cfd;
+  const netIn = s.costBasis - (s.realizedPnl || 0);
+  const pm = (v, d = 0) => (privacy ? '€ •••••' : fmtMoney(v, { sign: true, decimals: d }));
+  return (
+    <div data-testid="cfd-account">
+      <div className="ps-sec-head" style={{ marginBottom: 8 }}>
+        <h3 className="ps-sec-title">CFD-rekening</h3>
+        <button type="button" className="ps-link" onClick={() => setEdit(true)} data-testid="cfd-edit">
+          <Icon name="pencil" size={12} /> {c ? 'Stand bijwerken' : 'Stand invullen'}
+        </button>
+      </div>
+      {!c ? <p className="ps-subtle" style={{ margin: 0, fontSize: 13 }}>Vul de stand uit Trading 212 (CFD) in: accountwaarde, cash, margin en je open posities.</p> : (<>
+        <dl className="ps-kgrid" style={{ marginBottom: 10 }}>
+          <div><dt>Accountwaarde</dt><dd><Money value={c.accountValue} decimals={2} /></dd></div>
+          <div><dt>Netto ingelegd</dt><dd><Money value={netIn} decimals={2} /></dd></div>
+          <div><dt>Winst totaal</dt><dd className={psTone((c.accountValue || 0) - netIn)}>{c.accountValue == null ? '—' : pm(c.accountValue - netIn, 2)}</dd></div>
+          <div><dt>Open resultaat</dt><dd className={psTone(c.openPnl)}>{pm(c.openPnl, 2)}</dd></div>
+          <div><dt>Margin</dt><dd><Money value={c.margin} decimals={2} /></dd></div>
+          <div><dt>Cash</dt><dd><Money value={c.cash} decimals={2} /></dd></div>
+        </dl>
+        <div className="ps-coins" data-testid="cfd-positions">
+          {c.positions.map(x => (
+            <div className="ps-coin" key={x.id}>
+              <span className="ps-stk__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
+              <div style={{ minWidth: 0 }}>
+                <div className="ps-coin__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</div>
+                <div className="ps-coin__sub">{x.symbol} · {cfdQty(x.quantity)} st. · geopend {cfdPrice(x.openPrice, x.currency)} · nu {cfdPrice(x.currentPrice, x.currency)}</div>
+              </div>
+              <div className="ps-coin__end">
+                <span className={psCx('ps-coin__val', psTone(x.pnl))}>{x.pnl == null ? '—' : pm(x.pnl, 2)}</span>
+                {x.quantity != null && x.openPrice != null && x.currentPrice != null && x.openPrice > 0 &&
+                  <span className={psTone(x.pnl)} style={{ fontSize: 12.5 }}>{fmtPct((x.currentPrice / x.openPrice - 1) * 100 * (x.dir === 'sell' ? -1 : 1), { decimals: 1 })} koers</span>}
+              </div>
+            </div>
+          ))}
+          {!c.positions.length && <div className="ps-coin"><span className="ps-subtle">Geen open posities</span></div>}
+        </div>
+        <div className="ps-stk__foot"><span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · handmatig bijgewerkt</span></div>
+      </>)}
+      {edit && <PsCfdEdit app={app} s={s} onClose={() => setEdit(false)} />}
+    </div>
+  );
+}
+
+function PsCfdEdit({ app, s, onClose }) {
+  const p = s.party;
+  const c = s.cfd;
+  const str = v => (v == null ? '' : String(v).replace('.', ','));
+  const blank = () => ({ id: 'p' + Date.now().toString(36), symbol: '', name: '', dir: 'buy', quantity: '', openPrice: '', currentPrice: '', currency: 'USD', pnl: '' });
+  const [f, setF] = useState(() => ({
+    date: todayIsoLocal(),
+    accountValue: str(c && c.accountValue), cash: str(c && c.cash), margin: str(c && c.margin), health: str(c && c.health),
+    positions: c && c.positions.length ? c.positions.map(x => ({ ...x, quantity: str(x.quantity), openPrice: str(x.openPrice), currentPrice: str(x.currentPrice), pnl: str(x.pnl) })) : [blank()],
+  }));
+  const set = patch => setF(x => ({ ...x, ...patch }));
+  const setPos = (i, patch) => setF(x => ({ ...x, positions: x.positions.map((y, j) => (j === i ? { ...y, ...patch } : y)) }));
+  const num = v => cfdNum(v);
+  const av = num(f.accountValue);
+  const valid = av != null && av >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(f.date);
+  const submit = () => {
+    const cfd = {
+      asOf: f.date, accountValue: av, cash: num(f.cash), margin: num(f.margin), health: num(f.health),
+      positions: f.positions.filter(x => (x.symbol || x.name).trim()).map(x => ({
+        id: x.id, symbol: x.symbol.trim().toUpperCase(), name: (x.name || x.symbol).trim(), dir: x.dir, currency: x.currency,
+        quantity: num(x.quantity), openPrice: num(x.openPrice), currentPrice: num(x.currentPrice), pnl: num(x.pnl),
+      })),
+    };
+    app.saveParty({ ...p, cfd });
+    // De waarde in totalen en grafiek: één waardering per dag (bestaande van die dag wordt bijgewerkt).
+    const same = (s.transactions || []).find(t => t.party === p.id && t.type === 'waardering' && t.date === f.date);
+    app.saveTx({ ...(same || { id: makeId(), party: p.id, type: 'waardering', date: f.date }), valueEur: av, note: 'Stand CFD-rekening' });
+    onClose();
+  };
+  const footer = (
+    <div className="ps-formfoot">
+      <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+      <Button variant="primary" disabled={!valid} onClick={submit} data-testid="cfd-save">Opslaan</Button>
+    </div>
+  );
+  const dec = { inputMode: 'decimal' };
+  return (
+    <Sheet open onClose={onClose} width={520} testId="cfd-sheet" title="Stand CFD-rekening" subtitle="Neem de cijfers over uit Trading 212 → CFD." footer={footer}>
+      <div className="ps-form" style={{ display: 'grid', gap: 12 }}>
+        <div className="ps-cfd-grid">
+          <Field label="Datum" htmlFor="cfd-date"><Input id="cfd-date" type="date" value={f.date} onChange={e => set({ date: e.target.value })} /></Field>
+          <Field label="Accountwaarde (€)" htmlFor="cfd-av"><Input id="cfd-av" {...dec} value={f.accountValue} onChange={e => set({ accountValue: e.target.value })} /></Field>
+          <Field label="Cash (€)" htmlFor="cfd-cash"><Input id="cfd-cash" {...dec} value={f.cash} onChange={e => set({ cash: e.target.value })} /></Field>
+          <Field label="Margin (€)" htmlFor="cfd-margin"><Input id="cfd-margin" {...dec} value={f.margin} onChange={e => set({ margin: e.target.value })} /></Field>
+          <Field label="Health (%)" htmlFor="cfd-health"><Input id="cfd-health" {...dec} value={f.health} onChange={e => set({ health: e.target.value })} /></Field>
+        </div>
+        <h4 className="ps-sec-title" style={{ margin: '6px 0 0' }}>Open posities</h4>
+        {f.positions.map((x, i) => (
+          <div key={x.id} className="ps-cfd-pos">
+            <div className="ps-cfd-grid">
+              <Field label="Naam"><Input value={x.name} placeholder="Nvidia" onChange={e => setPos(i, { name: e.target.value })} /></Field>
+              <Field label="Ticker"><Input value={x.symbol} placeholder="NVDA" onChange={e => setPos(i, { symbol: e.target.value })} /></Field>
+              <Field label="Richting"><Select value={x.dir} onChange={e => setPos(i, { dir: e.target.value })}><option value="buy">Long (buy)</option><option value="sell">Short (sell)</option></Select></Field>
+              <Field label="Aantal"><Input {...dec} value={x.quantity} onChange={e => setPos(i, { quantity: e.target.value })} /></Field>
+              <Field label="Valuta koers"><Select value={x.currency} onChange={e => setPos(i, { currency: e.target.value })}>{['USD', 'EUR', 'GBP'].map(k => <option key={k} value={k}>{k}</option>)}</Select></Field>
+              <Field label="Openingskoers"><Input {...dec} value={x.openPrice} onChange={e => setPos(i, { openPrice: e.target.value })} /></Field>
+              <Field label="Huidige koers"><Input {...dec} value={x.currentPrice} onChange={e => setPos(i, { currentPrice: e.target.value })} /></Field>
+              <Field label="Resultaat (€)"><Input {...dec} value={x.pnl} placeholder="-67,73" onChange={e => setPos(i, { pnl: e.target.value })} /></Field>
+            </div>
+            <button type="button" className="ps-link" onClick={() => setF(y => ({ ...y, positions: y.positions.filter((_, j) => j !== i) }))}><Icon name="trash-2" size={12} /> Positie verwijderen</button>
+          </div>
+        ))}
+        <button type="button" className="ps-link" onClick={() => setF(y => ({ ...y, positions: [...y.positions, blank()] }))}><Icon name="plus" size={12} /> Positie toevoegen</button>
+        <p className="ps-subtle" style={{ margin: 0, fontSize: 12.5 }}>Stortingen en opnames boek je als inleg/opname op deze positie; winst = accountwaarde − netto ingelegd.</p>
+      </div>
+    </Sheet>
+  );
+}
+
 function PsPostCoins({ app, s }) {
   const privacy = !!(app.prefs && app.prefs.privacy);
   const leaves = s.leaves || [];
@@ -1448,7 +1628,7 @@ function PsPartyBody({ app, s }) {
         const n = (s.transactions || []).filter(t => !isT212ApiTx(t) && t.type !== 'waardering').length;
         return n > 0 ? <p className="ps-subtle" style={{ fontSize: 12.5, margin: 0 }}>{n} handmatige of nagebootste boeking{n === 1 ? '' : 'en'} tellen niet mee; de koppeling is leidend.</p> : null;
       })()}
-      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
+      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : (s.cfd || p.id === 'trading212-cfd') ? <PsCfdAccount app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
       {gp && (
         <div className="ps-pgoal">
           <div className="ps-pgoal__row"><span>Doel</span><span className="num">{fmtPct(gp.pct, { decimals: 0, sign: false })} · {privacy && !['gram', 'ounce'].includes(p.unit) ? '€ •••••' : gp.label}</span></div>
