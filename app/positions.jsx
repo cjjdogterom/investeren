@@ -1822,7 +1822,7 @@ function PsPartyBody({ app, s }) {
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}
             options={psPeriodOptions(dates).map(o => ({ ...o, testId: undefined }))} />
-          <PerformanceChart dates={chartDates} primary={primary} secondary={secondary} height={140}
+          <PerformanceChart dates={chartDates} primary={primary} secondary={secondary} height={140} baseline="auto"
             cursor={ci} onCursor={i => setCursor(i)} privacy={privacy} liveDot="static" tableTwin={false}
             ariaLabel={`Waardeverloop ${p.name}`}
             valueText={i => `${fmtDateLong(chartDates[i])}: ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i])}`} />

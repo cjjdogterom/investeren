@@ -660,6 +660,13 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
         <div>
           <p className="md-lead">Wat wil je vastleggen?</p>
           <div className="md-types">
+            {!presetParty && parties.some(p => isCfdParty(p)) && (
+              <button type="button" className="md-type" data-testid="tx-type-cfd"
+                onClick={() => { const cp = parties.find(p => isCfdParty(p)); setForm(f => ({ ...f, type: 'koop', party: cp.id })); setTypeNote(null); setStep(2); }}>
+                <span className="md-type__icon"><Icon name="trending-up" size={18} /></span>
+                <span><span className="md-type__label">CFD-positie</span><span className="md-type__hint">Openen met hefboom</span></span>
+              </button>
+            )}
             {tileTypes.map(k => {
               const disabled = !!(presetParty && !allowedTxTypes(presetParty).includes(k)) || (k === 'overboeking' && transferPosts.length < 2);
               return (
