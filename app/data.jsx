@@ -2648,7 +2648,8 @@ function partyPeriodGain(model, s, key) {
   const v0 = v[r.i0] || 0, v1 = v[r.i1] || 0, n0 = n[r.i0] || 0, n1 = n[r.i1] || 0;
   const flow = n1 - n0;
   const gain = (v1 - n1) - (v0 - n0);
-  const base = v0 + 0.5 * flow;
+  // Positie gestart binnen de periode (beginwaarde nul): de hele inleg is de basis, niet de helft.
+  const base = v0 < 0.5 && flow > 0 ? flow : v0 + 0.5 * flow;
   return { gain, pct: base > 0.5 ? gain / base * 100 : null, base, flow, start: series.dates[r.i0], end: series.dates[r.i1] };
 }
 
