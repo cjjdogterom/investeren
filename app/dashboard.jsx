@@ -14,6 +14,9 @@ injectStyles('overzicht', `
 .ov-fin .list-row__subtitle { white-space: normal; }
 .ov-fin__more { padding-top: 8px; }
 /* Live CFD-kaart */
+.ov-cfd-embed { display: flex; flex-direction: column; padding: 12px 14px; margin: 0 0 10px 52px; border: 1px solid var(--border); border-radius: var(--r-2, 12px); background: var(--surface); }
+.ov-cfd-embed__top { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.ps-cfd-detail .ov-cfd-embed { margin-left: 0; }
 .ov-cfd__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ov-cfd__val { font: 650 28px/1.1 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .ov-cfd__pnl { font: 600 15px/20px var(--font); font-variant-numeric: tabular-nums; }
@@ -573,9 +576,9 @@ function OvCfdPos({ x, privacy }) {
     </div>
   );
 }
-function OvCfdLive({ app }) {
+function OvCfdLive({ app, s: sProp = null, embedded = false }) {
   const ticks = useCfdTicks();
-  const s = ((app.model && app.model.summaries) || []).find(x => x && x.party && x.party.cfd && x.party.includeInTotal !== false);
+  const s = sProp || ((app.model && app.model.summaries) || []).find(x => x && x.party && x.party.cfd && x.party.includeInTotal !== false);
   if (!s) return null;
   const c = cfdLive(cfdNormalize(s.party.cfd), app.stockQuotes, ticks);
   if (!c || c.accountValue == null) return null;
@@ -586,10 +589,9 @@ function OvCfdLive({ app }) {
   const hpct = c.health == null ? null : Math.max(0, Math.min(100, c.health));
   const hcol = hpct == null ? 'var(--fg-subtle)' : hpct < 25 ? 'var(--negative)' : hpct < 50 ? 'var(--warn)' : 'var(--positive)';
   const M = v => <Money value={v} decimals={2} />;
-  return (
-    <Card padding={app.isMobile ? 14 : 16} data-testid="ov-cfd-live"
-      title={<button type="button" className="ov-link ov-link--strong" style={{ padding: 0 }} onClick={() => app.navigate('/posities/' + encodeURIComponent(s.party.id))}>{s.party.name}</button>}
-      meta={<span className="ov-cfd__live"><span className={'ov-cfd__dot' + (fresh ? '' : ' ov-cfd__dot--off')} />{c.stream ? (fresh ? 'Live' : 'Markt dicht') : c.live ? 'Koers per 10 min' : 'Laatste stand'}{c.marketTime ? ' · ' + new Date(c.marketTime).toLocaleTimeString('nl-NL') : ''}</span>}>
+  const live = <span className="ov-cfd__live"><span className={'ov-cfd__dot' + (fresh ? '' : ' ov-cfd__dot--off')} />{c.stream ? (fresh ? 'Live' : 'Markt dicht') : c.live ? 'Koers per 10 min' : 'Laatste stand'}{c.marketTime ? ' · ' + new Date(c.marketTime).toLocaleTimeString('nl-NL') : ''}</span>;
+  const inner = (
+    <>
       <div className="ov-cfd__head">
         <div>
           <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Accountwaarde</div>
@@ -611,7 +613,13 @@ function OvCfdLive({ app }) {
           {hpct != null && <div className="ov-cfd__bar"><i style={{ width: hpct + '%', background: hcol }} /></div>}</div>
         <div><dt>Winst totaal</dt><dd style={{ color: total < -0.005 ? 'var(--negative)' : total > 0.005 ? 'var(--positive)' : undefined }}>{privacy ? '€ •••••' : fmtMoney(total, { sign: true, decimals: 2 })}</dd></div>
       </dl>
-    </Card>
+    </>
+  );
+  if (embedded) return <div className="ov-cfd-embed" data-testid="cfd-live"><div className="ov-cfd-embed__top">{live}</div>{inner}</div>;
+  return (
+    <Card padding={app.isMobile ? 14 : 16} data-testid="ov-cfd-live"
+      title={<button type="button" className="ov-link ov-link--strong" style={{ padding: 0 }} onClick={() => app.navigate('/posities/' + encodeURIComponent(s.party.id))}>{s.party.name}</button>}
+      meta={live}>{inner}</Card>
   );
 }
 
@@ -874,7 +882,6 @@ function OvDesktop({ app }) {
   return (
     <div className="ov-desk">
       <OvFinOpen app={app} />
-      <OvCfdLive app={app} />
       <div className="ov-top" ref={topRef}>
         <div className="ov-left">
           <OvPrestatiesCard app={app} pf={pf} />
@@ -1052,7 +1059,6 @@ function OvMobile({ app }) {
         </div>
       </div>
 
-      <OvCfdLive app={app} />
 
       {on('party_grid') && (
         <section className="ov-hold ov-hold--m" aria-labelledby="ov-mhold-title" data-testid="ov-holdings">
@@ -1100,4 +1106,4 @@ function OverzichtScreen({ app }) {
   return app.isMobile ? <OvMobile app={app} /> : <OvDesktop app={app} />;
 }
 
-Object.assign(window, { OverzichtScreen });
+Object.assign(window, { OverzichtScreen, OvCfdLive });

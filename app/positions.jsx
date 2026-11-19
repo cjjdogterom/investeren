@@ -231,6 +231,7 @@ injectStyles('positions', `
 .ps-del__check input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--loss); }
 .ps-del__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .ps-formfoot { display: flex; gap: 8px; justify-content: flex-end; }
+.ps-cfd-detail { display: flex; flex-direction: column; gap: 10px; }
 .ps-cfd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .ps-cfd-pos { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-2); }
 
@@ -866,10 +867,10 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
         {row}
         <button type="button" className="ps-lmore" aria-expanded={isOpen} data-testid={`holding-expand-${p.id}`}
           onClick={() => app.setPrefs({ openHoldings: isOpen ? openIds.filter(id => id !== p.id) : [...openIds, p.id] })}>
-          <span>{isOpen ? 'Posities verbergen' : `${k === 1 ? '1 positie' : k + ' posities'}, margin en cash bekijken`}</span>
+          <span>{isOpen ? 'Live CFD verbergen' : `Live CFD bekijken · ${k === 1 ? '1 positie' : k + ' posities'}, cash en margin`}</span>
           <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} />
         </button>
-        {isOpen && <PsCfdRows app={app} s={s} />}
+        {isOpen && (window.OvCfdLive ? <OvCfdLive app={app} s={s} embedded /> : <PsCfdRows app={app} s={s} />)}
       </>
     );
   }
@@ -1378,33 +1379,6 @@ function PsCfdAccount({ app, s }) {
         </button>
       </div>
       {!c ? <p className="ps-subtle" style={{ margin: 0, fontSize: 13 }}>Vul de stand uit Trading 212 (CFD) in: accountwaarde, cash, margin en je open posities.</p> : (<>
-        <dl className="ps-kgrid" style={{ marginBottom: 10 }}>
-          <div><dt>Accountwaarde</dt><dd><Money value={c.accountValue} decimals={2} /></dd></div>
-          <div><dt>Netto ingelegd</dt><dd><Money value={netIn} decimals={2} /></dd></div>
-          <div><dt>Winst totaal</dt><dd className={psTone((c.accountValue || 0) - netIn)}>{c.accountValue == null ? '—' : pm(c.accountValue - netIn, 2)}</dd></div>
-          <div><dt>Open resultaat</dt><dd className={psTone(c.openPnl)}>{pm(c.openPnl, 2)}</dd></div>
-          <div><dt>Margin</dt><dd><Money value={c.margin} decimals={2} /></dd></div>
-          <div><dt>Cash</dt><dd><Money value={c.cash} decimals={2} /></dd></div>
-          <div><dt>Health{c.healthEstimated ? ' (schatting)' : ''}</dt><dd className="num">{c.health == null ? '—' : `${cfdNf(0).format(c.health)}%`}</dd></div>
-          <div><dt>Koers</dt><dd className="num">{c.stream ? 'Live (per tick)' : c.live ? 'Elke 10 min' : 'Stand'}</dd></div>
-        </dl>
-        <div className="ps-coins" data-testid="cfd-positions">
-          {c.positions.map(x => (
-            <div className="ps-coin" key={x.id}>
-              <span className="ps-stk__tick" aria-hidden="true">{cfdSymbolOf(x)}</span>
-              <div style={{ minWidth: 0 }}>
-                <div className="ps-coin__name">{x.name} · {x.dir === 'sell' ? 'Short' : 'Long'}</div>
-                <div className="ps-coin__sub">{x.symbol} · {cfdQty(x.quantity)} st. · geopend {cfdPrice(x.openPrice, x.currency)} · nu {cfdPrice(x.currentPrice, x.currency)}{x.live ? ' (live)' : ''}</div>
-              </div>
-              <div className="ps-coin__end">
-                <span className={psCx('ps-coin__val', psTone(x.pnl))}>{x.pnl == null ? '—' : pm(x.pnl, 2)}</span>
-                {x.quantity != null && x.openPrice != null && x.currentPrice != null && x.openPrice > 0 &&
-                  <span className={psTone(x.pnl)} style={{ fontSize: 12.5 }}>{fmtPct((x.currentPrice / x.openPrice - 1) * 100 * (x.dir === 'sell' ? -1 : 1), { decimals: 1 })} koers</span>}
-              </div>
-            </div>
-          ))}
-          {!c.positions.length && <div className="ps-coin"><span className="ps-subtle">Geen open posities</span></div>}
-        </div>
         <div className="ps-stk__foot">
           {c.live && <span>Koers {c.stream ? 'live per tick' : 'live'} via Yahoo Finance{c.marketTime ? ` · ${fmtRelDay(c.marketTime.slice(0, 10))} ${new Date(c.marketTime).toLocaleTimeString('nl-NL')}` : ''} · resultaat, accountwaarde, margin en cash rekenen mee ({privacy ? '€ •••••' : fmtMoney(c.liveDelta, { sign: true, decimals: 2 })} sinds de stand)</span>}
           <span>Stand uit Trading 212 (CFD){c.asOf ? ` · ${fmtDateLong(c.asOf)}` : ''}{c.health != null ? ` · health ${cfdNf(0).format(c.health)}%` : ''} · health is een schatting tot je de stand bijwerkt</span>
@@ -1758,6 +1732,7 @@ function PsPartyBody({ app, s }) {
           })}
         </dl>
       )}
+      {p.cfd && <div className="ps-cfd-detail">{window.OvCfdLive && <OvCfdLive app={app} s={s} embedded />}<PsCfdAccount app={app} s={s} /></div>}
       {hasChart && (
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}
@@ -1786,7 +1761,7 @@ function PsPartyBody({ app, s }) {
         const n = (s.transactions || []).filter(t => !isT212ApiTx(t) && t.type !== 'waardering').length;
         return n > 0 ? <p className="ps-subtle" style={{ fontSize: 12.5, margin: 0 }}>{n} handmatige of nagebootste boeking{n === 1 ? '' : 'en'} tellen niet mee; de koppeling is leidend.</p> : null;
       })()}
-      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : (s.cfd || p.id === 'trading212-cfd') ? <PsCfdAccount app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
+      {p.unit === 'post' ? <PsPostCoins app={app} s={s} /> : p.cfd ? null : p.id === 'trading212-cfd' ? <PsCfdAccount app={app} s={s} /> : s.stocks ? <PsStockPositions app={app} s={s} /> : (s.transactions.length > 0 && <PsHoldingStrip s={s} spots={spots} />)}
       {gp && (
         <div className="ps-pgoal">
           <div className="ps-pgoal__row"><span>Doel</span><span className="num">{fmtPct(gp.pct, { decimals: 0, sign: false })} · {privacy && !['gram', 'ounce'].includes(p.unit) ? '€ •••••' : gp.label}</span></div>
