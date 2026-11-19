@@ -90,7 +90,6 @@ final class PrintBridge: NSObject, WKScriptMessageHandler {
 
 struct WebContainer: UIViewRepresentable {
     let webView: WKWebView
-    let notifyBridge: NotifyBridge
     func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
@@ -100,6 +99,7 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     @Published var failed = false
     @Published var errorMessage = ""
     let webView: WKWebView
+    let notifyBridge: NotifyBridge
 
     override init() {
         let config = WKWebViewConfiguration()
