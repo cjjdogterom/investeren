@@ -3,6 +3,16 @@
 
 injectStyles('overzicht', `
 .ov-desk { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 20px; }
+
+/* Open beleggingen uit Financieel: bovenaan het overzicht, alleen als er iets aan te vullen is */
+.ov-fin { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); box-shadow: inset 3px 0 0 var(--warn); }
+.ov-fin .card__title { display: inline-flex; align-items: center; gap: 8px; }
+.ov-fin .card__title > svg { color: var(--warn); flex: none; }
+.ov-fin__note { margin: 0 0 4px; font-size: 12.5px; line-height: 18px; color: var(--fg-muted); }
+.ov-fin__list { display: flex; flex-direction: column; }
+.ov-fin__list > .list-row + .list-row { border-top: 1px solid var(--border); }
+.ov-fin .list-row__subtitle { white-space: normal; }
+.ov-fin__more { padding-top: 8px; }
 .ov-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .ov-left { flex: 7 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .ov-right { flex: 5 1 380px; min-width: 0; display: flex; flex-direction: column; }
@@ -469,6 +479,46 @@ function OvAttentionCard({ app, items }) {
 }
 
 // ===================================================================
+// Open beleggingen uit Financieel (bovenaan, zodat je ze niet vergeet)
+// ===================================================================
+const OV_FIN_MAX = 5;
+function OvFinOpen({ app }) {
+  const list = ((app.state && app.state.transactions) || []).filter(isFinBelAanvullen)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  if (!list.length) return null;
+  const parties = (app.model && app.model.allParties) || [];
+  const shown = list.slice(0, OV_FIN_MAX);
+  const total = list.reduce((a, t) => a + (+t.amountEur || 0), 0);
+  return (
+    <Card className="ov-fin" data-testid="ov-fin-open" padding={app.isMobile ? 14 : 16}
+      title={<><Icon name="pencil" size={16} />{finBelOpenTitle(list.length)}</>}
+      meta={list.length > 1 ? <Money value={total} decimals={2} /> : null}>
+      <p className="ov-fin__note">Uit Financieel (Vermogensopbouw). Tot je ze aanvult tellen ze als ingelegd tegen kostprijs.</p>
+      <div className="ov-fin__list">
+        {shown.map(tx => {
+          const party = parties.find(p => p.id === tx.party) || null;
+          return (
+            <ListRow key={tx.id} testId={`ov-fin-${tx.id}`}
+              leading={party ? <Monogram party={party} size={28} /> : <span className="monogram monogram--28" aria-hidden="true"><Icon name="circle-alert" size={14} style={{ color: "var(--warn)" }} /></span>}
+              title={finBelPartyLabel(parties, tx.party)}
+              subtitle={party ? fmtDateLong(tx.date) : `${fmtDateLong(tx.date)} · onbekende positie, kies de juiste bij aanvullen`}
+              value={<Money value={+tx.amountEur || 0} decimals={2} />}
+              secondary={<Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>} />
+          );
+        })}
+      </div>
+      {list.length > shown.length && (
+        <div className="ov-fin__more">
+          <button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/posities')}>
+            Nog {list.length - shown.length} bij Posities <Icon name="chevron-right" size={14} />
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ===================================================================
 // Verdeling card
 // ===================================================================
 function OvVerdelingCard({ app, pinIndex }) {
@@ -726,6 +776,7 @@ function OvDesktop({ app }) {
     on('attention') && <OvAttentionCard key="att" app={app} items={items} />].filter(Boolean);
   return (
     <div className="ov-desk">
+      <OvFinOpen app={app} />
       <div className="ov-top" ref={topRef}>
         <div className="ov-left">
           <OvPrestatiesCard app={app} pf={pf} />
@@ -847,6 +898,7 @@ function OvMobile({ app }) {
   };
   return (
     <div className="ov-m">
+      <OvFinOpen app={app} />
       <section className="ov-m__hero" aria-label="Totale waarde">
         <div className="ov-m__herotop">
           <div className="ov-label">{label}</div>

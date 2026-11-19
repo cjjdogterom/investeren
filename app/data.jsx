@@ -28,6 +28,9 @@ const PARTIES = [
   { id: 'finst-top25', name: 'Top 25 Bundel',  category: 'Crypto',   subtitle: 'Top 25 tokens via Finst', color: 'oklch(62% 0.15 195)', unit: 'bundle', unitLabel: '€',     goal: 1000 },
   { id: 'goldrepublic', name: 'Goldrepublic',  category: 'Edelmetaal',   subtitle: 'Goud & zilver in kluis',   color: 'oklch(78% 0.14 85)',  unit: 'mixed', unitLabel: 'g/oz',  goal: 5000, isMixed: true },
   { id: 'trading212',   name: 'Trading 212',   category: 'Broker',       subtitle: "Aandelen & ETF's",         color: 'oklch(55% 0.16 145)', unit: 'bundle',unitLabel: '€',     goal: 5000 },
+  // CFD-rekening bij Trading 212: los van de API-koppeling (die dekt alleen de aandelen-/ETF-rekening onder 'trading212').
+  // 'bundle' = totale waarde: stortingen/opnames + handmatige waarderingen; posities en hefboom houden we niet bij.
+  { id: 'trading212-cfd', name: 'Trading 212 CFD', category: 'Broker',   subtitle: "CFD's — handmatig",        color: 'oklch(55% 0.16 145)', unit: 'bundle',unitLabel: '€',     goal: 0 },
   { id: 'goud',         name: 'Fysiek Goud',   category: 'Edelmetaal',   subtitle: 'Eigen bezit — gram',       color: 'oklch(75% 0.15 70)',  unit: 'gram',  unitLabel: 'g',     goal: 20 },
   { id: 'zilver',       name: 'Fysiek Zilver', category: 'Edelmetaal',   subtitle: 'Eigen bezit — ounce',      color: 'oklch(70% 0.03 240)', unit: 'ounce', unitLabel: 'oz',    goal: 30 },
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
@@ -35,7 +38,10 @@ const PARTIES = [
   // Id blijft 'lopende-rekening' voor compatibiliteit met bestaande, gesyncte partijlijsten.
   { id: 'lopende-rekening', name: 'Vrij op rekening', category: 'Liquide', subtitle: 'Financieel · live', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
 ];
-const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening'];
+// Partijen die ook bij bestaande (gesyncte) partijlijsten worden toegevoegd, tenzij de gebruiker ze verwijderde (tombstone).
+// Positie: direct na het anker in ALWAYS_SEEDED_AFTER als dat er is, anders achteraan.
+const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening', 'trading212-cfd'];
+const ALWAYS_SEEDED_AFTER = { 'trading212-cfd': 'trading212' };
 
 // ===== Vrij op rekening (live uit het Financieel Systeem) =====
 const FIN_OVER_PARTY_ID = 'lopende-rekening';
@@ -311,7 +317,11 @@ function migrateCryptoPosts(parties, deletedPartyIds) {
     }
   }
   for (const id of ALWAYS_SEEDED_PARTY_IDS) {
-    if (!has(id) && !tomb[id]) { list.push({ ...seedById[id] }); changed = true; }
+    if (has(id) || tomb[id]) continue;
+    const anchor = ALWAYS_SEEDED_AFTER[id];
+    const at = anchor ? list.findIndex(p => p && p.id === anchor) : -1;
+    if (at >= 0) list.splice(at + 1, 0, { ...seedById[id] }); else list.push({ ...seedById[id] });
+    changed = true;
   }
   {
     const i = list.findIndex(p => p && p.id === FIN_OVER_PARTY_ID);
@@ -1757,7 +1767,7 @@ function monogramOf(party) {
 // Bestanden '*-tile.*' zijn volledige app-tegels (vullen de hele tile). Op id; eigen (custom_*) partijen matchen op genormaliseerde naam. party.logo (pad of URL) wint altijd.
 const PARTY_LOGOS = {
   meesman: 'meesman.svg', finst: 'finst.svg', 'finst-top25': 'finst.svg', wallet: 'coinbase-wallet.svg',
-  'finst-paxg': 'paxg.svg', goldrepublic: 'goldrepublic-tile.png', trading212: 't212-tile.png',
+  'finst-paxg': 'paxg.svg', goldrepublic: 'goldrepublic-tile.png', trading212: 't212-tile.png', 'trading212-cfd': 't212-tile.png',
   goud: 'gold-bar.svg', zilver: 'silver-bar.svg',
   greenmine: 'greenmine.png', greenmining: 'greenmine.png', naoinvest: 'nao.png', nao: 'nao.png', uptomore: 'uptomore-tile.png',
   coinbase: 'coinbase-wallet.svg', coinbasewallet: 'coinbase-wallet.svg',

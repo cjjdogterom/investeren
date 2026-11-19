@@ -349,18 +349,25 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
   const pxN = parsed.unitPriceEur || 0;
   const orderValue = qtyN * pxN;
   const feeRaw = parseNlNumber(form.feeEur) || 0;
-  const showFee = MD_FEE_TYPES.includes(form.type);
-  const feeQtyN = isTransfer ? parseNlNumber(form.feeQty) : null;
-  const feeEur = !showFee ? 0 : (form.feeMode === 'pct' ? (orderValue > 0 ? orderValue * feeRaw / 100 : 0) : feeRaw);
-  const showInstrument = party && party.id === 'trading212' && MD_INSTR_TYPES.includes(form.type);
-  const showMetal = isMixed && MD_METAL_TYPES.includes(form.type);
-  const showOptAmount = form.type === 'opname' && mdUnitBased(party);
   // Aanvullen van een boeking uit Financieel: het bedrag dat van de rekening ging staat al vast.
   const finAanvul = !!(initial && isFinBelAanvullen(initial));
   const finBedrag = finAanvul ? (+initial.amountEur || 0) : 0;
+  // Kosten bij een inleg (bv. stortingskosten): alleen bij het aanvullen van een Financieel-boeking, of als de
+  // transactie ze al heeft (anders zou bewerken ze stilletjes wissen). Ze tellen mee in de kostprijs.
+  const feeOnInleg = form.type === 'inleg' && (finAanvul || !!(initial && +initial.feeEur > 0));
+  const showFee = MD_FEE_TYPES.includes(form.type) || feeOnInleg;
+  const feeBase = form.type === 'inleg' ? (parsed.amountEur || 0) : orderValue;
+  const feeQtyN = isTransfer ? parseNlNumber(form.feeQty) : null;
+  const feeEur = !showFee ? 0 : (form.feeMode === 'pct' ? (feeBase > 0 ? feeBase * feeRaw / 100 : 0) : feeRaw);
+  const showInstrument = party && party.id === 'trading212' && MD_INSTR_TYPES.includes(form.type);
+  const showMetal = isMixed && MD_METAL_TYPES.includes(form.type);
+  const showOptAmount = form.type === 'opname' && mdUnitBased(party);
   const finFee = form.feeMode === 'eur' ? feeRaw : 0;
   const finPxSuggest = finAanvul && form.type === 'koop' && qtyN > 0 && finBedrag > finFee
     ? +((finBedrag - finFee) / qtyN).toFixed(6) : null;
+  // Inleg met kosten: het Financieel-bedrag = inleg + kosten, dus voorstel inleg = bedrag − kosten.
+  const finInlegSuggest = finAanvul && form.type === 'inleg' && finFee > 0 && finBedrag > finFee
+    ? +(finBedrag - finFee).toFixed(2) : null;
 
   const errors = {};
   for (const k of needs) {
@@ -549,7 +556,9 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           {finAanvul && (
             <div className="md-live" data-testid="tx-fin-aanvul">
               Uit Financieel: <b className="num">{fmtMoney(finBedrag, { decimals: 2 })}</b> op {fmtDateShort(initial.date)}.
-              {' '}{form.type === 'koop' ? 'Vul het aantal, de prijs per eenheid en eventuele transactiekosten in.' : 'Controleer het bedrag en sla op.'}
+              {' '}{form.type === 'koop' ? 'Vul het aantal, de prijs per eenheid en eventuele transactiekosten in.'
+                : form.type === 'inleg' ? 'Controleer het bedrag; waren er kosten, vul die dan in en trek ze van de inleg af.'
+                : 'Controleer het bedrag en sla op.'}
               {' '}Na opslaan is het een gewone transactie.
             </div>
           )}
@@ -706,6 +715,11 @@ function TransactionSheet({ app, open, preset, initial, onClose }) {
           ) : (
             <button type="button" className="md-addlink" onClick={() => setFeeOpen(true)}><Icon name="plus" size={14} />Transactiekosten</button>
           ))}
+          {finInlegSuggest != null && Math.abs(finInlegSuggest - (parsed.amountEur || 0)) > 0.004 && (
+            <button type="button" className="md-addlink" onClick={() => set('amountEur', mdNum(finInlegSuggest))}>
+              <Icon name="circle-plus" size={14} />Gebruik {fmtMoney(finInlegSuggest, { decimals: 2 })} als inleg (bedrag − kosten)
+            </button>
+          )}
 
           <Field label="Notitie (optioneel)" htmlFor={`${ids}-note`}>
             <Textarea id={`${ids}-note`} rows={2} value={form.note} onChange={e => set('note', e.target.value)} />
