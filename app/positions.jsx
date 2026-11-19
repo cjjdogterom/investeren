@@ -93,6 +93,16 @@ injectStyles('positions', `
 .ps-lrow__val { font: 650 15px/20px var(--font); font-variant-numeric: tabular-nums lining-nums; }
 .ps-lrow__sec { font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
 .ps-lrow--muted .ps-lrow__name, .ps-lrow--muted .ps-lrow__val { color: var(--fg-muted); }
+.ps-lrow__sec.ps-gain { color: var(--gain); } .ps-lrow__sec.ps-loss { color: var(--loss); }
+/* Uitklappen van aandelen binnen een brokerpositie; ingesprongen tot onder de naam */
+.ps-lmore { display: flex; align-items: center; gap: 4px; align-self: flex-start; min-height: 36px; margin: -6px 0 2px; padding: 0; border: 0; background: none; font: 500 13px/18px var(--font); color: var(--fg-muted); cursor: pointer; }
+.ps-lmore > span { margin-left: 52px; }
+.ps-lmore:active, .ps-lmore[aria-expanded="true"] { color: var(--fg); }
+.ps-lsub { display: flex; flex-direction: column; margin: 0 0 8px; }
+.ps-lstock { display: flex; align-items: center; gap: 12px; min-height: 54px; margin-left: 52px; padding: 6px 0; border-top: 1px solid var(--border); }
+.ps-lstock__tick { width: 34px; height: 34px; flex: none; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font: 650 10px/1 var(--font); letter-spacing: -0.01em; color: var(--fg-muted); overflow: hidden; }
+.ps-lstock__name { font: 550 14px/19px var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-lstock__val { font: 600 14px/19px var(--font); font-variant-numeric: tabular-nums lining-nums; }
 .ps-lfold { display: flex; align-items: center; gap: 10px; min-height: 52px; width: 100%; border: 0; border-top: 1px solid var(--border); background: none; padding: 8px 0; font: inherit; color: var(--fg); text-align: left; cursor: pointer; margin-top: 4px; }
 .ps-lfold__main { flex: 1; display: flex; flex-direction: column; }
 .ps-lfold__title { font-weight: 600; font-size: 15px; }
@@ -232,8 +242,8 @@ const PS_GAIN_PERIODS = [
   { key: 'ALL', label: 'Alles', col: null,    context: 'sinds {datum}' },
 ];
 // Effectieve winstperiode voor Posities (val terug op 'Alles' als er te weinig data is).
-function psGainKey(model, prefs) {
-  const k = (prefs && prefs.positionsPeriod) || 'ALL';
+function psGainKey(model, prefs, override) {
+  const k = override || (prefs && prefs.positionsPeriod) || 'ALL';
   if (k === 'ALL' || !PS_GAIN_PERIODS.some(p => p.key === k)) return 'ALL';
   return periodRange(model.series.dates, k).enabled ? k : 'ALL';
 }
@@ -707,7 +717,7 @@ function psSecondary(s, mode, totalValue, privacy, g) {
   if (g !== undefined && (mode === 'pnl' || mode === 'pnlPct')) {
     if (!g) return <span className="ps-lrow__sec">—</span>;
     if (mode === 'pnlPct') return <span className={psCx('ps-lrow__sec', psTone(g.gain))}>{g.pct != null ? fmtPct(g.pct, { decimals: 1 }) : '—'}</span>;
-    return <span className="ps-lrow__sec"><Delta value={g.gain} pct={g.pct} size="sm" /></span>;
+    return <span className="ps-lrow__sec"><Delta value={g.gain} pct={g.pct} size="sm" showGlyph={false} /></span>;
   }
   switch (mode) {
     case 'value': return <span className="ps-lrow__sec">{inc && totalValue > 0 ? fmtPct(s.currentValueEur / totalValue * 100, { decimals: 1, sign: false }) + ' aandeel' : 'niet in totaal'}</span>;
@@ -719,15 +729,53 @@ function psSecondary(s, mode, totalValue, privacy, g) {
     }
     case 'pnlPct': return <span className={psCx('ps-lrow__sec', psTone(s.pnl))}>{s.invested > 0 ? fmtPct(s.pnlPct, { decimals: 1 }) : '—'}</span>;
     default:
-      return <span className="ps-lrow__sec"><Delta value={s.pnl} pct={s.invested > 0 ? s.pnlPct : null} size="sm" /></span>;
+      return <span className="ps-lrow__sec"><Delta value={s.pnl} pct={s.invested > 0 ? s.pnlPct : null} size="sm" showGlyph={false} /></span>;
   }
+}
+
+// Aandelen binnen een brokerpositie (Trading 212): per aandeel het aantal, de koers en de waarde.
+function PsStockRows({ app, s }) {
+  const privacy = !!app.prefs.privacy;
+  const st = s.stocks;
+  return (
+    <div className="ps-lsub" data-testid={`holding-stocks-${s.party.id}`}>
+      {st.positions.map(x => (
+        <div className="ps-lstock" key={x.symbol} data-testid={'holding-stock-' + x.symbol}>
+          <span className="ps-lstock__tick" aria-hidden="true">{x.symbol.replace(/\..*$/, '').slice(0, 4)}</span>
+          <span className="ps-lrow__main">
+            <span className="ps-lstock__name">{x.name}</span>
+            <span className="ps-lrow__sub">
+              {fmtQty(x.quantity, '', { decimals: x.quantity % 1 === 0 ? 0 : 4 }).trim()} st.{x.hasQuote && x.priceEur != null ? <> · {fmtMoney(x.priceEur, { decimals: 2 })}</> : ' · geen koers'}
+            </span>
+          </span>
+          <span className="ps-lrow__end">
+            <span className="ps-lstock__val"><Money value={x.value} /></span>
+            <span className={psCx('ps-lrow__sec', psTone(x.pnl))}>{privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true })} · {fmtPct(x.pnlPct, { decimals: 1 })}</span>
+          </span>
+        </div>
+      ))}
+      {st.cash >= 0.005 && (
+        <div className="ps-lstock" data-testid="holding-stock-cash">
+          <span className="ps-lstock__tick" aria-hidden="true"><Icon name="wallet" size={14} /></span>
+          <span className="ps-lrow__main">
+            <span className="ps-lstock__name">Vrije kas</span>
+            <span className="ps-lrow__sub">Niet belegd saldo</span>
+          </span>
+          <span className="ps-lrow__end"><span className="ps-lstock__val"><Money value={st.cash} /></span></span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, gain }) {
   const p = s.party;
   const privacy = !!app.prefs.privacy;
   const inc = psIncluded(p);
-  return (
+  const stocks = !closed && !empty && s.stocks && s.stocks.positions && s.stocks.positions.length > 0 ? s.stocks : null;
+  const openIds = app.prefs.openHoldings || [];
+  const isOpen = !!stocks && openIds.includes(p.id);
+  const row = (
     <button type="button" className={psCx('ps-lrow', (!inc || closed) && 'ps-lrow--muted')} data-testid={`holding-row-${p.id}`}
       onClick={() => app.navigate('/posities/' + encodeURIComponent(p.id))}>
       <Monogram party={p} size={40} closed={closed} />
@@ -745,9 +793,22 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
       </span>
     </button>
   );
+  if (!stocks) return row;
+  const n = stocks.positions.length;
+  return (
+    <>
+      {row}
+      <button type="button" className="ps-lmore" aria-expanded={isOpen} data-testid={`holding-expand-${p.id}`}
+        onClick={() => app.setPrefs({ openHoldings: isOpen ? openIds.filter(id => id !== p.id) : [...openIds, p.id] })}>
+        <span>{isOpen ? 'Aandelen verbergen' : `${n === 1 ? '1 aandeel' : n + ' aandelen'} bekijken`}</span>
+        <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} />
+      </button>
+      {isOpen && <PsStockRows app={app} s={s} />}
+    </>
+  );
 }
 
-function HoldingsList({ app, variant = 'overview' }) {
+function HoldingsList({ app, variant = 'overview', period = null }) {
   const { model, prefs } = app;
   const page = variant === 'page';
   const grouped = !page || prefs.positionsGrouping !== 'none';
@@ -755,7 +816,8 @@ function HoldingsList({ app, variant = 'overview' }) {
   // Overzicht toont altijd winst (volgt de gedeelde periodekeuze); Posities volgt 'Toon'.
   const mode = page ? (prefs.positionsSecondary || 'pnl') : 'pnl';
   const totalValue = model.totals.value;
-  const gk = psGainKey(model, prefs);
+  // Overzicht geeft de gedeelde periode door; Posities gebruikt de eigen keuze.
+  const gk = psGainKey(model, prefs, period);
   const gains = useMemo(() => (gk === 'ALL' ? null : psGainMap(model, gk)), [model, gk]);
   const gainOf = s => (gains ? (gains[s.party.id] || null) : undefined);
   const [closedOpen, setClosedOpen] = useState(false);
@@ -781,7 +843,7 @@ function HoldingsList({ app, variant = 'overview' }) {
           <React.Fragment key={g.key}>
             {g.label && (
               <button type="button" className="ps-lgroup" aria-expanded={isOpen} onClick={() => toggleGroup(g.key)}>
-                <Swatch color={g.color} size={10} />
+                <Swatch color={g.color} size={8} shape="dot" />
                 <span className="ps-lgroup__label">{g.label}</span>
                 <span className="num">{g.share > 0 && g.share < 0.1 ? '<0,1%' : fmtPct(g.share, { decimals: 1, sign: false })}</span>
                 {g.gsum && <span className={psCx('ps-lgroup__gain', psTone(g.gsum.gain))}>{privacy ? '€ •••••' : fmtMoney(g.gsum.gain, { sign: true })}</span>}

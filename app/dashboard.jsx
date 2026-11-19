@@ -100,31 +100,30 @@ injectStyles('overzicht', `
 .ov-first__steps span b { color: var(--fg); margin-right: 4px; }
 .ov-first__ph { height: 160px; border: 1.5px dashed var(--border-strong); border-radius: var(--r-card); }
 
-/* Mobile */
-.ov-m { display: flex; flex-direction: column; gap: 20px; padding: 12px 16px 8px; min-width: 0; }
-.ov-m__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-top: 4px; }
-.ov-m__lhs { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding-top: 6px; }
-.ov-m__rhs { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; text-align: right; }
-.ov-m__hero .ov-hero { font-size: 34px; line-height: 38px; letter-spacing: -0.03em; margin: 0; }
-.ov-m__hero .ov-deltarow { justify-content: flex-end; min-height: 18px; }
-.ov-m__ctx { font-size: 12px; line-height: 16px; color: var(--fg-subtle); }
-.ov-m__chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: var(--r-pill); border: 0; background: var(--surface-2); color: var(--fg-muted); font: 500 12.5px/1 var(--font); cursor: pointer; position: relative; }
-.ov-m__chip::after { content: ''; position: absolute; inset: -8px -4px; }
-.ov-m__cap { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.ov-m__legend { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--fg-muted); }
-.ov-m__legend span { display: inline-flex; align-items: center; gap: 6px; }
-.ov-m__legend b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Mobile: strak en rustig; het totaal bovenaan is de titel van het scherm */
+.ov-m { display: flex; flex-direction: column; gap: 24px; padding: 4px 16px 8px; min-width: 0; }
+.ov-m__hero { display: flex; flex-direction: column; min-width: 0; }
+.ov-m__herotop { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.ov-m__herotop .ov-label { font-size: 13.5px; line-height: 18px; }
+.ov-m__herotop .icon-btn { width: 44px; height: 44px; margin-right: -12px; color: var(--fg); }
+.ov-m__hero .ov-hero { font-size: 44px; line-height: 48px; letter-spacing: -0.035em; margin: 0; }
+.ov-m__delta { margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; min-height: 22px; }
+.ov-m__delta .delta { font-size: 14.5px; font-weight: 550; }
+.ov-m__ctx { font-size: 14px; line-height: 20px; color: var(--fg-muted); }
+.ov-m__info { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: -4px; border: 0; background: none; padding: 0; color: var(--fg-subtle); cursor: pointer; position: relative; }
+.ov-m__info::after { content: ''; position: absolute; inset: -10px; }
+.ov-m__chartblock { display: flex; flex-direction: column; margin-top: -4px; }
 .ov-m__chart { margin: 0 -16px; }
-.ov-m__periods { display: flex; gap: 8px; align-items: center; }
-.ov-m__periods .seg { flex: 1; }
-.ov-m__periods .seg__btn { height: 36px; }
-.ov-m__modes { margin-top: 8px; }
-.ov-m__modes .seg { width: 100%; }
-.ov-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.ov-quick__btn { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: none; padding: 0; font: 500 12.5px/16px var(--font); color: var(--fg); cursor: pointer; }
-.ov-quick__well { width: 56px; height: 56px; border-radius: 20px; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); color: var(--fg); }
-.ov-quick__btn--ink .ov-quick__well { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
-.ov-quick__btn:active .ov-quick__well { transform: scale(.96); }
+.ov-m__periods { display: flex; justify-content: space-between; margin: 10px -6px 0; }
+.ov-m__period { flex: 1 1 0; min-width: 0; height: 44px; border: 0; background: none; padding: 0; display: grid; place-items: center; cursor: pointer; font: 500 13.5px/1 var(--font); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.ov-m__period > span { display: grid; place-items: center; height: 32px; min-width: 40px; padding: 0 11px; border-radius: var(--r-pill); transition: background var(--d-1) var(--ease), color var(--d-1) var(--ease); }
+.ov-m__period[aria-checked="true"] { font-weight: 600; }
+.ov-m__period[aria-checked="true"] > span { background: var(--ink); color: var(--on-ink); }
+.ov-m__period[aria-disabled="true"] { opacity: .35; cursor: not-allowed; }
+.ov-m__modes { display: flex; justify-content: center; gap: 4px; margin-top: 2px; }
+.ov-m__mode { height: 40px; padding: 0 12px; border: 0; background: none; cursor: pointer; font: 500 13.5px/1 var(--font); color: var(--fg-subtle); position: relative; }
+.ov-m__mode[aria-checked="true"] { color: var(--fg); font-weight: 600; }
+.ov-m__mode[aria-checked="true"]::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 7px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--chart-a), var(--chart-b)); }
 .ov-sect { margin: 0 0 10px; font: 650 18px/24px var(--font); letter-spacing: -0.006em; }
 .ov-fy { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 4px; scrollbar-width: none; overscroll-behavior-x: contain; }
 .ov-fy::-webkit-scrollbar { display: none; }
@@ -142,18 +141,20 @@ injectStyles('overzicht', `
 .ov-small b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 .ov-caption { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg-subtle); margin: 8px 0 4px; }
 .ov-hold--m { margin: 0 -16px; }
-.ov-hold--m .ov-hold__head { padding: 0 16px 10px; }
-.ov-hold--m .ps-pchips { padding: 0 16px 12px; }
-.ov-hold--m .ov-hold__alloc { padding: 0 16px 6px; }
-.ov-hold--m .ov-caption { margin: 8px 0 0; }
+.ov-hold--m .ov-hold__head { padding: 0 16px 12px; }
+.ov-hold--m .ov-hold__title { font-size: 19px; letter-spacing: -0.012em; }
+.ov-hold--m .ov-hold__meta { font-size: 13px; }
+.ov-hold--m .ov-hold__alloc { padding: 0 16px 12px; }
+.ov-hold--m .ov-caption { margin: 10px 0 0; font-size: 13px; color: var(--fg-muted); }
 .ov-hold--m .ps-list { border-bottom: 1px solid var(--border); }
-.ov-hold--m .ps-lgroup { padding: 14px 16px 6px; min-height: 40px; border-top: 1px solid var(--border); }
-.ov-hold--m .ps-lrow { padding: 8px 16px; border-radius: 0; border-top: 1px solid var(--border); min-height: 64px; }
-.ov-hold--m .ps-lgroup + .ps-lrow { border-top: 0; }
-.ov-hold--m .ps-lfold { padding: 8px 16px; margin-top: 0; }
+.ov-hold--m .ps-lgroup { padding: 12px 16px 4px; min-height: 46px; border-top: 1px solid var(--border); }
+.ov-hold--m .ps-lrow { padding: 8px 16px; border-radius: 0; min-height: 66px; }
+.ov-hold--m .ps-lsub, .ov-hold--m .ps-lmore { padding-left: 16px; padding-right: 16px; }
+.ov-hold--m .ps-lfold { padding: 8px 16px; margin-top: 0; min-height: 66px; }
 .ov-hold--m .ps-lnote { padding: 10px 16px; border-top: 1px solid var(--border); }
 .ov-act--m .tr-actlist { border-bottom: 1px solid var(--border); }
-.ov-act--m .tr-act { padding: 10px 16px; min-height: 64px; border-radius: 0; border-top: 1px solid var(--border); }
+.ov-act--m .tr-act { padding: 10px 16px; min-height: 64px; border-radius: 0; }
+.ov-act--m .tr-actlist { border-top: 1px solid var(--border); }
 .ov-mfoot { text-align: center; font-size: 12.5px; line-height: 18px; color: var(--fg-subtle); padding: 0 16px; }
 
 @media (max-width: 767.98px) {
@@ -187,8 +188,15 @@ function ovStamp(app) {
   const d = ovLatest(app.spotStatus && app.spotStatus.fetchedAt, app.syncStatus && app.syncStatus.syncedAt);
   return d ? `${fmtDateLong(ovIsoLocal(d))}, ${fmtTime(d.toISOString())}` : null;
 }
+// Eén periodekiezer voor het hele Overzicht (totaal, grafiek en posities). Mobiel ook 1D en 1W.
+const OV_PERIODS_ALL = [
+  { key: '1D', label: '1D', context: 'sinds gisteren' },
+  { key: '1W', label: '1W', context: 'afgelopen 7 dagen' },
+  ...PERIODS,
+];
+function ovSetPeriod(app, key) { app.setPrefs({ period: key, positionsPeriod: key }); }
 function ovPeriodContext(key, dates) {
-  const p = PERIODS.find(x => x.key === key) || PERIODS[3];
+  const p = OV_PERIODS_ALL.find(x => x.key === key) || PERIODS[3];
   return p.context.replace('{datum}', dates && dates.length ? fmtDateLong(dates[0]) : '');
 }
 
@@ -223,6 +231,7 @@ function OvExplainer() {
 // ===================================================================
 function useOvPerformance(app) {
   const { model, prefs, isMobile } = app;
+  const periodList = isMobile ? OV_PERIODS_ALL : PERIODS;
   const privacy = !!prefs.privacy;
   const peIds = useMemo(() => model.chartIds.filter(id => model.byId[id] && assetClassOf(model.byId[id].party) === 'pe'), [model]);
   const hasPE = peIds.length > 0;
@@ -231,6 +240,7 @@ function useOvPerformance(app) {
   const dates = series.dates;
 
   let periodKey = prefs.period || '1J';
+  if (!periodList.some(p => p.key === periodKey)) periodKey = '1M';
   let r = periodRange(dates, periodKey);
   if (!r.enabled) {
     for (const k of ['ALL', '1J', 'YTD', '3M', '1M']) {
@@ -238,7 +248,7 @@ function useOvPerformance(app) {
       if (r2.enabled) { r = r2; periodKey = k; break; }
     }
   }
-  const periodOptions = PERIODS.map(p => {
+  const periodOptions = periodList.map(p => {
     const en = periodRange(dates, p.key).enabled;
     return { value: p.key, label: p.label, disabled: !en, title: en ? undefined : 'Te weinig data', testId: `period-${p.key}` };
   });
@@ -262,7 +272,7 @@ function useOvPerformance(app) {
       const idx = '12345'.indexOf(e.key);
       if (idx < 0) return;
       const key = PERIODS[idx].key;
-      if (periodRange(dates, key).enabled) app.setPrefs({ period: key });
+      if (periodRange(dates, key).enabled) ovSetPeriod(app, key);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -814,69 +824,93 @@ function OvMobile({ app }) {
     : null;
   const segs = model.classes.map(c => ({ key: c.key, label: c.label, color: c.color, value: c.value }));
   const synced = ovLatest(app.syncStatus && app.syncStatus.syncedAt);
+  const priced = ovLatest(app.spotStatus && app.spotStatus.fetchedAt);
   const recent = ovRecentTxs(app);
+  const modeIdx = OV_CHART_MODES.findIndex(m => m.value === pf.mode);
+  const pickMode = (i, focus) => {
+    const m = OV_CHART_MODES[(i + OV_CHART_MODES.length) % OV_CHART_MODES.length];
+    app.setPrefs({ chartMode: m.value });
+    if (focus) requestAnimationFrame(() => { const el = document.querySelector(`[data-testid="chart-mode-${m.value}"]`); if (el) el.focus(); });
+  };
+  const enabledPeriods = pf.periodOptions.filter(o => !o.disabled);
+  const pickPeriod = (dir, cur) => {
+    const i = enabledPeriods.findIndex(o => o.value === cur);
+    const next = enabledPeriods[(i + dir + enabledPeriods.length) % enabledPeriods.length];
+    if (!next) return;
+    ovSetPeriod(app, next.value);
+    requestAnimationFrame(() => { const el = document.querySelector(`[data-testid="${next.testId}"]`); if (el) el.focus(); });
+  };
   return (
     <div className="ov-m">
       <section className="ov-m__hero" aria-label="Totale waarde">
-        <div className="ov-m__lhs">
+        <div className="ov-m__herotop">
           <div className="ov-label">{label}</div>
-          <button type="button" className="ov-m__chip" onClick={() => setExplain(true)}>
-            {pf.r.all && pf.ci == null ? 'op inleg' : 'excl. stortingen'} <Icon name="info" size={13} />
-          </button>
+          <IconButton icon={privacy ? 'eye-off' : 'eye'} label={privacy ? 'Bedragen tonen' : 'Bedragen verbergen'} pressed={privacy} iconSize={21}
+            data-testid="privacy-toggle" onClick={() => app.setPrefs({ privacy: !privacy })} />
         </div>
-        <div className="ov-m__rhs">
-          <OvHeroValue value={pf.heroValue} privacy={privacy} testId="hero-value" />
-          <div className="ov-deltarow" data-testid="hero-delta">
-            <Delta value={pf.deltaGain} pct={pf.deltaPct} size="sm" />
-          </div>
-          <div className="ov-m__ctx">{mobileCtx}</div>
+        <OvHeroValue value={pf.heroValue} privacy={privacy} testId="hero-value" />
+        <div className="ov-m__delta" data-testid="hero-delta">
+          <Delta value={pf.deltaGain} pct={pf.deltaPct} size="md" showGlyph={false} />
+          <span className="ov-m__ctx">{mobileCtx}</span>
+          <button type="button" className="ov-m__info" aria-label="Hoe berekenen we je winst?" onClick={() => setExplain(true)}>
+            <Icon name="info" size={14} />
+          </button>
         </div>
       </section>
 
-      <div>
+      <div className="ov-m__chartblock">
         <div className="ov-m__chart">
           <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-            kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={164}
+            kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} onCursor={pf.onCursor}
             ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
             valueText={pf.valueText} privacy={privacy}
             emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
         </div>
-        <div className="ov-m__periods" style={{ marginTop: 8 }}>
-          <Segmented pill full ariaLabel="Periode" value={pf.periodKey} onChange={k => app.setPrefs({ period: k })} options={pf.periodOptions} />
+        <div className="ov-m__periods" role="radiogroup" aria-label="Periode">
+          {pf.periodOptions.map(o => (
+            <button key={o.value} type="button" role="radio" className="ov-m__period" data-testid={o.testId}
+              aria-checked={o.value === pf.periodKey} aria-disabled={o.disabled || undefined} title={o.title}
+              tabIndex={o.value === pf.periodKey ? 0 : -1}
+              onClick={() => { if (!o.disabled) ovSetPeriod(app, o.value); }}
+              onKeyDown={e => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); pickPeriod(1, pf.periodKey); }
+                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); pickPeriod(-1, pf.periodKey); }
+              }}>
+              <span>{o.label}</span>
+            </button>
+          ))}
         </div>
-        <div className="ov-m__modes">
-          <Segmented size="sm" full ariaLabel="Grafiekweergave" value={pf.mode} onChange={v => app.setPrefs({ chartMode: v })} options={OV_CHART_MODES} />
+        <div className="ov-m__modes" role="radiogroup" aria-label="Grafiekweergave">
+          {OV_CHART_MODES.map((m, i) => (
+            <button key={m.value} type="button" role="radio" className="ov-m__mode" data-testid={'chart-mode-' + m.value}
+              aria-checked={m.value === pf.mode} tabIndex={m.value === pf.mode ? 0 : -1}
+              onClick={() => pickMode(i)}
+              onKeyDown={e => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); pickMode(modeIdx + 1, true); }
+                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); pickMode(modeIdx - 1, true); }
+              }}>
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
-
-      <nav className="ov-quick" aria-label="Snelle acties">
-        <button type="button" className="ov-quick__btn ov-quick__btn--ink" data-testid="quick-transactie" onClick={() => app.openTx()}>
-          <span className="ov-quick__well"><Icon name="plus" size={22} /></span>Transactie</button>
-        <button type="button" className="ov-quick__btn" data-testid="quick-waardering" onClick={() => app.openTx({ type: 'waardering' })}>
-          <span className="ov-quick__well"><Icon name="pencil" size={20} /></span>Waardering</button>
-        <button type="button" className="ov-quick__btn" data-testid="quick-storten" onClick={() => app.navigate('/plan/verdeling?focus=storten')}>
-          <span className="ov-quick__well"><Icon name="calculator" size={20} /></span>Storten</button>
-        <button type="button" className="ov-quick__btn" data-testid="quick-koersen" onClick={() => app.openPrices()}>
-          <span className="ov-quick__well"><Icon name="refresh-cw" size={20} /></span>Koersen</button>
-      </nav>
 
       {on('party_grid') && (
         <section className="ov-hold ov-hold--m" aria-labelledby="ov-mhold-title" data-testid="ov-holdings">
           <div className="ov-hold__head">
             <h2 className="ov-hold__title" id="ov-mhold-title">Bezittingen</h2>
             <span className="ov-hold__meta">{t.openCount} posities</span>
-            <button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="chevron-right" size={14} /></button>
+            <button type="button" className="ov-link" onClick={() => app.navigate('/posities')}>Alle posities <Icon name="chevron-right" size={14} /></button>
           </div>
-          {window.HoldingsPeriodPicker ? <HoldingsPeriodPicker app={app} variant="chips" /> : null}
           {on('allocation') && segs.length > 0 && (
             <div className="ov-hold__alloc">
-              <AllocationBar segments={segs} height={10} privacy={privacy} ariaLabel="Verdeling per categorie" onSegmentClick={() => app.navigate('/plan/verdeling')} />
+              <AllocationBar segments={segs} height={8} privacy={privacy} ariaLabel="Verdeling per categorie" onSegmentClick={() => app.navigate('/plan/verdeling')} />
               <div className="ov-caption"><span>Verdeling per categorie</span>{targetsText && <span>{targetsText}</span>}</div>
             </div>
           )}
-          {window.HoldingsList ? <HoldingsList app={app} variant="overview" /> : null}
+          {window.HoldingsList ? <HoldingsList app={app} variant="overview" period={pf.periodKey} /> : null}
         </section>
       )}
 
@@ -884,7 +918,7 @@ function OvMobile({ app }) {
         <section className="ov-hold ov-hold--m ov-act--m" aria-labelledby="ov-mact-title" data-testid="ov-activity">
           <div className="ov-hold__head">
             <h2 className="ov-hold__title" id="ov-mact-title">Recente activiteit</h2>
-            <button type="button" className="ov-link ov-link--strong" onClick={() => app.navigate('/transacties')}>{t.txCount} transacties <Icon name="chevron-right" size={14} /></button>
+            <button type="button" className="ov-link" onClick={() => app.navigate('/transacties')}>{t.txCount} transacties <Icon name="chevron-right" size={14} /></button>
           </div>
           {recent.length ? (window.TxList ? <TxList app={app} txs={recent} variant="activity" limit={5} /> : null)
             : <EmptyState icon="receipt" title="Nog geen transacties" />}
@@ -894,7 +928,7 @@ function OvMobile({ app }) {
       <OvVoorJou app={app} items={items} />
 
       <div className="ov-mfoot">
-        {synced ? `Gesynchroniseerd om ${fmtTime(synced.toISOString())} · ` : ''}{t.txCount} transacties{t.firstTxDate ? ` sinds ${fmtDateLong(t.firstTxDate)}` : ''}
+        {priced ? `Koersen van ${fmtTime(priced.toISOString())} · ` : ''}{synced ? `gesynchroniseerd om ${fmtTime(synced.toISOString())} · ` : ''}{t.txCount} transacties{t.firstTxDate ? ` sinds ${fmtDateLong(t.firstTxDate)}` : ''}
       </div>
 
       <Sheet open={explain} onClose={() => setExplain(false)} title="Hoe berekenen we je winst?" size="medium">

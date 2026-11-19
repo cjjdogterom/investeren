@@ -1548,6 +1548,7 @@ const DEFAULT_UI_PREFS = {
   positionsSort: { key: 'value', dir: 'desc' },
   positionsSecondary: 'pnl',
   collapsedGroups: [],
+  openHoldings: [],
   showClosed: false,
   txView: 'list',
   monthBarsMode: 'month',

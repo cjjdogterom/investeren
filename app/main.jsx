@@ -647,7 +647,6 @@ const SH_SECTION_TITLES = {
   partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over', financieel: 'Financieel',
 };
 const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
-const SH_WEEKDAYS = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
 const SH_STALE_MS = 2 * 60 * 60 * 1000;
 
 function shNormalizePath(path) {
@@ -707,14 +706,9 @@ function shSyncInfo(app) {
   return { status: 'off', label: 'Nog niet gesynchroniseerd', time: null, icon: 'cloud' };
 }
 
-function shGreeting(h = new Date().getHours()) {
-  if (h >= 6 && h < 12) return 'Goedemorgen';
-  if (h >= 12 && h < 18) return 'Goedemiddag';
-  return 'Goedenavond';
-}
 
 injectStyles('shell', `
-  .sh-app { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); transition: grid-template-columns var(--d-3) var(--ease); }
+  .sh-app { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; background: var(--chrome); transition: grid-template-columns var(--d-3) var(--ease); }
   .sh-app.is-collapsed { grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr); }
   .sh-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px; gap: 2px; overflow: hidden auto; z-index: var(--z-sidebar); user-select: none; -webkit-user-select: none; }
   .sh-brand { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 2px 0 6px; margin-bottom: 8px; }
@@ -770,23 +764,37 @@ injectStyles('shell', `
   .sh-link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; text-align: left; display: inline-flex; align-items: center; gap: 4px; }
   .sh-link:hover { text-decoration: underline; }
   .sh-mheader { position: sticky; top: 0; z-index: var(--z-mheader); padding-top: env(safe-area-inset-top); background: color-mix(in srgb, var(--bg) 95%, transparent); border-bottom: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  /* Overzicht: geen kopbalk, alleen een strook achter de statusbalk van de telefoon */
+  .sh-mheader--bare { border-bottom: 0; background: var(--bg); }
   .sh-mheader__in { height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 4px 0 16px; }
   .sh-mheader__in--back { padding-left: 4px; }
   .sh-mheader__greet { min-width: 0; }
   .sh-mheader__hello { font-size: 15px; font-weight: 650; line-height: 1.2; }
   .sh-mheader__sub { font-size: 13px; color: var(--fg-muted); line-height: 1.3; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .sh-mheader__sub--stale { color: var(--warn); }
-  .sh-mheader__title { font-size: 18px; font-weight: 650; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sh-mheader__title { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sh-mheader__actions { margin-left: auto; display: flex; flex: none; }
   .sh-mheader .icon-btn { width: 44px; height: 44px; color: var(--fg); }
   .sh-mheader .icon-btn--warn { color: var(--warn); }
   .sh-mheader .icon-btn--off { color: var(--fg-subtle); }
   .sh-mcontent { padding-bottom: calc(var(--tabbar-h) + 24px); min-width: 0; }
-  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; background: color-mix(in srgb, var(--bg) 96%, transparent); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
-  .sh-tab { height: 100%; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-subtle); font-size: 11px; font-weight: 550; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
+  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 60px; align-items: center; padding-left: 4px; padding-right: 8px; background: var(--bg); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  .sh-tab { position: relative; height: 100%; min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fg-subtle); font-size: 10.5px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
+  .sh-tab[aria-current="page"] { font-weight: 600; }
+  .sh-tab__pip { position: absolute; top: 9px; left: calc(50% + 7px); width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg); }
   .sh-tab[aria-current="page"] { color: var(--fg); }
-  .sh-tab-add { justify-self: center; width: 56px; height: 40px; border-radius: 14px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; cursor: pointer; transition: transform var(--d-1) var(--ease); }
+  .sh-tab-add { justify-self: end; width: 48px; height: 44px; border-radius: 16px; background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; cursor: pointer; transition: transform var(--d-1) var(--ease); }
   .sh-tab-add:active { transform: scale(.94); }
+  .sh-tab-add svg { transition: transform var(--d-2) var(--ease); }
+  .sh-tab-add[aria-expanded="true"] svg { transform: rotate(45deg); }
+  /* Plus-menu: snelle acties boven de plusknop */
+  .sh-addmenu.popover { min-width: 248px; padding: 6px; border-radius: 18px; }
+  .sh-addmenu .menu__item { height: 52px; gap: 12px; padding: 0 12px 0 8px; border-radius: 12px; font-size: 15px; font-weight: 500; }
+  .sh-addmenu__ic { width: 36px; height: 36px; flex: none; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; color: var(--fg); }
+  .sh-addmenu .menu__item:first-child .sh-addmenu__ic { background: var(--ink); color: var(--on-ink); }
+  .sh-addmenu__meta { margin-left: auto; font-size: 12.5px; font-weight: 400; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+  .sh-addmenu__meta--warn { color: var(--warn); }
+  .sh-addmenu__sep { height: 1px; margin: 6px 8px; background: var(--border); }
   .sh-confirm__typed { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
   .sh-confirm__check { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--fg); cursor: pointer; }
 `);
@@ -948,7 +956,8 @@ function ShTopbar({ app, title, syncOpen, setSyncOpen }) {
 function ShMobileHeader({ app }) {
   const r = app.route;
   const privacy = !!app.prefs.privacy;
-  const info = shSyncInfo(app);
+  // Overzicht heeft geen kopbalk: het totaal bovenaan is de titel en het oogje staat daar rechts van.
+  if (r.name === 'overzicht') return <div className="sh-mheader sh-mheader--bare" aria-hidden="true" />;
   let back = null;
   let title = SH_TITLES[r.name] || 'Overzicht';
   if (r.name === 'posities' && r.params.partyId) {
@@ -959,86 +968,100 @@ function ShMobileHeader({ app }) {
     back = '/instellingen';
     title = SH_SECTION_TITLES[r.params.section] || 'Instellingen';
   }
-  let greet = null;
-  if (r.name === 'overzicht') {
-    const now = new Date();
-    const st = shSpotState(app.spotStatus);
-    const fetchedAt = app.spotStatus?.fetchedAt;
-    const dateTxt = `${SH_WEEKDAYS[now.getDay()]} ${now.getDate()} ${MONTHS_NL[now.getMonth()]}`;
-    let priceTxt;
-    if (st === 'stale') {
-      if (fetchedAt) {
-        const hrs = Math.max(2, Math.floor((Date.now() - Date.parse(fetchedAt)) / 3600000));
-        priceTxt = `koersen ${hrs} uur oud`;
-      } else priceTxt = 'koersen niet ververst';
-    } else if (st === 'busy' && !fetchedAt) priceTxt = 'koersen ophalen…';
-    else if (st === 'error') priceTxt = 'koersen ' + (fetchedAt ? fmtTime(fetchedAt) : '—') + ' ⚠';
-    else priceTxt = 'koersen ' + (fetchedAt ? fmtTime(fetchedAt) : '—');
-    greet = (
-      <div className="sh-mheader__greet">
-        <div className="sh-mheader__hello">{shGreeting(now.getHours())}</div>
-        <div className={'sh-mheader__sub' + (st === 'stale' || st === 'error' ? ' sh-mheader__sub--stale' : '')}
-          title={st === 'error' ? app.spotStatus.error : undefined}>
-          {st === 'stale' && <Icon name="clock" size={13} />}
-          <span className="num">{dateTxt} · {priceTxt}</span>
-        </div>
-      </div>
-    );
-  }
-  const syncCls = info.status === 'error' ? 'icon-btn--warn' : info.status === 'off' ? 'icon-btn--off' : '';
   return (
     <header className="sh-mheader">
       <div className={'sh-mheader__in' + (back ? ' sh-mheader__in--back' : '')}>
         {back && <IconButton icon="chevron-left" label="Terug" iconSize={22} onClick={() => app.navigate(back)} />}
-        {r.name === 'overzicht' && <AppLogo size={32} />}
-        {greet || <h1 className="sh-mheader__title">{title}</h1>}
+        <h1 className="sh-mheader__title">{title}</h1>
         <div className="sh-mheader__actions">
           <IconButton icon={privacy ? 'eye-off' : 'eye'} label={privacy ? 'Bedragen tonen' : 'Bedragen verbergen'} pressed={privacy} iconSize={20}
             data-testid="privacy-toggle" onClick={() => app.setPrefs({ privacy: !privacy })} />
-          <IconButton icon={info.icon} label={'Synchronisatie: ' + info.label} iconSize={20} className={syncCls}
-            badge={info.status === 'error' ? 'warn' : null} data-testid="sync-status" onClick={() => app.openSync()} />
-          <IconButton icon="settings" label="Instellingen" iconSize={20} data-testid="nav-instellingen"
-            onClick={() => app.navigate('/instellingen')} />
         </div>
       </div>
     </header>
   );
 }
 
+// Plus-menu (mobiel): de snelle acties die eerder onder de grafiek stonden, plus synchronisatie.
+function ShAddMenu({ app }) {
+  const [open, setOpen] = React.useState(false);
+  const anchor = React.useRef(null);
+  const popRef = React.useRef(null);
+  const info = shSyncInfo(app);
+  React.useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      const first = popRef.current && popRef.current.querySelector('[role="menuitem"]');
+      if (first) first.focus();
+    });
+  }, [open]);
+  const items = [
+    { icon: 'plus', label: 'Transactie toevoegen', testId: 'quick-transactie', run: () => app.openTx() },
+    { icon: 'pencil', label: 'Waardering bijwerken', testId: 'quick-waardering', run: () => app.openTx({ type: 'waardering' }) },
+    { icon: 'calculator', label: 'Storting plannen', testId: 'quick-storten', run: () => app.navigate('/plan/verdeling?focus=storten') },
+    { icon: 'refresh-cw', label: 'Koersen verversen', testId: 'quick-koersen', run: () => app.openPrices() },
+    null,
+    { icon: info.icon === 'loader' ? 'cloud' : info.icon, label: 'Synchronisatie', testId: 'sync-status', run: () => app.openSync(),
+      meta: info.time || (info.status === 'ok' ? null : info.label), warn: info.status === 'error' },
+  ];
+  const onKey = e => {
+    const list = popRef.current ? [...popRef.current.querySelectorAll('[role="menuitem"]')] : [];
+    const i = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); (list[(i + 1) % list.length] || list[0])?.focus(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); (list[(i - 1 + list.length) % list.length] || list[0])?.focus(); }
+    if (e.key === 'Tab') setOpen(false);
+  };
+  return (
+    <>
+      <button ref={anchor} type="button" className="sh-tab-add" aria-label="Toevoegen en snelle acties" aria-haspopup="menu" aria-expanded={open}
+        data-testid="add-tx" onClick={() => setOpen(o => !o)}>
+        <Icon name="plus" size={24} strokeWidth={2.2} />
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} anchorRef={anchor} align="end" role="presentation" popRef={popRef} className="sh-addmenu">
+        <div role="menu" aria-label="Snelle acties" className="menu" onKeyDown={onKey}>
+          {items.map((it, i) => (it ? (
+            <button key={i} type="button" role="menuitem" tabIndex={-1} className="menu__item" data-testid={it.testId}
+              onClick={() => { setOpen(false); it.run(); }}>
+              <span className="sh-addmenu__ic"><Icon name={it.icon} size={18} /></span>
+              {it.label}
+              {it.meta && <span className={'sh-addmenu__meta' + (it.warn ? ' sh-addmenu__meta--warn' : '')}>{it.meta}</span>}
+            </button>
+          ) : <div key={i} className="sh-addmenu__sep" role="separator" />))}
+        </div>
+      </Popover>
+    </>
+  );
+}
+
 function ShTabBar({ app }) {
   const r = app.route;
+  const syncErr = shSyncInfo(app).status === 'error';
   const tabs = [
     { name: 'overzicht', to: '/overzicht', icon: 'layout-dashboard', label: 'Overzicht' },
     { name: 'posities', to: '/posities', icon: 'layers', label: 'Posities' },
-    null,
     { name: 'transacties', to: '/transacties', icon: 'arrow-left-right', label: 'Transacties' },
     { name: 'plan', to: '/plan/verdeling', icon: 'target', label: 'Plan' },
+    { name: 'instellingen', to: '/instellingen', icon: 'settings', label: 'Instellingen', pip: syncErr },
   ];
   return (
     <nav className="sh-tabbar" aria-label="Hoofdnavigatie">
-      {tabs.map((t, i) => {
-        if (!t) {
-          return (
-            <button key="add" type="button" className="sh-tab-add" aria-label="Transactie toevoegen" data-testid="add-tx"
-              onClick={() => app.openTx()}>
-              <Icon name="plus" size={24} strokeWidth={2.2} />
-            </button>
-          );
-        }
+      {tabs.map(t => {
         const active = r.name === t.name;
         return (
           <a key={t.name} href={'#' + t.to} className="sh-tab" aria-current={active ? 'page' : undefined} data-testid={'nav-' + t.name}
             onClick={e => {
               e.preventDefault();
-              const atRoot = active && (t.name !== 'posities' || !r.params.partyId);
+              const atRoot = active && (t.name !== 'posities' || !r.params.partyId) && (t.name !== 'instellingen' || !r.params.section);
               if (atRoot) { try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (er) { window.scrollTo(0, 0); } }
               else app.navigate(t.to);
             }}>
-            <Icon name={t.icon} size={22} strokeWidth={active ? 2 : 1.75} />
+            <Icon name={t.icon} size={22} strokeWidth={active ? 2 : 1.6} />
             <span>{t.label}</span>
+            {t.pip && <span className="sh-tab__pip" role="img" aria-label="Synchronisatie mislukt" />}
           </a>
         );
       })}
+      <ShAddMenu app={app} />
     </nav>
   );
 }
@@ -1468,8 +1491,8 @@ function App() {
     if (prefs.cvd) el.setAttribute('data-cvd', 'on'); else el.removeAttribute('data-cvd');
     const ml = document.getElementById('meta-theme-light');
     const md = document.getElementById('meta-theme-dark');
-    if (ml) ml.setAttribute('content', prefs.theme === 'dark' ? '#0a0b0e' : '#eff1f3');
-    if (md) md.setAttribute('content', prefs.theme === 'light' ? '#eff1f3' : '#0a0b0e');
+    if (ml) ml.setAttribute('content', prefs.theme === 'dark' ? '#0a0b0e' : '#ffffff');
+    if (md) md.setAttribute('content', prefs.theme === 'light' ? '#ffffff' : '#0a0b0e');
   }, [prefs.theme, prefs.cvd]);
 
   // Schrijft tweaks naar state.tweaks → wordt automatisch naar Supabase gesynchroniseerd

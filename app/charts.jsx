@@ -8,11 +8,15 @@ injectStyles('charts', `
 .ch-plot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .ch-fade { animation: ch-fade var(--d-2) var(--ease); }
 @keyframes ch-fade { from { opacity: .3; } to { opacity: 1; } }
+/* Lijn tekent zich van links naar rechts bij laden en bij een andere periode */
+.ch-svg.ch-reveal { animation: ch-reveal 700ms var(--ease); }
+@keyframes ch-reveal { from { clip-path: inset(-40px 100% -40px -40px); } to { clip-path: inset(-40px -40px -40px -40px); } }
 .ch-ylab { position: absolute; right: 0; width: 48px; transform: translateY(-50%); text-align: right; font: 500 11px/14px var(--font); letter-spacing: .01em; color: var(--fg-subtle); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
-.ch-ylab--in { right: auto; left: 12px; width: auto; text-align: left; padding: 0 5px; border-radius: 5px; font-size: 10.5px; background: color-mix(in srgb, var(--surface) 82%, transparent); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); z-index: 1; }
+.ch-ylab--in { right: auto; left: 16px; width: auto; text-align: left; font-size: 11px; margin-top: -9px; z-index: 1; }
 .ch-root--compact .ch-svg { clip-path: inset(-12px -20px -12px -16px); }
-.ch-root--compact .ch-line { stroke-width: 2.6; }
-.ch-root--compact .ch-glow { stroke-width: 8; opacity: .1; }
+.ch-root--compact .ch-line { stroke-width: 2.75; }
+.ch-root--compact .ch-glow { stroke-width: 10; opacity: .14; }
+.ch-root--compact .ch-grid { opacity: .55; }
 .ch-xaxis { position: absolute; left: 0; height: 22px; pointer-events: none; }
 .ch-xlab { position: absolute; top: 5px; transform: translateX(-50%); font: 500 11px/14px var(--font); letter-spacing: .01em; color: var(--fg-subtle); white-space: nowrap; transition: opacity var(--d-1) var(--ease); }
 .ch-xlab--start { transform: none; }
@@ -21,7 +25,7 @@ injectStyles('charts', `
 .ch-flag { position: absolute; top: 2px; padding: 2px 8px; border-radius: var(--r-pill); background: var(--ink); color: var(--on-ink); box-shadow: 0 2px 8px rgb(0 0 0 / .14); font: 550 11px/14px var(--font); white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
 .ch-flag--l { transform: none; }
 .ch-flag--r { transform: translateX(-100%); }
-.ch-root { --ch-line: var(--accent); }
+.ch-root { --ch-line: var(--chart-a, var(--accent)); --ch-line-2: var(--chart-b, var(--accent)); }
 .ch-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; opacity: .8; }
 .ch-line { fill: none; stroke: var(--ch-line); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
 .ch-glow { fill: none; stroke: var(--ch-line); stroke-width: 7; stroke-linejoin: round; stroke-linecap: round; opacity: .12; }
@@ -29,8 +33,8 @@ injectStyles('charts', `
 .ch-cross { position: absolute; top: 0; width: 1px; margin-left: -0.5px; background: linear-gradient(to bottom, transparent, var(--ch-line) 18%, var(--ch-line) 82%, transparent); pointer-events: none; }
 .ch-dim { position: absolute; top: 0; right: 0; background: color-mix(in srgb, var(--surface) 58%, transparent); pointer-events: none; }
 .ch-beacon { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px color-mix(in srgb, var(--ch-line) 18%, transparent); pointer-events: none; }
-.ch-end { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--ch-line); box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px color-mix(in srgb, var(--ch-line) 20%, transparent); pointer-events: none; }
-.ch-end--live::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--ch-line); opacity: 0; animation: ch-pulse 2.4s var(--ease) infinite; }
+.ch-end { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--ch-line-2); box-shadow: 0 0 0 2.5px var(--surface), 0 0 0 7px color-mix(in srgb, var(--ch-line-2) 22%, transparent); pointer-events: none; }
+.ch-end--live::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--ch-line-2); opacity: 0; animation: ch-pulse 2.4s var(--ease) infinite; }
 @keyframes ch-pulse { 0% { transform: scale(.6); opacity: .55; } 70% { transform: scale(1.8); opacity: 0; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .ch-end--live::after { display: none; } }
 .ch-marker { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; padding: 0; border: 0; background: none; display: flex; align-items: center; justify-content: center; cursor: default; z-index: 1; }
@@ -422,27 +426,35 @@ function PerformanceChart({
         aria-valuenow={vtIndex} aria-valuetext={vt}
         onPointerMove={onPointerMove} onPointerDown={onPointerDown} onPointerUp={endTouch} onPointerCancel={endTouch}
         onPointerLeave={onPointerLeave} onClick={onClick} onKeyDown={onKeyDown}>
-        <svg className="ch-svg" viewBox={`0 0 1000 ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        <svg key={rangeKey} className="ch-svg ch-reveal" viewBox={`0 0 1000 ${H}`} preserveAspectRatio="none" aria-hidden="true">
           <defs>
             {g.clipAbove && <clipPath id={`${uid}-a`}><polygon points={g.clipAbove} /></clipPath>}
             {g.clipBelow && <clipPath id={`${uid}-b`}><polygon points={g.clipBelow} /></clipPath>}
-            <linearGradient id={`${uid}-g`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0.26 }} />
-              <stop offset="60%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0.07 }} />
-              <stop offset="100%" style={{ stopColor: 'var(--ch-line)', stopOpacity: 0 }} />
+            {/* Kleurverloop langs de lijn (links → rechts); userSpaceOnUse zodat ook een vlakke lijn zichtbaar blijft. */}
+            <linearGradient id={`${uid}-s`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1000" y2="0">
+              <stop offset="0%" style={{ stopColor: 'var(--ch-line)' }} />
+              <stop offset="100%" style={{ stopColor: 'var(--ch-line-2)' }} />
             </linearGradient>
+            <linearGradient id={`${uid}-g`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2={H}>
+              <stop offset="0%" style={{ stopColor: '#fff', stopOpacity: 0.3 }} />
+              <stop offset="60%" style={{ stopColor: '#fff', stopOpacity: 0.08 }} />
+              <stop offset="100%" style={{ stopColor: '#fff', stopOpacity: 0 }} />
+            </linearGradient>
+            <mask id={`${uid}-m`} maskUnits="userSpaceOnUse" x="-200" y="0" width="1400" height={H}>
+              <rect x="-200" y="0" width="1400" height={H} style={{ fill: `url(#${uid}-g)` }} />
+            </mask>
           </defs>
           {g.nt.ticks.map(t => (
             <line key={t} x1={compact ? -120 : 0} x2={compact ? 1120 : 1000} y1={g.y(t)} y2={g.y(t)} className="ch-grid"
               style={signed && t === 0 ? { stroke: 'var(--border-strong)', strokeDasharray: 'none' } : undefined} />
           ))}
           <g key={rangeKey} className="ch-fade">
-            {g.area && <path d={g.area} style={{ fill: `url(#${uid}-g)` }} />}
+            {g.area && <path d={g.area} mask={`url(#${uid}-m)`} style={{ fill: `url(#${uid}-s)` }} />}
             {g.band && g.clipBelow && <polygon points={g.band} clipPath={`url(#${uid}-b)`} style={{ fill: 'var(--loss-fill)', fillOpacity: 0.16 }} />}
             {g.band && g.clipAbove && signed && <polygon points={g.band} clipPath={`url(#${uid}-a)`} style={{ fill: 'var(--gain-fill)', fillOpacity: 0.14 }} />}
             {g.stepLine && <path d={g.stepLine} className="ch-step" />}
-            <path d={g.line} className="ch-glow" />
-            <path d={g.line} className="ch-line" />
+            <path d={g.line} className="ch-glow" style={{ stroke: `url(#${uid}-s)` }} />
+            <path d={g.line} className="ch-line" style={{ stroke: `url(#${uid}-s)` }} />
           </g>
         </svg>
         {/* markers */}

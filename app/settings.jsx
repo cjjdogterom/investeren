@@ -58,9 +58,9 @@ injectStyles('settings', `
   .st-switches > .switch + .switch { border-top: 1px solid var(--border); }
   .st-themes .seg__btn { gap: 8px; }
   .st-theme-sw { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgb(127 127 127 / .45); flex: none; display: inline-block; vertical-align: -2px; margin-right: 6px; }
-  .st-theme-sw--light { background: #eff1f3; }
+  .st-theme-sw--light { background: #ffffff; }
   .st-theme-sw--dark { background: #0a0b0e; }
-  .st-theme-sw--system { background: linear-gradient(135deg, #eff1f3 50%, #0a0b0e 50%); }
+  .st-theme-sw--system { background: linear-gradient(135deg, #ffffff 50%, #0a0b0e 50%); }
   .st-prices { display: flex; flex-direction: column; gap: 4px; }
   .st-prices__head { display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; padding-bottom: 8px; }
   .st-price { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 48px; padding: 6px 0; border-top: 1px solid var(--border); }

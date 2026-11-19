@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Investeringen" />
-<meta id="meta-theme-light" name="theme-color" content="#eff1f3" media="(prefers-color-scheme: light)" />
+<meta id="meta-theme-light" name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta id="meta-theme-dark" name="theme-color" content="#0a0b0e" media="(prefers-color-scheme: dark)" />
 <meta name="mobile-web-app-capable" content="yes" />
 <link rel="icon" type="image/svg+xml" href="icon.svg" />
@@ -46,22 +46,25 @@
   /* ================= TOKENS: light ================= */
   :root {
     color-scheme: light;
-    --bg: #eff1f3;
-    --canvas: #f9fafb;
+    --bg: #ffffff;
+    --chrome: #f6f7f8;
+    --canvas: #ffffff;
     --surface: #ffffff;
-    --surface-2: #f1f3f5;
-    --surface-3: #e7eaee;
-    --border: #e1e3e7;
-    --border-strong: #cccfd5;
-    --fg: #161a1f;
-    --fg-muted: #51555d;
-    --fg-subtle: #656970;
-    --ink: #161a1f;
+    --surface-2: #f4f5f6;
+    --surface-3: #ebedef;
+    --border: #ebecee;
+    --border-strong: #d3d6da;
+    --fg: #0b0d10;
+    --fg-muted: #555a62;
+    --fg-subtle: #6b7078;
+    --ink: #0b0d10;
     --on-ink: #ffffff;
     --scrim: rgb(22 26 31 / .38);
     --accent: #4a55d2;
     --accent-soft: #ecf0fe;
     --on-accent: #ffffff;
+    --chart-a: #5b5fe0;
+    --chart-b: #17a6a0;
     --gain: #007346;
     --loss: #c32a28;
     --gain-fill: #14653d;
@@ -70,14 +73,14 @@
     --warn-soft: #fff1d6;
     --cap-inleg: #c7cbd1;
     --wash-inleg: rgb(22 26 31 / .045);
-    --cat-pe: #eb6834;
-    --cat-idx: #2a78d6;
-    --cat-pm: #eda100;
-    --cat-cr: #e87ba4;
-    --cat-cf: #4a3aa7;
-    --cat-br: #1baf7a;
+    --cat-pe: #b9603f;
+    --cat-idx: #3b6fb0;
+    --cat-pm: #b98a25;
+    --cat-cr: #8a4f93;
+    --cat-cf: #62a8dc;
+    --cat-br: #1f9a7c;
     --cat-other: #6b7a99;
-    --cat-liq: #8a8f97;
+    --cat-liq: #9097a0;
     --shadow-overlay: 0 0 0 1px rgb(22 26 31 / .06), 0 24px 64px rgb(22 26 31 / .18);
     --display-weight: 600;
 
@@ -133,6 +136,7 @@
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --bg: #0a0b0e;
+    --chrome: #0a0b0e;
       --canvas: #0e1013;
       --surface: #14161a;
       --surface-2: #1c1e23;
@@ -148,6 +152,8 @@
       --accent: #95a7ff;
       --accent-soft: #262d51;
       --on-accent: #0a0b0e;
+    --chart-a: #8f95ff;
+    --chart-b: #38c9c0;
       --gain: #5ddf9d;
       --loss: #f86e6a;
       --gain-fill: #1f9059;
@@ -156,12 +162,12 @@
       --warn-soft: #3b2b0d;
       --cap-inleg: #44484e;
       --wash-inleg: rgb(255 255 255 / .035);
-      --cat-pe: #d95926;
-      --cat-idx: #3987e5;
-      --cat-pm: #c98500;
-      --cat-cr: #d55181;
-      --cat-cf: #9085e9;
-      --cat-br: #199e70;
+      --cat-pe: #c8704c;
+      --cat-idx: #4f84c9;
+      --cat-pm: #b98a25;
+      --cat-cr: #a060b0;
+      --cat-cf: #5a9fd4;
+      --cat-br: #2aa588;
       --cat-other: #8e9bb8;
       --cat-liq: #8b9099;
       --shadow-overlay: 0 0 0 1px rgb(255 255 255 / .06), 0 24px 64px rgb(0 0 0 / .55);
@@ -172,6 +178,7 @@
   :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #0a0b0e;
+    --chrome: #0a0b0e;
     --canvas: #0e1013;
     --surface: #14161a;
     --surface-2: #1c1e23;
@@ -187,6 +194,8 @@
     --accent: #95a7ff;
     --accent-soft: #262d51;
     --on-accent: #0a0b0e;
+    --chart-a: #8f95ff;
+    --chart-b: #38c9c0;
     --gain: #5ddf9d;
     --loss: #f86e6a;
     --gain-fill: #1f9059;
@@ -195,12 +204,12 @@
     --warn-soft: #3b2b0d;
     --cap-inleg: #44484e;
     --wash-inleg: rgb(255 255 255 / .035);
-    --cat-pe: #d95926;
-    --cat-idx: #3987e5;
-    --cat-pm: #c98500;
-    --cat-cr: #d55181;
-    --cat-cf: #9085e9;
-    --cat-br: #199e70;
+    --cat-pe: #c8704c;
+    --cat-idx: #4f84c9;
+    --cat-pm: #b98a25;
+    --cat-cr: #a060b0;
+    --cat-cf: #5a9fd4;
+    --cat-br: #2aa588;
     --cat-other: #8e9bb8;
     --cat-liq: #8b9099;
     --shadow-overlay: 0 0 0 1px rgb(255 255 255 / .06), 0 24px 64px rgb(0 0 0 / .55);
@@ -595,17 +604,17 @@
   }/*EDITMODE-END*/;
 </script>
 
-<script type="text/babel" src="app/data.jsx?v=20261116-markers"></script>
+<script type="text/babel" src="app/data.jsx?v=20261119-strak1"></script>
 <script type="text/babel" src="app/ui.jsx?v=20261028-l1"></script>
-<script type="text/babel" src="app/charts.jsx?v=20261115-winst"></script>
+<script type="text/babel" src="app/charts.jsx?v=20261119-strak1"></script>
 <script type="text/babel" src="app/modals.jsx?v=20261115-finbel"></script>
-<script type="text/babel" src="app/dashboard.jsx?v=20261116-nomarkers"></script>
-<script type="text/babel" src="app/positions.jsx?v=20261115-finbel"></script>
+<script type="text/babel" src="app/dashboard.jsx?v=20261119-strak1"></script>
+<script type="text/babel" src="app/positions.jsx?v=20261119-strak1"></script>
 <script type="text/babel" src="app/tabs.jsx?v=20261115-finbel"></script>
 <script type="text/babel" src="app/allocation.jsx?v=20261118-jr1"></script>
 <script type="text/babel" src="app/pension.jsx?v=20261027-r1"></script>
 <script type="text/babel" src="app/jaaroverzicht.jsx?v=20261118-jr2"></script>
-<script type="text/babel" src="app/settings.jsx?v=20261115-finbel"></script>
-<script type="text/babel" src="app/main.jsx?v=20261118-jr1"></script>
+<script type="text/babel" src="app/settings.jsx?v=20261119-strak1"></script>
+<script type="text/babel" src="app/main.jsx?v=20261119-strak1"></script>
 </body>
 </html>
