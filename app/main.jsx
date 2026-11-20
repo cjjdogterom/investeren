@@ -2106,7 +2106,7 @@ function App() {
       setStockStatus({ loading: false, error: errs.length ? errs.join(' · ') : null, fetchedAt });
       // Dagkoers vastleggen zodat de dagwaarden (server) de aandelen ook kunnen waarderen.
       const client = getSupabaseClient(supabaseConfig);
-      if (client) {
+      if (client && !symbols) {
         const today = new Date().toISOString().slice(0, 10);
         const rows = Object.entries(j.quotes || {}).filter(([, q]) => q.priceEur > 0)
           .map(([sym, q]) => ({ asset: 'stock:' + sym, date: today, nav: +(+q.priceEur).toFixed(6), source: 'koersen-worker' }));
