@@ -1029,7 +1029,8 @@ function summarizeT212Stocks(party, txs, st, spots) {
 function summarizePartyBase(party, transactions, spots, ctx) {
   const txs = transactions
     .filter(t => txTouchesParty(t, party.id))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    // Zelfde dag: een waardering geldt als eindstand van de dag (ná stortingen/aankopen van die dag).
+    .sort((a, b) => a.date.localeCompare(b.date) || ((a.type === 'waardering') - (b.type === 'waardering')));
   if (party.id === STOCK_PARTY_ID) {
     const st = t212StockState(txs, null, t212Opts(spots));
     if (st) return summarizeT212Stocks(party, txs, st, spots);
@@ -1484,7 +1485,7 @@ function cfdSummaryText(s) {
 // Per-allocation daily value time series.
 function buildPartyTimeSeries(transactions, parties, spots) {
   if (!transactions.length) return { dates: [], byParty: {}, total: [], invested: [] };
-  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || ((a.type === 'waardering') - (b.type === 'waardering')));
   const tcMap = transferCostMap(transactions);
   const txByParty = Object.fromEntries(parties.map(p => [p.id, sorted.filter(t => t.party === p.id)]));
   const unitValuationsByParty = Object.fromEntries(parties.map(p => [p.id, unitValuationPoints(txByParty[p.id] || [])]));
