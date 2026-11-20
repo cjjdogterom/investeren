@@ -311,10 +311,10 @@ function useOvPerformance(app) {
   // De grafiek begint pas op de eerste dag met waarde, niet met een vlakke nul-lijn ervoor (de cijfers blijven over de hele periode).
   let c0 = r.i0;
   if (r.enabled) {
-    // "Waarde" = meer dan 2% van de hoogste stand in de periode; een paar tientjes op een schaal van duizenden oogt ook als nul.
+    // "Waarde" = meer dan 5% van de hoogste stand in de periode; een paar tientjes op een schaal van duizenden oogt ook als nul.
     let top = 0;
     for (let i = r.i0; i <= r.i1; i++) top = Math.max(top, Math.abs(series.value[i] || 0));
-    const min = Math.max(0.5, top * 0.02);
+    const min = Math.max(0.5, top * 0.05);
     while (c0 < r.i1 - 1 && !(Math.abs(series.value[c0] || 0) > min)) c0++;
     if (!(Math.abs(series.value[c0] || 0) > min)) c0 = r.i0;
   }

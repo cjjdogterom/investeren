@@ -1775,7 +1775,7 @@ function PsPartyBody({ app, s }) {
   if (byP && r.i1 >= 0) {
     let top = 0;
     for (let i = r.i0; i <= r.i1; i++) top = Math.max(top, Math.abs(byP[i] || 0));
-    const min = Math.max(0.5, top * 0.02);
+    const min = Math.max(0.5, top * 0.05);
     while (c0 < r.i1 - 1 && !(Math.abs(byP[c0] || 0) > min)) c0++;   // minstens twee punten
   }
   const chartDates = r.i1 >= 0 ? dates.slice(c0, r.i1 + 1) : [];
