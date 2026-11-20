@@ -184,6 +184,8 @@ const UI_ICONS = {
   'copy': [{ r: [8, 8, 14, 14, 2] }, 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
   'arrow-right': ['M5 12h14', 'm12 5 7 7-7 7'],
   'loader': ['M21 12a9 9 0 1 1-6.219-8.56'],
+  'newspaper': ['M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2', 'M18 14h-8', 'M15 18h-5', 'M10 6h8v4h-8V6Z'],
+  'bell': ['M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9', 'M10.3 21a1.94 1.94 0 0 0 3.4 0'],
 };
 const ICON_NAMES = Object.keys(UI_ICONS);
 const UI_ICON_WARNED = {};

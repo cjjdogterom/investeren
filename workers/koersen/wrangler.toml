@@ -5,8 +5,9 @@ workers_dev = true
 preview_urls = false
 
 # Dagverloop: elke 5 minuten de totale waarde doorrekenen (zie intradayTick in src/worker.js).
+# Bewegers: elke 10 minuten de 500 grootste beursbedrijven controleren en zo nodig een melding sturen (moversTick).
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "2,12,22,32,42,52 * * * *"]
 
 # Publieke Supabase-gegevens (dezelfde anon-sleutel als in app/main.jsx).
 [vars]

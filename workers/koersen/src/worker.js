@@ -192,9 +192,207 @@ async function intradayTick(env) {
   return `ok ${points.length} punten, ${Object.keys(prices).length}/${recipe.items.length} koersen`;
 }
 
+
+// ── Nieuws: meerdere bronnen samengevoegd (RSS, geen sleutels) ──
+const NEWS_FEEDS = [
+  { id: "cnbc", name: "CNBC", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+  { id: "cnbc-markets", name: "CNBC", url: "https://www.cnbc.com/id/20910258/device/rss/rss.html" },
+  { id: "marketwatch", name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
+  { id: "marketwatch-pulse", name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_marketpulse" },
+  { id: "seekingalpha", name: "Seeking Alpha", url: "https://seekingalpha.com/market_currents.xml" },
+  { id: "investing", name: "Investing.com", url: "https://www.investing.com/rss/news_25.rss" },
+  { id: "bloomberg", name: "Bloomberg", url: "https://feeds.bloomberg.com/markets/news.rss" },
+  { id: "ft", name: "Financial Times", url: "https://www.ft.com/markets?format=rss" },
+  { id: "nos", name: "NOS Economie", url: "https://feeds.nos.nl/nosnieuwseconomie" },
+];
+const decodeXml = t => String(t || "")
+  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+  .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+  .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)))
+  .replace(/&amp;/g, "&");
+const stripHtml = t => decodeXml(t).replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+function rssItems(xml) {
+  const out = [];
+  for (const m of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/g)) {
+    const b = m[1];
+    const tag = n => { const r = b.match(new RegExp(`<${n}\\b[^>]*>([\\s\\S]*?)<\\/${n}>`)); return r ? r[1] : ""; };
+    const src = b.match(/<source\b[^>]*>([\s\S]*?)<\/source>/);
+    const img = b.match(/<media:(?:content|thumbnail)\b[^>]*url="([^"]+)"/) || b.match(/<enclosure\b[^>]*url="([^"]+)"[^>]*type="image/);
+    let title = stripHtml(tag("title"));
+    const publisher = src ? stripHtml(src[1]) : null;
+    if (publisher && title.endsWith(" - " + publisher)) title = title.slice(0, -(publisher.length + 3));
+    const link = decodeXml(tag("link")).trim() || decodeXml(tag("guid")).trim();
+    const t = Date.parse(stripHtml(tag("pubDate")) || stripHtml(tag("dc:date")));
+    const desc = stripHtml(tag("description")).slice(0, 320);
+    if (title && link) out.push({ title, link, publisher, time: isNaN(t) ? null : new Date(t).toISOString(), summary: desc && desc !== title ? desc : "", image: img ? decodeXml(img[1]) : null });
+  }
+  return out;
+}
+async function feed(url, ttl = 300) {
+  const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenNieuws/1.0)", accept: "application/rss+xml, application/xml, text/xml" }, cf: { cacheTtl: ttl, cacheEverything: true } });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return rssItems(await res.text());
+}
+const normTitle = t => t.toLowerCase().replace(/[^a-z0-9à-ÿ ]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+async function nieuws(symbols, names) {
+  const jobs = NEWS_FEEDS.map(f => ({ src: f.name, id: f.id, url: f.url, syms: null }));
+  // Per aandeel: Yahoo Finance (tickerfeed) en Google Nieuws op bedrijfsnaam.
+  for (let i = 0; i < symbols.length; i += 8) {
+    const part = symbols.slice(i, i + 8);
+    jobs.push({ src: "Yahoo Finance", id: "yahoo", url: `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${part.map(encodeURIComponent).join(",")}&region=US&lang=en-US`, syms: part.length === 1 ? part : null });
+  }
+  // Nasdaq per aandeel (alleen Amerikaanse tickers zonder beurs-achtervoegsel).
+  symbols.filter(s => /^[A-Z]{1,5}$/.test(s)).slice(0, 8).forEach(s => {
+    jobs.push({ src: "Nasdaq", id: "nasdaq", url: `https://www.nasdaq.com/feed/rssoutbound?symbol=${encodeURIComponent(s)}`, syms: [s], limit: 12 });
+  });
+  const res = await Promise.allSettled(jobs.map(j => feed(j.url)));
+  const seen = new Map(), sources = {};
+  // Herkennen welke van jouw aandelen in een kop voorkomen (naam of ticker).
+  const matchers = symbols.map((s, i) => {
+    const base = s.split(/[.\-=]/)[0];
+    const nm = (names[i] || "").replace(/,?\s+(inc|corp(oration)?|n\.?v\.?|plc|ltd|limited|holding(s)?|group|se|ag|sa|co)\.?$/i, "").trim();
+    const parts = [nm.length >= 3 ? escRe(nm) : null, base.length >= 3 ? `\\$?${escRe(base)}` : null].filter(Boolean);
+    return { s, re: parts.length ? new RegExp(`\\b(${parts.join("|")})\\b`, "i") : null };
+  });
+  res.forEach((r, k) => {
+    const j = jobs[k];
+    sources[j.id] = r.status === "fulfilled" ? (sources[j.id] || 0) + r.value.length : (sources[j.id] || 0);
+    if (r.status !== "fulfilled") return;
+    for (const it of r.value.slice(0, j.limit || 40)) {
+      const key = normTitle(it.title);
+      const tagged = new Set(j.syms || []);
+      for (const m of matchers) if (m.re && m.re.test(it.title)) tagged.add(m.s);
+      const prev = seen.get(key);
+      if (prev) { tagged.forEach(x => prev.symbols.includes(x) || prev.symbols.push(x)); if (!prev.sources.includes(j.src)) prev.sources.push(j.src); continue; }
+      seen.set(key, { ...it, source: it.publisher || j.src, via: j.src, sources: [j.src], symbols: [...tagged] });
+    }
+  });
+  const cutoff = Date.now() - 4 * 86400 * 1000;
+  const items = [...seen.values()].filter(x => !x.time || Date.parse(x.time) > cutoff)
+    .sort((a, b) => (b.time || "").localeCompare(a.time || "")).slice(0, 200);
+  return { items, sources, fetchedAt: new Date().toISOString() };
+}
+
+// ── Grote bewegers in de 500 grootste beursbedrijven ter wereld + meldingen via ntfy (iPhone-app ntfy) ──
+async function top500() {
+  const res = await fetch("https://companiesmarketcap.com/?download=csv", { headers: { "user-agent": "Mozilla/5.0" }, cf: { cacheTtl: 86400, cacheEverything: true } });
+  if (!res.ok) throw new Error(`lijst ${res.status}`);
+  const rows = (await res.text()).split("\n").slice(1);
+  const out = [];
+  for (const line of rows) {
+    const c = [...line.matchAll(/"((?:[^"]|"")*)"/g)].map(m => m[1].replace(/""/g, '"'));
+    if (c.length < 6 || !SYM.test(c[2])) continue;
+    out.push({ rank: +c[0], name: c[1], symbol: c[2], mcapUsd: +c[3], country: c[5] });
+    if (out.length >= 500) break;
+  }
+  return out;
+}
+async function sparkQuotes(symbols) {
+  const out = {};
+  const parts = [];
+  for (let i = 0; i < symbols.length; i += 20) parts.push(symbols.slice(i, i + 20));
+  await Promise.all(parts.map(async part => {
+    try {
+      const res = await fetch(`https://query1.finance.yahoo.com/v7/finance/spark?symbols=${part.map(encodeURIComponent).join(",")}&range=1d&interval=1d`, {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)", accept: "application/json" }, cf: { cacheTtl: 120, cacheEverything: true },
+      });
+      if (!res.ok) return;
+      const j = await res.json();
+      for (const r of (j.spark && j.spark.result) || []) {
+        const m = r.response && r.response[0] && r.response[0].meta;
+        if (!m || !(m.regularMarketPrice > 0)) continue;
+        const prev = m.chartPreviousClose || m.previousClose;
+        const chg = m.regularMarketChangePercent != null ? m.regularMarketChangePercent : (prev > 0 ? (m.regularMarketPrice / prev - 1) * 100 : null);
+        if (chg == null || !isFinite(chg)) continue;
+        out[r.symbol] = { price: m.regularMarketPrice, currency: m.currency || "", chg, time: m.regularMarketTime || null, longName: m.longName || m.shortName || null };
+      }
+    } catch (e) { /* batch overslaan */ }
+  }));
+  return out;
+}
+const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
+async function latestHeadline(symbol, name) {
+  // Alleen een kop die echt over dit bedrijf gaat (naam of ticker in de titel).
+  const nm = String(name || "").replace(/\(.*?\)/g, "").replace(SUFFIX, "").trim();
+  const first = nm.split(/\s+/)[0] || "";
+  const base = symbol.split(/[.\-=]/)[0];
+  const parts = [escRe(nm)];
+  if (first.length >= 4 && first !== nm) parts.push(escRe(first));
+  if (/^[A-Z]{2,5}$/.test(base)) parts.push("\\b" + base + "\\b");
+  const re = new RegExp(parts.join("|"), "i");
+  const urls = [`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`];
+  if (/^[A-Z]{1,5}$/.test(symbol)) urls.push(`https://www.nasdaq.com/feed/rssoutbound?symbol=${encodeURIComponent(symbol)}`);
+  const lists = await Promise.allSettled(urls.map(u => feed(u, 120)));
+  const items = lists.flatMap(r => (r.status === "fulfilled" ? r.value : []));
+  const fresh = items.filter(x => x.time && Date.now() - Date.parse(x.time) < 36 * 3600 * 1000 && re.test(x.title))
+    .sort((a, b) => b.time.localeCompare(a.time));
+  return fresh[0] || null;
+}
+const APP_URL = "https://cjjdogterom.github.io/investeren/";
+const fmtPctNl = v => (v < 0 ? "−" : "+") + Math.abs(v).toFixed(1).replace(".", ",") + "%";
+async function moversTick(env) {
+  const list = await top500();
+  const quotes = await sparkQuotes(list.map(x => x.symbol));
+  const nowS = Date.now() / 1000;
+  const rows = list.filter(x => quotes[x.symbol]).map(x => ({ ...x, ...quotes[x.symbol], name: x.name }));
+  const live = rows.filter(x => x.time && nowS - x.time < 45 * 60);
+  const byChg = rows.slice().sort((a, b) => a.chg - b.chg);
+  const pick = x => ({ rank: x.rank, name: x.name, symbol: x.symbol, chg: +x.chg.toFixed(2), price: x.price, currency: x.currency, time: x.time ? new Date(x.time * 1000).toISOString() : null, live: !!(x.time && nowS - x.time < 45 * 60), country: x.country });
+  const got = await sb(env, "GET", "portfolio?id=in.(nieuws-config,nieuws-alerts)&select=id,data");
+  const cfg = ((got.find(r => r.id === "nieuws-config") || {}).data) || {};
+  const st = ((got.find(r => r.id === "nieuws-alerts") || {}).data) || {};
+  const fired = st.fired || {};
+  const log = st.log || [];
+  const step = Math.max(1, +cfg.dropPct || 5);
+  const riseStep = cfg.rises ? Math.max(1, +cfg.risePct || step) : null;
+  const cand = [];
+  for (const x of live) {
+    const day = new Date(x.time * 1000).toISOString().slice(0, 10);
+    const k = `${day}|${x.symbol}`;
+    const down = x.chg <= -step ? Math.floor(-x.chg / step) : 0;
+    const up = riseStep && x.chg >= riseStep ? Math.floor(x.chg / riseStep) : 0;
+    const prev = fired[k] || 0;   // negatief = daling-niveau, positief = stijging-niveau
+    if (down && -prev < down) cand.push({ x, k, level: -down });
+    else if (up && prev < up && prev >= 0) cand.push({ x, k, level: up });
+  }
+  cand.sort((a, b) => Math.abs(b.x.chg) - Math.abs(a.x.chg));
+  const sent = [];
+  for (const c of cand.slice(0, 6)) {
+    const x = c.x;
+    const h = await latestHeadline(x.symbol, x.name);
+    const entry = { at: new Date().toISOString(), symbol: x.symbol, name: x.name, rank: x.rank, chg: +x.chg.toFixed(2), price: x.price, currency: x.currency,
+      headline: h ? h.title : null, link: h ? h.link : null, sent: false };
+    if (cfg.enabled !== false && cfg.ntfyTopic && /^[A-Za-z0-9_-]{6,64}$/.test(cfg.ntfyTopic)) {
+      try {
+        const r = await fetch("https://ntfy.sh/", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+          topic: cfg.ntfyTopic,
+          title: `${x.chg < 0 ? "📉" : "📈"} ${x.name} ${fmtPctNl(x.chg)} · #${x.rank} wereldwijd`,
+          message: `${x.symbol} staat op ${x.price.toFixed(2).replace(".", ",")} ${x.currency}.` + (h ? `\nNieuws: ${h.title}` : "\nGeen recent nieuwsbericht gevonden."),
+          click: h ? h.link : `${APP_URL}#/nieuws?s=${encodeURIComponent(x.symbol)}`,
+          actions: [{ action: "view", label: "Open in app", url: `${APP_URL}#/nieuws?s=${encodeURIComponent(x.symbol)}` }],
+          tags: [x.chg < 0 ? "chart_with_downwards_trend" : "chart_with_upwards_trend"],
+          priority: Math.abs(x.chg) >= 2 * step ? 5 : 4,
+        }) });
+        entry.sent = r.ok;
+      } catch (e) { /* niet verstuurd */ }
+    }
+    fired[c.k] = c.level;
+    log.unshift(entry);
+    sent.push(entry);
+  }
+  const cut = new Date(Date.now() - 4 * 86400 * 1000).toISOString().slice(0, 10);
+  for (const k of Object.keys(fired)) if (k.slice(0, 10) < cut) delete fired[k];
+  const data = { asOf: new Date().toISOString(), count: rows.length, liveCount: live.length,
+    losers: byChg.slice(0, 25).map(pick), gainers: byChg.slice(-25).reverse().map(pick) };
+  await sb(env, "POST", "portfolio?on_conflict=id", [{ id: "markt-bewegers", data }, { id: "nieuws-alerts", data: { fired, log: log.slice(0, 60) } }]);
+  return `ok ${rows.length}/${list.length} koersen, ${live.length} live, ${sent.length} meldingen`;
+}
+
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(intradayTick(env).then(r => console.log("[dagverloop]", r), e => console.log("[dagverloop] fout", e.message)));
+    if (event.cron === "*/5 * * * *") ctx.waitUntil(intradayTick(env).then(r => console.log("[dagverloop]", r), e => console.log("[dagverloop] fout", e.message)));
+    else ctx.waitUntil(moversTick(env).then(r => console.log("[bewegers]", r), e => console.log("[bewegers] fout", e.message)));
   },
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-max-age": "86400" } });
@@ -216,6 +414,19 @@ export default {
         return json({ quotes, errors, fetchedAt: new Date().toISOString() });
       }
       if (url.pathname === "/dagverloop") return json({ status: await intradayTick(env) }, 200, 0);
+      if (url.pathname === "/nieuws") {
+        const syms = [...new Set((url.searchParams.get("s") || "").split(",").map(x => x.trim()).filter(Boolean))].slice(0, 16);
+        if (!syms.every(x => SYM.test(x))) return json({ error: "Ongeldig symbool" }, 400, 0);
+        const names = (url.searchParams.get("n") || "").split("|").map(x => x.trim().slice(0, 60)).slice(0, 16);
+        return json(await nieuws(syms, names), 200, 300);
+      }
+      if (url.pathname === "/bewegers") {
+        if (url.searchParams.get("nu") === "1") await moversTick(env);
+        const got = await sb(env, "GET", "portfolio?id=in.(markt-bewegers,nieuws-alerts)&select=id,data");
+        const m = ((got.find(r => r.id === "markt-bewegers") || {}).data) || null;
+        const a = ((got.find(r => r.id === "nieuws-alerts") || {}).data) || {};
+        return json({ movers: m, alerts: a.log || [] }, 200, 60);
+      }
       if (url.pathname === "/grafiek") {
         const s = (url.searchParams.get("s") || "").trim();
         if (!SYM.test(s)) return json({ error: "Ongeldig symbool" }, 400, 0);
