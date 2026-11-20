@@ -665,6 +665,39 @@ function t212HistToTx(h) {
   return tx;
 }
 
+// Overboeking tussen Trading 212 Invest en de CFD-rekening: de koppeling ziet alleen de Invest-kant (T212:TRANSFER).
+// Hier maken we automatisch de tegenboeking op de CFD-rekening, zodat het geld niet dubbel als inleg telt:
+// geld naar Invest (inleg) = opname van CFD, geld van Invest (opname) = inleg op CFD.
+// Niet als je zelf al een gelijke of grotere boeking van dat type op die dag op de CFD-rekening hebt gezet, of de tegenboeking hebt verwijderd.
+function t212CfdMirror(s) {
+  const cfdParty = (s.parties || []).find(p => p && isCfdParty(p));
+  if (!cfdParty) return s;
+  const deleted = s.deletedTransactionIds || {};
+  const have = new Set(s.transactions.map(t => t.id));
+  const add = [];
+  let cfd = cfdParty.cfd || null;
+  for (const t of s.transactions) {
+    if (t.party !== 'trading212' || !t._t212Id || !/T212:TRANSFER/.test(t.note || '') || !(+t.amountEur > 0)) continue;
+    const id = 'cfdmirror_' + t.id;
+    if (have.has(id) || deleted[id]) continue;
+    const type = t.type === 'inleg' ? 'opname' : t.type === 'opname' ? 'inleg' : null;
+    if (!type) continue;
+    const amt = +t.amountEur;
+    const manual = s.transactions.some(x => x.party === cfdParty.id && x.type === type && x.date === t.date && (+x.amountEur || 0) >= amt - 0.01);
+    if (manual) continue;
+    add.push({ id, party: cfdParty.id, type, date: t.date, amountEur: amt, _mirrorOf: t.id,
+      note: type === 'opname' ? 'Overboeking naar Trading 212 Invest (automatisch)' : 'Overboeking van Trading 212 Invest (automatisch)',
+      updatedAt: new Date().toISOString() });
+    if (cfd && cfd.accountValue != null && (!cfd.asOf || t.date >= cfd.asOf)) {
+      const d = type === 'opname' ? -amt : amt;
+      cfd = { ...cfd, accountValue: cfd.accountValue + d, cash: cfd.cash != null ? cfd.cash + d : cfd.cash };
+    }
+  }
+  if (!add.length) return s;
+  const parties = cfd !== cfdParty.cfd ? s.parties.map(p => (p.id === cfdParty.id ? { ...p, cfd, updatedAt: new Date().toISOString() } : p)) : s.parties;
+  return { ...s, parties, transactions: [...s.transactions, ...add] };
+}
+
 const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'financieel', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
 const SH_SECTION_TITLES = {
   weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', wallet: 'Wallet', sync: 'Synchronisatie', t212: 'Trading 212',
@@ -1850,12 +1883,12 @@ function App() {
           if (!cur) { changes.set(tx.id, { ...tx, updatedAt: now }); added++; }
           else if (!same(cur, tx)) { changes.set(cur.id, { ...cur, ...tx, id: cur.id, updatedAt: now }); updated++; }
         }
-        if (!changes.size) return s;
+        if (!changes.size) { const m = t212CfdMirror(s); if (m !== s) added += m.transactions.length - s.transactions.length; return m; }
         const deletedTransactionIds = { ...(s.deletedTransactionIds || {}) };
         changes.forEach((_, id) => { delete deletedTransactionIds[id]; });
         const kept = s.transactions.map(t => changes.get(t.id) || t);
         const fresh = [...changes.values()].filter(t => !s.transactions.some(x => x.id === t.id));
-        return { ...s, transactions: [...kept, ...fresh], deletedTransactionIds };
+        return t212CfdMirror({ ...s, transactions: [...kept, ...fresh], deletedTransactionIds });
       });
       setT212Status({ loading: false, error: null, done: true, imported: added, updated, counts: h.counts, warnings: h.warnings || [], historyAt: h.fetchedAt });
       if (!quiet && (added || updated)) toast(`Trading 212: ${added} nieuwe en ${updated} bijgewerkte boekingen`);
