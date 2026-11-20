@@ -312,8 +312,6 @@ async function sparkQuotes(symbols) {
   return out;
 }
 const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
-const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
-const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
 async function latestHeadline(symbol, name) {
   // Alleen een kop die echt over dit bedrijf gaat (naam of ticker in de titel).
   const nm = String(name || "").replace(/\(.*?\)/g, "").replace(SUFFIX, "").trim();
