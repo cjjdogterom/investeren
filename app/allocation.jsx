@@ -10,11 +10,14 @@ function allocationGroups(summaries, grouping) {
   const included = summaries.filter(s => (s.party.includeInTotal ?? s.party.includeInPortfolio) !== false);
   const map = new Map();
   for (const s of included) {
-    const key   = grouping === 'party' ? s.party.id : (s.party.category || 'Overig');
-    const label = grouping === 'party' ? s.party.name : (s.party.category || 'Overig');
-    const g = map.get(key) || { key, label, color: s.party.color, value: 0 };
-    g.value += Math.max(0, s.currentValueEur || 0);
-    map.set(key, g);
+    const parts = grouping === 'party' ? [{ category: s.party.id, value: Math.max(0, s.currentValueEur || 0) }] : allocPartsOf(s);
+    for (const pt of parts) {
+      const key   = pt.category;
+      const label = grouping === 'party' ? s.party.name : key;
+      const g = map.get(key) || { key, label, color: s.party.color, value: 0 };
+      g.value += pt.value;
+      map.set(key, g);
+    }
   }
   return [...map.values()].sort((a, b) => b.value - a.value);
 }

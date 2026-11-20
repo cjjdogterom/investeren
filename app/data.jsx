@@ -1977,6 +1977,9 @@ function assetClassOf(p) {
   if (id === 'cash' || cat === 'liquide' || cat === 'cash') return 'liq';
   if (cat === 'private equity') return 'pe';
   if (['indexfondsen', 'aandelen', 'etf', "etf's", 'fondsen'].includes(cat)) return 'idx';
+  // Getokeniseerd edelmetaal op een cryptoplatform (bijv. PAX Gold bij Finst) staat bij Posities onder Crypto;
+  // in de verdeling telt het via de categorie wel als Edelmetaal (zie allocPartsOf).
+  if (cat === 'edelmetaal' && p.unit === 'crypto') return 'cr';
   if (cat === 'edelmetaal' || ['goldrepublic', 'goud', 'zilver'].includes(id)) return 'pm';
   if (cat === 'crypto') return 'cr';
   if (cat === 'crowdfunding') return 'cf';
@@ -2832,16 +2835,40 @@ function downsample(arr, max) {
 }
 
 // ----- Drift -----
+// Edelmetaal-ETF/ETC (fysiek goud, zilver, platina, palladium) herkennen aan ticker of naam. Een goudmijnaandeel
+// ("Barrick Gold") telt niet: de naam moet op een fysieke ETC/ETF wijzen.
+const PM_ETF_TICKERS = new Set(['PHAG', 'PHAU', 'PHPT', 'PHPD', 'SSLN', 'SGLN', 'IGLN', 'SGLD', 'SLVR', 'SLV', 'GLD', 'IAU', 'GLDM', 'SIVR', 'PSLV', 'PHYS', 'SGOL',
+  'PPLT', 'PALL', '4GLD', 'EWG2', 'XAD5', 'XAD1', 'VZLD', 'VZLC', '8PSG', 'GZUR', 'XGDU', 'XSLV', 'IS0S', 'SXRS', 'WGLD', 'GBSE', 'GBS', 'BULL']);
+const PM_ETF_NAME = /\b(physical|phys|bullion|etc|xetra-gold|euwax gold)\b[^,]*\b(silver|gold|platinum|palladium|precious)\b|\b(silver|gold|platinum|palladium|precious metals?)\b[^,]*\b(etc|bullion|trust|physical)\b/i;
+function isPreciousMetalEtf(pos) {
+  if (!pos) return false;
+  const base = String(pos.symbol || '').toUpperCase().split(/[.\-]/)[0];
+  return PM_ETF_TICKERS.has(base) || PM_ETF_NAME.test(String(pos.name || ''));
+}
+// Delen van een positie voor de verdeling: [{ category, value }].
+function allocPartsOf(s) {
+  const v = Math.max(0, (s && s.currentValueEur) || 0);
+  const cat = (s && s.party && s.party.category) || 'Overig';
+  const pos = s && s.stocks && s.stocks.positions;
+  if (!pos || !pos.length) return [{ category: cat, value: v }];
+  const pm = pos.filter(isPreciousMetalEtf).reduce((a, x) => a + Math.max(0, x.value || 0), 0);
+  if (!(pm > 0.005)) return [{ category: cat, value: v }];
+  return [{ category: cat, value: Math.max(0, v - pm) }, { category: 'Edelmetaal', value: Math.min(v, pm) }];
+}
+
 function driftRows(summaries, targetAllocation, tolerancePt = ATTENTION_THRESHOLDS.driftPt) {
   const grouping = (targetAllocation && targetAllocation.grouping) || 'category';
   const map = new Map();
   for (const s of (summaries || []).filter(x => dtIncluded(x.party))) {
-    const key = grouping === 'party' ? s.party.id : (s.party.category || 'Overig');
-    const label = grouping === 'party' ? s.party.name : (s.party.category || 'Overig');
-    const color = grouping === 'party' ? partyColorOf(s.party) : ASSET_CLASS_BY_KEY[assetClassOf({ category: key })].color;
-    const g = map.get(key) || { key, label, color, value: 0 };
-    g.value += Math.max(0, s.currentValueEur || 0);
-    map.set(key, g);
+    const parts = grouping === 'party' ? [{ category: s.party.id, value: Math.max(0, s.currentValueEur || 0) }] : allocPartsOf(s);
+    for (const pt of parts) {
+      const key = pt.category;
+      const label = grouping === 'party' ? s.party.name : key;
+      const color = grouping === 'party' ? partyColorOf(s.party) : ASSET_CLASS_BY_KEY[assetClassOf({ category: key })].color;
+      const g = map.get(key) || { key, label, color, value: 0 };
+      g.value += pt.value;
+      map.set(key, g);
+    }
   }
   const groups = [...map.values()].sort((a, b) => b.value - a.value);
   const targets = (targetAllocation && targetAllocation[grouping]) || {};
@@ -2971,7 +2998,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

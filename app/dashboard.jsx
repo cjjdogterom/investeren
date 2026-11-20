@@ -745,7 +745,7 @@ function OvVerdelingCard({ app, pinIndex }) {
       const h = at[s.party.id];
       if (!h) continue;
       const v = Math.max(0, h.value || 0);
-      const k = assetClassOf(s.party);
+      const k = assetClassOf({ category: s.party.category });   // verdeling: op categorie (PAX Gold = Edelmetaal)
       byClass[k] = (byClass[k] || 0) + v;
       tot += v;
     }
