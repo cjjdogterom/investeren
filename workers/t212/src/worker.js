@@ -233,7 +233,9 @@ async function buildHistory(env) {
   const warnings = [];
 
   for (const t of cashTx) {
-    const kind = { DEPOSIT: "inleg", WITHDRAW: "opname", FEE: "kosten", INTEREST_ON_FREE_CASH: "rente", LENDING_INTEREST: "rente" }[t.type];
+    // TRANSFER = overboeking tussen eigen Trading 212-rekeningen (bijv. Invest → CFD): uit = opname, in = inleg.
+    const kind = t.type === "TRANSFER" ? (num(t.amount) < 0 ? "opname" : "inleg")
+      : { DEPOSIT: "inleg", WITHDRAW: "opname", FEE: "kosten", INTEREST_ON_FREE_CASH: "rente", LENDING_INTEREST: "rente" }[t.type];
     if (!kind || !t.reference) continue;
     if (t.currency && t.currency !== "EUR") warnings.push(`${t.type} ${t.reference} in ${t.currency}`);
     out.push({ key: "txn:" + t.reference, type: kind, date: day(t.dateTime), amountEur: Math.abs(num(t.amount)), note: `T212:${t.type}` });
