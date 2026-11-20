@@ -64,8 +64,14 @@ async function fxSeries(currency, range) {
 
 async function koers(symbol, range) {
   const { meta, hist } = await chart(symbol, range);
-  const price = meta.regularMarketPrice ?? (hist.length ? hist[hist.length - 1].close : null);
+  let price = meta.regularMarketPrice ?? (hist.length ? hist[hist.length - 1].close : null);
   if (price == null) throw new Error(`Geen koers voor ${symbol}`);
+  // Voor- en nabeurs: neem de laatste koers als die nieuwer is dan de slotkoers (zelfde bron als de live stream in de app).
+  let extTime = null;
+  try {
+    const x = await rawPrice(symbol);
+    if (x.time && meta.regularMarketTime && x.time > meta.regularMarketTime + 60) { price = x.price; extTime = x.time; }
+  } catch (e) { /* slotkoers blijft staan */ }
   const fx = await fxSeries(meta.currency, range);
   // Vorige slotkoers: laatste dagbalk vóór de huidige handelsdag (chartPreviousClose ligt vóór het hele bereik).
   const marketDay = meta.regularMarketTime ? day(meta.regularMarketTime) : null;
@@ -79,7 +85,8 @@ async function koers(symbol, range) {
     price,
     priceEur: price * fx.now,
     previousCloseEur: prev != null ? prev * fx.now : null,
-    marketTime: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : null,
+    marketTime: (extTime || meta.regularMarketTime) ? new Date((extTime || meta.regularMarketTime) * 1000).toISOString() : null,
+    extended: !!extTime,
     history: hist.map(h => ({ date: h.date, eur: +(h.close * fx.at(h.date)).toFixed(6) })),
   };
 }
@@ -138,10 +145,11 @@ async function rawPrice(symbol) {
   const r = (await res.json()).chart?.result?.[0];
   if (!r) throw new Error("geen data");
   const closes = r.indicators?.quote?.[0]?.close || [];
-  let last = null; for (let i = closes.length - 1; i >= 0; i--) if (closes[i] != null) { last = closes[i]; break; }
+  const stamps = r.timestamp || [];
+  let last = null, time = null; for (let i = closes.length - 1; i >= 0; i--) if (closes[i] != null) { last = closes[i]; time = stamps[i] || null; break; }
   const price = last ?? r.meta?.regularMarketPrice;
   if (!(price > 0)) throw new Error("geen koers");
-  return { price, currency: r.meta?.currency || "EUR" };
+  return { price, time, currency: r.meta?.currency || "EUR" };
 }
 async function eurPrices(symbols) {
   const raw = {};
