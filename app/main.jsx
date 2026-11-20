@@ -1275,7 +1275,7 @@ function App() {
   const [modelTicks, setModelTicks] = React.useState({});
   React.useEffect(() => {
     if (!cfdLiveSymbols.length) return undefined;
-    const id = setInterval(() => setModelTicks(cfdTickStore.ticks), 15000);
+    const id = setInterval(() => { setModelTicks(cfdTickStore.ticks); cfdTickStore.persist(); }, 15000);
     const first = setTimeout(() => setModelTicks(cfdTickStore.ticks), 3000);
     return () => { clearInterval(id); clearTimeout(first); };
   }, [cfdLiveSymbols.join(',')]); // eslint-disable-line
@@ -2123,6 +2123,17 @@ function App() {
     const id = setInterval(() => refreshStocksRef.current(), STOCK_REFRESH_MS);
     return () => clearInterval(id);
   }, [stockSig]); // eslint-disable-line
+  // CFD-koersen: bij het openen altijd vers ophalen (niet de bewaarde koers van eerder) en daarna elke minuut,
+  // zodat de stand na herladen niet terugspringt naar een oude koers als de stream even geen tick geeft.
+  const cfdQuoteSig = cfdSymbolsOf(state.parties).sort().join(',');
+  React.useEffect(() => {
+    if (!cfdQuoteSig) return undefined;
+    const run = () => { if (!document.hidden) refreshStocksRef.current({ force: true, symbols: cfdQuoteSig.split(',') }); };
+    run();
+    const id = setInterval(run, 60000);
+    document.addEventListener('visibilitychange', run);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', run); };
+  }, [cfdQuoteSig]); // eslint-disable-line
   // Oude fin-over-boekingen (Vrij op rekening) tellen nergens mee: de post is live gewaardeerd.
   const valTxs = React.useMemo(() => {
     const all = state.transactions || [];

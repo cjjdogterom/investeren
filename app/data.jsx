@@ -1265,8 +1265,18 @@ function summarizePartyBase(party, transactions, spots, ctx) {
 }
 
 // Opslag voor live ticks (los van de React-state van de app, zodat alleen de CFD-onderdelen elke seconde hertekenen).
+// De laatste ticks worden bewaard, zodat de stand na herladen meteen op de laatst bekende koers staat.
+const CFD_TICKS_KEY = 'investeringen-cfd-ticks-v1';
+function cfdLoadTicks() {
+  try {
+    const j = JSON.parse(localStorage.getItem(CFD_TICKS_KEY) || '{}'), out = {};
+    for (const [k, t] of Object.entries(j || {})) if (t && t.price > 0 && Date.now() - (t.at || 0) < 6 * 3600 * 1000) out[k] = t;
+    return out;
+  } catch (e) { return {}; }
+}
 const cfdTickStore = {
-  ticks: {}, subs: new Set(),
+  ticks: cfdLoadTicks(), subs: new Set(),
+  persist() { try { localStorage.setItem(CFD_TICKS_KEY, JSON.stringify(this.ticks)); } catch (e) { /* ignore */ } },
   set(next) { this.ticks = next; this.subs.forEach(f => f(next)); },
   subscribe(f) { this.subs.add(f); return () => this.subs.delete(f); },
 };
@@ -1323,8 +1333,10 @@ function cfdLive(cfd, quotes, ticks) {
   let delta = 0, live = false, lastTime = null, stream = false;
   const nPos = [];
   const positions = cfd.positions.map(x => {
-    const t = ticks && x.symbol ? ticks[x.symbol] : null;
+    let t = ticks && x.symbol ? ticks[x.symbol] : null;
     const q = quotes && x.symbol ? quotes[x.symbol] : null;
+    // De nieuwste van de twee bronnen telt (een bewaarde tick kan ouder zijn dan de opgehaalde koers).
+    if (t && q && +q.price > 0 && q.marketTime && t.time && q.marketTime > t.time) t = null;
     const price = t && t.price > 0 ? t.price : (q && +q.price > 0 && (!q.currency || String(q.currency).toUpperCase() === x.currency) ? +q.price : null);
     const fx = cfdFxToEur(x.currency, quotes, ticks, x.symbol);
     const n0 = fx != null && x.quantity != null && x.currentPrice != null ? Math.abs(x.quantity * x.currentPrice * fx) : null;
