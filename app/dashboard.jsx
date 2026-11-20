@@ -308,13 +308,24 @@ function useOvPerformance(app) {
     return { value: p.key, label: p.label, disabled: !en, title: en ? undefined : 'Te weinig data', testId: `period-${p.key}` };
   });
 
+  // De grafiek begint pas op de eerste dag met waarde, niet met een vlakke nul-lijn ervoor (de cijfers blijven over de hele periode).
+  let c0 = r.i0;
+  if (r.enabled) {
+    // "Waarde" = meer dan 2% van de hoogste stand in de periode; een paar tientjes op een schaal van duizenden oogt ook als nul.
+    let top = 0;
+    for (let i = r.i0; i <= r.i1; i++) top = Math.max(top, Math.abs(series.value[i] || 0));
+    const min = Math.max(0.5, top * 0.02);
+    while (c0 < r.i1 - 1 && !(Math.abs(series.value[c0] || 0) > min)) c0++;
+    if (!(Math.abs(series.value[c0] || 0) > min)) c0 = r.i0;
+  }
+
   // Cursor keyed by date string so background pulls do not cancel it.
   const [cursor, setCursor] = useState(null);
   useEffect(() => { setCursor(null); }, [periodKey, prefs.chartMode, exclPE]);
   let ci = null;
   if (cursor && r.enabled) {
     const i = dates.indexOf(cursor.date);
-    if (i >= r.i0 && i <= r.i1) ci = i;
+    if (i >= c0 && i <= r.i1) ci = i;
   }
   const pinned = !!(cursor && cursor.pinned && ci != null && !isMobile);
 
@@ -335,7 +346,7 @@ function useOvPerformance(app) {
 
   const onCursor = (i, info = {}) => {
     if (i == null) { setCursor(null); return; }
-    const d = dates[r.i0 + i];
+    const d = dates[c0 + i];
     if (!d) return;
     setCursor({ date: d, pinned: !isMobile && !!info.pinned });
   };
@@ -371,24 +382,24 @@ function useOvPerformance(app) {
 
   // Chart data
   const mode = prefs.chartMode === 'return' || prefs.chartMode === 'gain' ? prefs.chartMode : 'value';
-  const chartDates = r.enabled ? dates.slice(r.i0, r.i1 + 1) : [];
-  const twrCurve = useMemo(() => (mode === 'return' && r.enabled ? cumulativeTwr(series, r.i0, r.i1) : null), [mode, series, r.i0, r.i1, r.enabled]);
+  const chartDates = r.enabled ? dates.slice(c0, r.i1 + 1) : [];
+  const twrCurve = useMemo(() => (mode === 'return' && r.enabled ? (cumulativeTwr(series, r.i0, r.i1) || []).slice(c0 - r.i0) : null), [mode, series, r.i0, c0, r.i1, r.enabled]);
   // Winst = waarde − netto ingelegd; bij een periode vanaf 0 aan het begin (= winst excl. stortingen in die periode).
   const gainCurve = useMemo(() => {
     if (mode !== 'gain' || !r.enabled) return null;
     const g = i => (series.value[i] == null || series.net[i] == null ? null : series.value[i] - series.net[i]);
     const base = r.all ? 0 : (g(r.i0) || 0);
     const out = [];
-    for (let i = r.i0; i <= r.i1; i++) { const v = g(i); out.push(v == null ? null : v - base); }
+    for (let i = c0; i <= r.i1; i++) { const v = g(i); out.push(v == null ? null : v - base); }
     return out;
-  }, [mode, series, r.i0, r.i1, r.enabled, r.all]);
-  const primary = mode === 'return' ? (twrCurve || []) : mode === 'gain' ? (gainCurve || []) : (r.enabled ? series.value.slice(r.i0, r.i1 + 1) : []);
-  const secondary = mode === 'value' && r.enabled ? series.net.slice(r.i0, r.i1 + 1) : null;
+  }, [mode, series, r.i0, c0, r.i1, r.enabled, r.all]);
+  const primary = mode === 'return' ? (twrCurve || []) : mode === 'gain' ? (gainCurve || []) : (r.enabled ? series.value.slice(c0, r.i1 + 1) : []);
+  const secondary = mode === 'value' && r.enabled ? series.net.slice(c0, r.i1 + 1) : null;
   const twrAllNull = mode === 'return' && primary.every(v => v == null);
   const peSet = new Set(exclPE ? peIds : []);
   const markers = model.markers
-    .filter(m => !peSet.has(m.partyId) && m.index >= r.i0 && m.index <= r.i1)
-    .map(m => ({ ...m, index: m.index - r.i0 }));
+    .filter(m => !peSet.has(m.partyId) && m.index >= c0 && m.index <= r.i1)
+    .map(m => ({ ...m, index: m.index - c0 }));
   const valueText = i => {
     const d = chartDates[i];
     if (!d) return '';
@@ -403,7 +414,7 @@ function useOvPerformance(app) {
   const setsDiffer = notInChart > 0 || model.chartIds.some(id => !includedIds.has(id));
 
   return {
-    series, dates, r, periodKey, periodOptions, cursor, setCursor, ci, pinned, onCursor,
+    series, dates, r, c0, periodKey, periodOptions, cursor, setCursor, ci, pinned, onCursor,
     stats, fullStats, xirrPct, histDays, hasPE, exclPE,
     heroValue, heroNet, heroWinst, deltaGain, deltaPct, context, restPnlPct,
     mode, chartDates, primary, secondary, twrAllNull, markers, valueText,
@@ -853,7 +864,7 @@ function OvPrestatiesCard({ app, pf }) {
         <PerformanceChart testId="perf-chart" dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
           kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220}
           liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
-          cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
+          cursor={pf.ci != null ? pf.ci - pf.c0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
           ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
           valueText={pf.valueText} privacy={privacy}
           emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />
@@ -1128,7 +1139,7 @@ function OvMobile({ app }) {
           <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
             kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
-            cursor={pf.ci != null ? pf.ci - pf.r.i0 : null} onCursor={pf.onCursor}
+            cursor={pf.ci != null ? pf.ci - pf.c0 : null} onCursor={pf.onCursor}
             ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
             valueText={pf.valueText} privacy={privacy}
             emptyText={pf.twrAllNull ? 'Tijdgewogen rendement niet beschikbaar voor deze periode' : undefined} />}
