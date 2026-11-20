@@ -1468,9 +1468,11 @@ function summarizeParty(party, transactions, spots, ctx) {
   if (!s || !party || !party.cfd) return s;
   const cfd = cfdLive(cfdNormalize(party.cfd), spots && spots.stockQuotes, spots && spots.liveTicks);
   if (!cfd) return s;
-  // Accountwaarde (live) is de waarde van de positie zolang de stand de laatste waardering is.
+  // Accountwaarde (live) is de waarde van de positie zolang de stand de laatste waardering is. Zonder open posities
+  // wint een waardering op dezelfde dag (bijv. rekening leeggehaald: stand 0, kleine restverschillen tellen als kosten).
   const lastVal = s.lastValuationDate || null;
-  if (cfd.accountValue != null && (!lastVal || !cfd.asOf || cfd.asOf >= lastVal)) {
+  const open = (cfd.positions || []).length > 0;
+  if (cfd.accountValue != null && (!lastVal || !cfd.asOf || cfd.asOf > lastVal || (open && cfd.asOf === lastVal))) {
     const diff = cfd.accountValue - (s.currentValueEur || 0);
     const pnl = (s.pnl || 0) + diff;
     return { ...s, cfd, currentValueEur: cfd.accountValue, pnl, pnlPct: s.invested > 0 ? pnl / s.invested * 100 : 0 };

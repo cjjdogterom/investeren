@@ -672,12 +672,23 @@ function t212HistToTx(h) {
 function t212CfdMirror(s) {
   const cfdParty = (s.parties || []).find(p => p && isCfdParty(p));
   if (!cfdParty) return s;
-  const deleted = s.deletedTransactionIds || {};
+  let deleted = s.deletedTransactionIds || {};
+  // Alleen overboekingen vanaf de eerste eigen boeking op de CFD-rekening; oudere (van vóór de app de CFD bijhield) blijven
+  // gewone inleg/opname op Invest. Eerder ten onrechte gemaakte tegenboekingen van vóór die datum ruimen we op.
+  const own = s.transactions.filter(t => t.party === cfdParty.id && !t._mirrorOf && !String(t.id).startsWith('cfdmirror_')).map(t => t.date).sort();
+  const since = own[0] || null;
+  if (!since) return s;
+  const stale = s.transactions.filter(t => String(t.id).startsWith('cfdmirror_') && t.date < since);
+  if (stale.length) {
+    const at = new Date().toISOString();
+    deleted = { ...deleted }; stale.forEach(t => { deleted[t.id] = at; });
+    s = { ...s, transactions: s.transactions.filter(t => !stale.includes(t)), deletedTransactionIds: deleted };
+  }
   const have = new Set(s.transactions.map(t => t.id));
   const add = [];
   let cfd = cfdParty.cfd || null;
   for (const t of s.transactions) {
-    if (t.party !== 'trading212' || !t._t212Id || !/T212:TRANSFER/.test(t.note || '') || !(+t.amountEur > 0)) continue;
+    if (t.party !== 'trading212' || !t._t212Id || !/T212:TRANSFER/.test(t.note || '') || !(+t.amountEur > 0) || t.date < since) continue;
     const id = 'cfdmirror_' + t.id;
     if (have.has(id) || deleted[id]) continue;
     const type = t.type === 'inleg' ? 'opname' : t.type === 'opname' ? 'inleg' : null;
@@ -693,7 +704,7 @@ function t212CfdMirror(s) {
       cfd = { ...cfd, accountValue: cfd.accountValue + d, cash: cfd.cash != null ? cfd.cash + d : cfd.cash };
     }
   }
-  if (!add.length) return s;
+  if (!add.length) return s;   // (s is eventueel al opgeschoond)
   const parties = cfd !== cfdParty.cfd ? s.parties.map(p => (p.id === cfdParty.id ? { ...p, cfd, updatedAt: new Date().toISOString() } : p)) : s.parties;
   return { ...s, parties, transactions: [...s.transactions, ...add] };
 }
