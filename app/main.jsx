@@ -686,7 +686,6 @@ function t212CfdMirror(s) {
   }
   const have = new Set(s.transactions.map(t => t.id));
   const add = [];
-  let cfd = cfdParty.cfd || null;
   for (const t of s.transactions) {
     if (t.party !== 'trading212' || !t._t212Id || !/T212:TRANSFER/.test(t.note || '') || !(+t.amountEur > 0) || t.date < since) continue;
     const id = 'cfdmirror_' + t.id;
@@ -699,14 +698,11 @@ function t212CfdMirror(s) {
     add.push({ id, party: cfdParty.id, type, date: t.date, amountEur: amt, _mirrorOf: t.id,
       note: type === 'opname' ? 'Overboeking naar Trading 212 Invest (automatisch)' : 'Overboeking van Trading 212 Invest (automatisch)',
       updatedAt: new Date().toISOString() });
-    if (cfd && cfd.accountValue != null && (!cfd.asOf || t.date >= cfd.asOf)) {
-      const d = type === 'opname' ? -amt : amt;
-      cfd = { ...cfd, accountValue: cfd.accountValue + d, cash: cfd.cash != null ? cfd.cash + d : cfd.cash };
-    }
   }
+  // De CFD-stand (snapshot) zelf passen we hier niet aan: een apparaat met een verouderde stand zou die anders als
+  // nieuwste opslaan en zo een nieuwere stand (bijv. positie gesloten) overschrijven. Werk de stand bij via 'Stand bijwerken'.
   if (!add.length) return s;   // (s is eventueel al opgeschoond)
-  const parties = cfd !== cfdParty.cfd ? s.parties.map(p => (p.id === cfdParty.id ? { ...p, cfd, updatedAt: new Date().toISOString() } : p)) : s.parties;
-  return { ...s, parties, transactions: [...s.transactions, ...add] };
+  return { ...s, transactions: [...s.transactions, ...add] };
 }
 
 const SH_SETTINGS_SECTIONS = ['weergave', 'overzicht', 'koersen', 'wallet', 'financieel', 'sync', 't212', 'partijen', 'gegevens', 'gevarenzone', 'over'];
