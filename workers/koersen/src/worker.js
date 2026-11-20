@@ -312,15 +312,19 @@ async function sparkQuotes(symbols) {
   return out;
 }
 const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
+const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
+const SUFFIX = /,?\s+(inc|corp|corporation|nv|n\.v|plc|ltd|limited|holding|holdings|group|se|ag|sa|co|company)\.?$/i;
 async function latestHeadline(symbol, name) {
   // Alleen een kop die echt over dit bedrijf gaat (naam of ticker in de titel).
   const nm = String(name || "").replace(/\(.*?\)/g, "").replace(SUFFIX, "").trim();
   const first = nm.split(/\s+/)[0] || "";
   const base = symbol.split(/[.\-=]/)[0];
-  const parts = [escRe(nm)];
-  if (first.length >= 4 && first !== nm) parts.push(escRe(first));
-  if (/^[A-Z]{2,5}$/.test(base)) parts.push("\\b" + base + "\\b");
-  const re = new RegExp(parts.join("|"), "i");
+  const parts = ["\\b" + escRe(nm) + "\\b"];
+  if (first.length >= 4 && first !== nm) parts.push("\\b" + escRe(first) + "\\b");
+  const nameRe = new RegExp(parts.join("|"), "i");
+  // Ticker hoofdlettergevoelig, zodat bijv. NET (Cloudflare) niet op het woord "net" valt.
+  const tickRe = /^[A-Z]{2,5}$/.test(base) ? new RegExp("\\b" + base + "\\b") : null;
+  const re = { test: t => nameRe.test(t) || !!(tickRe && tickRe.test(t)) };
   const urls = [`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`];
   if (/^[A-Z]{1,5}$/.test(symbol)) urls.push(`https://www.nasdaq.com/feed/rssoutbound?symbol=${encodeURIComponent(symbol)}`);
   const lists = await Promise.allSettled(urls.map(u => feed(u, 120)));
