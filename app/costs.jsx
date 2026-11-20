@@ -51,6 +51,14 @@ const KC_DEFAULTS = {
   goldrepublic: { tradePct: 1, yearlyPct: 0.5, booked: true, text: '1% per aan- of verkoop · opslag 0,5%/jaar goud, 1%/jaar zilver (als boeking)', src: 'goldrepublic.com/nl-nl/tarieven' },
   trading212: { tradePct: 0, text: 'Geen commissie · 0,15% wisselkoerskosten op niet-euro-aandelen (komt via de koppeling mee)', src: 'trading212.com · Costs and Charges' },
   'trading212-cfd': { tradePct: 0, text: 'Spread en overnight-rente zitten in het resultaat dat je bij sluiten invult', src: 'trading212.com · Costs and Charges' },
+  // Door jou bevestigd (20 nov 2026):
+  custom_mpegbzqq: { none: true, inValue: true, confirmed: true, text: 'Kosten zitten in de waardering' },
+  custom_mpeh8tt9: { none: true, inValue: true, confirmed: true, text: 'Kosten zitten in de waardering' },
+  custom_mqhwe598: { none: true, confirmed: true, text: 'Geen kosten' },
+  goud: { none: true, confirmed: true, text: 'Opslag thuis · aankooppremie zit in de aankoopprijs' },
+  zilver: { none: true, confirmed: true, text: 'Opslag thuis · aankooppremie zit in de aankoopprijs' },
+  'wallet-btc': { none: true, confirmed: true, text: 'Netwerkkosten niet bijgehouden' },
+  'wallet-eth': { none: true, confirmed: true, text: 'Netwerkkosten niet bijgehouden' },
   cash: { none: true, text: 'Geen kosten' },
   'lopende-rekening': { none: true, text: 'Geen kosten' },
 };
@@ -59,7 +67,7 @@ function kcProfile(p) {
   const d = KC_DEFAULTS[p.id] || null;
   const own = p.costs || null;
   if (own) return { ...(d || {}), ...own, status: own.confirmed ? 'ok' : (d ? 'def' : 'unk') };
-  if (d) return { ...d, status: d.none ? 'ok' : 'def' };
+  if (d) return { ...d, status: d.none || d.confirmed ? 'ok' : 'def' };
   return { status: 'unk', text: 'Kosten onbekend' };
 }
 function kcText(pr) {
