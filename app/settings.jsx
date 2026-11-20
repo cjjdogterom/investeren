@@ -4,6 +4,7 @@ const ST_SECTIONS = [
   { key: 'weergave',    label: 'Weergave',       icon: 'sun',                desc: 'Thema, kleuren en privacy' },
   { key: 'overzicht',   label: 'Overzicht',      icon: 'layout-dashboard',   desc: 'Modules en standaardperiode' },
   { key: 'koersen',     label: 'Koersen',        icon: 'trending-up',        desc: 'Live prijzen en Meesman NAV' },
+  { key: 'nieuws',      label: 'Nieuws',         icon: 'newspaper',          desc: 'Beursnieuws, grote bewegers en meldingen', to: '/nieuws' },
   { key: 'wallet',      label: 'Wallet',         icon: 'wallet',             desc: 'Coinbase Wallet alleen-lezen koppelen' },
   { key: 'financieel',  label: 'Financieel',     icon: 'wallet',             desc: 'Vrij op rekening uit je Financieel Systeem' },
   { key: 'sync',        label: 'Synchronisatie', icon: 'cloud',              desc: 'Supabase-koppeling' },
@@ -13,7 +14,7 @@ const ST_SECTIONS = [
   { key: 'gevarenzone', label: 'Gevarenzone',    icon: 'triangle-alert',     desc: 'Verwijderen en terugzetten' },
   { key: 'over',        label: 'Over',           icon: 'info',               desc: 'Versie, uitleg en sneltoetsen' },
 ];
-const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'wallet', 'financieel', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
+const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'nieuws', 'wallet', 'financieel', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
 const ST_SETTINGS_PRICE_ORDER = ['gold', 'silver', 'btc', 'eth', 'paxg'];
 const ST_PRICE_UNITS = { gold: '€/g', silver: '€/oz', btc: '€/BTC', eth: '€/ETH', paxg: '€/PAXG', meesman: '€/part.' };
 const ST_SQL = `create table if not exists portfolio (\n  id text primary key,\n  data jsonb not null default '{}',\n  updated_at timestamptz default now()\n);\nalter table portfolio enable row level security;\ndrop policy if exists "allow all" on portfolio;\ncreate policy "allow all" on portfolio\n  for all using (true) with check (true);`;
@@ -668,7 +669,7 @@ function InstellingenScreen({ app }) {
               {g.map(k => {
                 const s = byKey(k);
                 return (
-                  <ListRow key={k} chevron testId={'settings-section-' + k} onClick={() => app.navigate('/instellingen/' + k)}
+                  <ListRow key={k} chevron testId={'settings-section-' + k} onClick={() => app.navigate(s.to || '/instellingen/' + k)}
                     leading={<span className={'st-mgroup__icon' + (k === 'gevarenzone' ? ' st-mgroup__icon--warn' : '')}><Icon name={s.icon} size={16} /></span>}
                     title={s.label} subtitle={s.desc} />
                 );
@@ -693,7 +694,7 @@ function InstellingenScreen({ app }) {
         {ST_SECTIONS.map(s => (
           <button key={s.key} type="button" className={'st-nav__item' + (s.key === 'gevarenzone' ? ' st-nav__item--warn' : '')}
             aria-current={s.key === active ? 'page' : undefined} data-testid={'settings-section-' + s.key}
-            onClick={() => app.navigate('/instellingen/' + s.key, { replace: true })}>
+            onClick={() => (s.to ? app.navigate(s.to) : app.navigate('/instellingen/' + s.key, { replace: true }))}>
             <Icon name={s.icon} size={16} />{s.label}
           </button>
         ))}

@@ -803,8 +803,8 @@ injectStyles('shell', `
   .sh-mheader .icon-btn--warn { color: var(--warn); }
   .sh-mheader .icon-btn--off { color: var(--fg-subtle); }
   .sh-mcontent { padding-bottom: calc(var(--tabbar-h) + 24px); min-width: 0; }
-  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: center; padding-left: 4px; padding-right: 4px; background: var(--bg); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
-  .sh-tab { position: relative; height: 100%; min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fg-subtle); font-size: 10.5px; font-weight: 500; letter-spacing: -0.015em; white-space: nowrap; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
+  .sh-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-tabbar); height: var(--tabbar-h); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; padding-left: 4px; padding-right: 4px; background: var(--bg); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; }
+  .sh-tab { position: relative; height: 100%; min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fg-subtle); font-size: 11px; font-weight: 500; letter-spacing: -0.005em; white-space: nowrap; background: none; border: 0; cursor: pointer; font-family: inherit; text-decoration: none; }
   .sh-tab[aria-current="page"] { font-weight: 600; }
   .sh-tab__pip { position: absolute; top: 9px; left: calc(50% + 7px); width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg); }
   .sh-tab[aria-current="page"] { color: var(--fg); }
@@ -903,7 +903,6 @@ function ShSidebar({ app, collapsed, counts, driftWarn }) {
         <ShNavLink to="/posities" icon="layers" label="Posities" current={r.name === 'posities'} count={counts.open} testId="nav-posities" onNavigate={go}
           pip={counts.finOpen > 0} title={counts.finOpen > 0 ? `Posities · ${counts.finOpen} open ${counts.finOpen === 1 ? 'belegging' : 'beleggingen'} uit Financieel` : undefined} />
         <ShNavLink to="/transacties" icon="arrow-left-right" label="Transacties" current={r.name === 'transacties'} count={counts.tx} testId="nav-transacties" onNavigate={go} />
-        <ShNavLink to="/nieuws" icon="newspaper" label="Nieuws" current={r.name === 'nieuws'} testId="nav-nieuws" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" icon="target" label="Plan" current={r.name === 'plan' && collapsed} testId="nav-plan" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" label="Verdeling" sub current={r.name === 'plan' && r.params.tab === 'verdeling'} pip={driftWarn}
           title={driftWarn ? 'Verdeling: categorie buiten bandbreedte' : 'Verdeling'} testId="nav-verdeling" onNavigate={go} />
@@ -993,6 +992,8 @@ function ShMobileHeader({ app }) {
   } else if (r.name === 'instellingen' && r.params.section) {
     back = '/instellingen';
     title = SH_SECTION_TITLES[r.params.section] || 'Instellingen';
+  } else if (r.name === 'nieuws') {
+    back = '/instellingen';
   } else if (r.name === 'plan') {
     back = '/overzicht';   // Plan heeft geen eigen tab; je komt er via het plus-menu of het Overzicht
   }
@@ -1070,7 +1071,6 @@ function ShTabBar({ app }) {
     { name: 'overzicht', to: '/overzicht', icon: 'layout-dashboard', label: 'Overzicht' },
     { name: 'posities', to: '/posities', icon: 'layers', label: 'Posities' },
     null,
-    { name: 'nieuws', to: '/nieuws', icon: 'newspaper', label: 'Nieuws' },
     { name: 'transacties', to: '/transacties', icon: 'arrow-left-right', label: 'Transacties' },
     { name: 'instellingen', to: '/instellingen', icon: 'settings', label: 'Instellingen', pip: syncErr },
   ];
@@ -1078,7 +1078,7 @@ function ShTabBar({ app }) {
     <nav className="sh-tabbar" aria-label="Hoofdnavigatie">
       {tabs.map(t => {
         if (!t) return <ShAddMenu key="add" app={app} />;
-        const active = r.name === t.name;
+        const active = r.name === t.name || (t.name === 'instellingen' && r.name === 'nieuws');
         return (
           <a key={t.name} href={'#' + t.to} className="sh-tab" aria-current={active ? 'page' : undefined} data-testid={'nav-' + t.name}
             onClick={e => {
