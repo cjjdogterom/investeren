@@ -2248,6 +2248,17 @@ function App() {
     window.addEventListener('focus', onVis);
     return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
   }, [financieelSleutel]); // eslint-disable-line
+  // 3) Het vrije saldo van Trading 212 (uit de API) gaat naar Financieel: daar is het de controle op de
+  //    rekening "Trading 212" (de T212-kaart betaalt van dit saldo).
+  const t212Vrij = t212Live && t212Live.account && Number.isFinite(+t212Live.account.free) ? Math.round(+t212Live.account.free * 100) / 100 : null;
+  React.useEffect(() => {
+    if (!financieelSleutel || t212Vrij == null) return;
+    fetch(finBelUrl('/t212saldo'), {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ vrij: t212Vrij, valuta: 'EUR' }),
+    }).catch(() => { /* volgende keer opnieuw */ });
+  }, [financieelSleutel, t212Vrij]); // eslint-disable-line
   // Verwerken zodra er een lijst is en de gesyncte transacties er zijn; ook na elke pull (idempotent:
   // vaste id's 'fin-<id>', en finBelMerge geeft null als er niets te doen is).
   React.useEffect(() => {
