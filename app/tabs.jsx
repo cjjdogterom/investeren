@@ -29,6 +29,23 @@ injectStyles('tabs', `
 .tr-table .tr-month:hover { background: none; }
 .tr-month__meta { color: var(--fg-muted); font-weight: 500; margin-left: 6px; }
 .tr-btc { color: #c77700; font-size: 12px; }
+.tr-pie { cursor: pointer; }
+.tr-pie td { font-weight: 550; }
+.tr-pie.is-open td { background: var(--surface-2); }
+.tr-pie-child td { background: var(--surface-2); }
+.tr-pie-child td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.tr-piem.is-open > .tr-mrow { background: var(--surface-2); }
+.tr-pie-list { background: var(--surface-2); border-bottom: 1px solid var(--border); padding: 4px 0 8px; }
+.tr-pie-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 16px 8px 30px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.tr-pie-item:active { background: var(--surface-3, var(--surface)); }
+.tr-pie-item__main { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: 13.5px; }
+.tr-pie-item__name { color: var(--fg-muted); font-weight: 400; }
+.tr-pie-item__head { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-pie-item__sub { font-size: 12px; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tr-pie-bar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 2px; }
+.tr-pie-bar span { display: block; height: 100%; background: var(--accent); }
+.tr-pie-item__end { display: grid; justify-items: end; gap: 1px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.tr-pie-item__end span { font-size: 11.5px; color: var(--fg-muted); }
 .tr-small-row td { padding: 0 !important; height: auto !important; }
 .tr-small-row:hover { background: none; }
 .tr-small { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 16px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
@@ -172,10 +189,18 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
               <tr className="tr-month"><td colSpan={cols}>{g.title}<span className="tr-month__meta">· {g.txs.length} {g.txs.length === 1 ? 'transactie' : 'transacties'}</span></td></tr>
             )}
             {g.small && <tr className="tr-small-row"><td colSpan={cols}><TrSmallBundle app={app} small={g.small} /></td></tr>}
-            {g.txs.map(tx => {
+            {g.txs.map(tx => (tx.__pie
+              ? <TrPieRows key={tx.id} app={app} b={tx.__pie} cols={cols} showParty={showParty} renderRow={(t, cls, total) => renderRow(t, cls, total)} />
+              : renderRow(tx)))}
+          </React.Fragment>
+        ))}
+      </tbody>
+    </table>
+  );
+  function renderRow(tx, cls, pieTotal) {
               const party = trPartyOf(app, tx.party);
               return (
-                <tr key={tx.id} data-testid={`tx-row-${tx.id}`} data-txrow="" tabIndex={0}
+                <tr key={tx.id} className={cls} data-testid={`tx-row-${tx.id}`} data-txrow="" tabIndex={0}
                   onClick={() => app.openTxDetail(tx.id)} onKeyDown={e => onRowKey(e, tx)}>
                   <td className="tr-tnum tr-ell">{trDay(tx.date)}</td>
                   <td><span className="tr-type"><Icon name={trTypeIcon(tx.type)} size={14} /><span className="tr-ell">{trShortLabel(tx.type)}</span>{isFinBelAanvullen(tx) && <TrAanvulPill />}</span></td>
@@ -186,7 +211,7 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                   </td>
                   <td className="num"><TrAmount tx={tx} party={party} /></td>
                   <td className="num"><TrFee tx={tx} /></td>
-                  <td className="tr-ell tr-muted" title={tx.note || ''}>{tx.note || ''}</td>
+                  <td className="tr-ell tr-muted" title={tx.note || ''}>{pieTotal ? `${fmtPct((+tx.amountEur || 0) / pieTotal * 100, { decimals: 1, sign: false })} van de pie` : (tx.note || '')}</td>
                   <td onClick={e => e.stopPropagation()}>
                     {menu && <Menu size="sm" triggerLabel="Acties" items={[
                       isFinBelAanvullen(tx)
@@ -197,12 +222,7 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                   </td>
                 </tr>
               );
-            })}
-          </React.Fragment>
-        ))}
-      </tbody>
-    </table>
-  );
+  }
 }
 
 // Markering OPEN: boeking uit Financieel die nog aangevuld moet worden (aantal, prijs, kosten).
@@ -250,6 +270,90 @@ function TrSmallBundle({ app, small }) {
   );
 }
 
+
+// Pie-aankopen (Trading 212 Autoinvest) van dezelfde dag samen in één regel; open te klappen per aandeel.
+function trIsPieBuy(t) { return t && t.party === 'trading212' && t.type === 'koop' && /AUTOINVEST/.test(t.note || '') && !isSmallAutoTx(t); }
+function trBundlePies(list) {
+  const byDay = new Map();
+  for (const t of list) if (trIsPieBuy(t)) { if (!byDay.has(t.date)) byDay.set(t.date, []); byDay.get(t.date).push(t); }
+  const out = [], done = new Set();
+  for (const t of list) {
+    if (!trIsPieBuy(t) || byDay.get(t.date).length < 2) { out.push(t); continue; }
+    if (done.has(t.date)) continue;
+    done.add(t.date);
+    const txs = byDay.get(t.date).slice().sort((a, b) => (+b.amountEur || 0) - (+a.amountEur || 0));
+    const total = txs.reduce((a, x) => a + (+x.amountEur || 0), 0);
+    const fee = txs.reduce((a, x) => a + (+x.feeEur || 0), 0);
+    out.push({ id: 'pie-' + t.date, date: t.date, party: 'trading212', type: 'koop', __pie: { date: t.date, txs, total, fee } });
+  }
+  return out;
+}
+function trPieSummary(b) {
+  const top = b.txs.slice(0, 3).map(x => x.instrument).filter(Boolean).join(', ');
+  return `${b.txs.length} aandelen · ${top}${b.txs.length > 3 ? ' +' + (b.txs.length - 3) : ''}`;
+}
+function TrPieRows({ app, b, cols, showParty, renderRow }) {
+  const [open, setOpen] = useState(false);
+  const privacy = usePrivacy();
+  const party = trPartyOf(app, 'trading212');
+  return (
+    <>
+      <tr className={'tr-pie' + (open ? ' is-open' : '')} data-txrow="" tabIndex={0} onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }} aria-expanded={open}>
+        <td className="tr-tnum tr-ell">{trDay(b.date)}</td>
+        <td><span className="tr-type"><Icon name="layers" size={14} /><span className="tr-ell">Pie-aankoop</span></span></td>
+        {showParty && <td><TrPartyCell party={party} id="trading212" /></td>}
+        <td className="tr-tnum tr-muted"><span className="tr-ell" style={{ display: 'block' }}>{trPieSummary(b)}</span></td>
+        <td className="num"><b>{privacy ? '€ •••••' : '+' + fmtMoney(b.total, { decimals: 2 })}</b></td>
+        <td className="num tr-muted">{b.fee > 0 ? (privacy ? '€ •••••' : '−' + fmtMoney(b.fee, { decimals: 2 })) : '—'}</td>
+        <td className="tr-muted">Autoinvest</td>
+        <td><Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} /></td>
+      </tr>
+      {open && b.txs.map(t => renderRow(t, 'tr-pie-child', b.total))}
+    </>
+  );
+}
+function TrPieMobile({ app, b, showParty }) {
+  const [open, setOpen] = useState(false);
+  const privacy = usePrivacy();
+  const party = trPartyOf(app, 'trading212');
+  const color = party ? partyColorOf(party) : 'var(--fg-subtle)';
+  return (
+    <div className={'tr-piem' + (open ? ' is-open' : '')}>
+      <button type="button" className="tr-mrow" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <span className="tr-tile"><Icon name="layers" size={18} /><span className="tr-tile__dot" style={{ background: color }} /></span>
+        <span className="tr-mrow__main">
+          <span className="tr-mrow__title">{showParty ? 'Trading 212 · pie' : 'Pie-aankoop'}</span>
+          <span className="tr-mrow__sub">Autoinvest · {fmtDateShort(b.date)}</span>
+          <span className="tr-mrow__sub">{trPieSummary(b)}</span>
+        </span>
+        <span className="tr-mrow__end">
+          <span className="tr-mrow__amt">{privacy ? '€ •••••' : '+' + fmtMoney(b.total, { decimals: 2 })}</span>
+          <span className="tr-mrow__fee">{open ? 'inklappen' : 'details'} <Icon name={open ? 'chevron-up' : 'chevron-down'} size={12} /></span>
+        </span>
+      </button>
+      {open && (
+        <div className="tr-pie-list">
+          {b.txs.map(t => {
+            const amt = +t.amountEur || 0, share = b.total > 0 ? amt / b.total * 100 : 0;
+            const q = (app.stockQuotes || {})[t.instrument];
+            return (
+              <button key={t.id} type="button" className="tr-pie-item" onClick={() => app.openTxDetail(t.id)}>
+                <span className="tr-pie-item__main">
+                  <span className="tr-pie-item__head"><b>{t.instrument}</b>{q && q.name ? <span className="tr-pie-item__name"> · {q.name}</span> : null}</span>
+                  <span className="tr-pie-item__sub">{txDetailsText(t, party)}{+t.feeEur > 0 ? ' · kosten ' + fmtMoney(+t.feeEur, { decimals: 2 }) : ''}</span>
+                  <span className="tr-pie-bar"><span style={{ width: Math.min(100, share) + '%' }} /></span>
+                </span>
+                <span className="tr-pie-item__end"><b>{privacy ? '€ •••••' : fmtMoney(amt, { decimals: 2 })}</b><span>{fmtPct(share, { decimals: 1, sign: false })}</span></span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrMobileGroups({ app, groups, showParty = true }) {
   return (
     <div>
@@ -257,7 +361,7 @@ function TrMobileGroups({ app, groups, showParty = true }) {
         <div key={g.key}>
           {g.title != null && <div className="tr-mmonth">{g.title} <span className="tr-month__meta">· {g.txs.length}</span></div>}
           {g.small && <div className="tr-small-m"><TrSmallBundle app={app} small={g.small} /></div>}
-          {g.txs.map(tx => <TrMobileRow key={tx.id} app={app} tx={tx} showParty={showParty} />)}
+          {g.txs.map(tx => (tx.__pie ? <TrPieMobile key={tx.id} app={app} b={tx.__pie} showParty={showParty} /> : <TrMobileRow key={tx.id} app={app} tx={tx} showParty={showParty} />))}
         </div>
       ))}
     </div>
@@ -497,6 +601,7 @@ function TransactiesScreen({ app }) {
   const showSmall = !!(app.prefs && app.prefs.txShowSmall);
   const bundleSmall = !showSmall && !selTypes.length && !(q.q || '').trim();
   const smallTotal = React.useMemo(() => filtered.filter(isSmallAutoTx).length, [filtered]);
+  const bundlePie = !(q.q || '').trim();
   const groups = React.useMemo(() => {
     const sorted = trSort(filtered);
     const orphans = sorted.filter(t => !byId[dispId(t.party)]);
@@ -509,15 +614,16 @@ function TransactiesScreen({ app }) {
     }
     const out = [];
     if (orphans.length) out.push({ key: TR_ORPHAN, title: `Zonder partij (${orphans.length})`, txs: orphans, orphan: true });
-    for (const [k, all0] of map) {
+    for (const [k, all00] of map) {
+      const all0 = bundlePie ? trBundlePies(all00) : all00;
       if (!bundleSmall) { out.push({ key: k, title: fmtMonthName(k), txs: all0 }); continue; }
-      const small = all0.filter(isSmallAutoTx);
-      const txs = all0.filter(t => !isSmallAutoTx(t));
+      const small = all0.filter(t => !t.__pie && isSmallAutoTx(t));
+      const txs = all0.filter(t => t.__pie || !isSmallAutoTx(t));
       const sumOf = ty => small.filter(t => t.type === ty).reduce((a, t) => a + (+t.amountEur || 0), 0);
       out.push({ key: k, title: fmtMonthName(k), txs, small: small.length ? { count: small.length, koop: sumOf('koop') - sumOf('verkoop'), rente: sumOf('rente'), netto: sumOf('inleg') - sumOf('opname') } : null });
     }
     return out;
-  }, [filtered, byId, bundleSmall]);
+  }, [filtered, byId, bundleSmall, bundlePie]);
   const monthGroups = groups.filter(g => !g.orphan && (g.txs.length || g.small));
   const visibleGroups = [...groups.filter(g => g.orphan), ...monthGroups.slice(0, monthsShown)];
   const hiddenMonths = Math.max(0, monthGroups.length - monthsShown);
