@@ -248,7 +248,7 @@ function chIndexFromEvent(e, el, n) {
 // ===== PerformanceChart =====
 function PerformanceChart({
   dates, primary, secondary = null, kind = 'money', height = 220, baseline = 'zero', markers = null,
-  liveDot = 'static', cursor = null, pinned = false, pinnable = false, onCursor, compact = false,
+  liveDot = 'static', maxPoints = 500, cursor = null, pinned = false, pinnable = false, onCursor, compact = false,
   ariaLabel, valueText, privacy = false, emptyText = 'Nog te weinig historie in deze periode', tableTwin = true,
   className, style, testId,
 }) {
@@ -278,7 +278,7 @@ function PerformanceChart({
     const y = v => H - (v - nt.lo) / (nt.hi - nt.lo || 1) * H;
     const x = i => (n > 1 ? i / (n - 1) * 1000 : 0);
     // Zelfde detail op telefoon en desktop (dagpunten).
-    const idx = chSampleIdx(n, 500);
+    const idx = chSampleIdx(n, maxPoints);
     const xs = idx.map(x);
     const yp = idx.map(i => (primary[i] == null || !Number.isFinite(primary[i]) ? null : y(primary[i])));
     const ys = showSecondary ? idx.map(i => (secondary[i] == null ? null : y(secondary[i]))) : null;
@@ -316,7 +316,7 @@ function PerformanceChart({
     }
     out.xticks = compact ? [] : chMonthTicks(dates, 6);
     return out;
-  }, [hasData, dates, primary, secondary, showSecondary, kind, signed, baseline, H, n, compact]);
+  }, [hasData, dates, primary, secondary, showSecondary, kind, signed, baseline, H, n, compact, maxPoints]);
 
   const lastIdx = useMemo(() => {
     if (!hasData) return -1;

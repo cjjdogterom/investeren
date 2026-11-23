@@ -319,10 +319,10 @@ function useOvPerformance(app) {
     if (!(Math.abs(series.value[c0] || 0) > min)) c0 = r.i0;
   }
 
-  // Week: één punt per uur, maand: één punt per 5 uur, uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
+  // Week: één punt per 10 minuten, maand: één punt per 5 uur, uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
   // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
   const intra = app.intraday || [];
-  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 3600 : periodKey === '1M' ? 5 * 3600 : 0) : 0;
+  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 5 * 3600 : 0) : 0;
   const hy = useMemo(() => {
     if (!hyStep || !r.enabled || intra.length < 2) return null;
     const pad = v => String(v).padStart(2, '0');
@@ -914,7 +914,7 @@ function OvPrestatiesCard({ app, pf }) {
           options={OV_CHART_MODES} />
       </div>
       <div className="ov-chartwrap">
-        <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
+        <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} maxPoints={pf.fine ? 1500 : undefined} dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
           kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220}
           liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
           cursor={pf.ci != null ? pf.ci - pf.c0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
@@ -1189,7 +1189,7 @@ function OvMobile({ app }) {
       <div className="ov-m__chartblock">
         <div className="ov-m__chart">
           {pf.periodKey === '1D' && (app.intraday || []).length >= 2 ? <OvIntraday app={app} height={150} mode={pf.mode === 'gain' ? 'gain' : 'value'} /> :
-          <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
+          <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} maxPoints={pf.fine ? 1500 : undefined} compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
             kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.c0 : null} onCursor={pf.onCursor}
