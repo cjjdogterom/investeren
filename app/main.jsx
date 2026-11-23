@@ -922,7 +922,7 @@ function ShTicker({ app }) {
         const ch = priceChange(hist, 30);
         const last = hist.length ? hist[hist.length - 1] : null;
         const sub = a.key === 'meesman'
-          ? (last ? 'NAV ' + fmtDateShort(last.date) : 'NAV')
+          ? (app.spots.meesmanEst ? 'schatting' : last ? 'NAV ' + fmtDateShort(last.date) : 'NAV')
           : a.unit === '/g' ? 'per gram' : a.unit === '/oz' ? 'per ounce'
           : ch == null ? '' : (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + fmtPct(Math.abs(ch), { decimals: 1, sign: false }) + ' 30d';
         return (
@@ -2104,6 +2104,7 @@ function App() {
     histSig(state.btcHistory), histSig(state.ethHistory), histSig(state.paxgHistory),
     Object.entries(chainBalances || {}).map(([k, v]) => `${k}:${v && v.address}:${v && v.qty}`).join(','),
   ].join('|');
+  const meesmanEstNow = meesmanEstimate(meesmanNavResolved, meesmanHistResolved, (stockQuotes || {})[MEESMAN_PROXY]);
   const spots = React.useMemo(() => ({
     goldSpotEurPerGram:    displayTweaks.goldSpotEurPerGram,
     silverSpotEurPerOunce: displayTweaks.silverSpotEurPerOunce,
@@ -2111,7 +2112,10 @@ function App() {
     ethSpotEur:            displayTweaks.ethSpotEur,
     paxgSpotEur:           displayTweaks.paxgSpotEur,
     // Meesman: uit state, tweaks als fallback
-    meesmanNavEur:         meesmanNavResolved,
+    // Meesman: tussen de weekkoersen een schatting via SPYI (zie meesmanEstimate); de officiële koers blijft bewaard.
+    meesmanNavEur:         meesmanEstNow ? meesmanEstNow.nav : meesmanNavResolved,
+    meesmanNavOfficial:    meesmanNavResolved,
+    meesmanEst:            meesmanEstNow,
     meesmanNavHistory:     meesmanHistResolved,
     goldHistory:           state.goldHistory   || [],
     silverHistory:         state.silverHistory || [],
@@ -2185,7 +2189,7 @@ function App() {
   React.useEffect(() => { refreshChain(); }, [chainSig]); // eslint-disable-line
 
   // ── Aandelenkoersen voor alle tickers in Trading 212-boekingen ──
-  const stockSymbols = React.useMemo(() => [...new Set([...stockSymbolsOf(state.transactions), ...cfdSymbolsOf(state.parties)])].sort(), [state.transactions, state.parties]);
+  const stockSymbols = React.useMemo(() => [...new Set([...stockSymbolsOf(state.transactions), ...cfdSymbolsOf(state.parties), MEESMAN_PROXY])].sort(), [state.transactions, state.parties]);
   const stockSig = stockSymbols.join(',');
   const refreshStocks = React.useCallback(async ({ force = false, symbols } = {}) => {
     const list = symbols || stockSig.split(',').filter(Boolean);
@@ -2219,7 +2223,8 @@ function App() {
   }, [stockSig]); // eslint-disable-line
   // CFD-koersen: bij het openen altijd vers ophalen (niet de bewaarde koers van eerder) en daarna elke minuut,
   // zodat de stand na herladen niet terugspringt naar een oude koers als de stream even geen tick geeft.
-  const cfdQuoteSig = cfdSymbolsOf(state.parties).sort().join(',');
+  // ook de ETF voor de Meesman-schatting elke minuut (de server rekent hem elke 5 minuten door als de app dicht is)
+  const cfdQuoteSig = [...cfdSymbolsOf(state.parties), MEESMAN_PROXY].sort().join(',');
   React.useEffect(() => {
     if (!cfdQuoteSig) return undefined;
     const run = () => { if (!document.hidden) refreshStocksRef.current({ force: true, symbols: cfdQuoteSig.split(',') }); };
@@ -2395,7 +2400,7 @@ function App() {
   }, [financieelOverRaw && normalizeFinancieelOver(financieelOverRaw) && normalizeFinancieelOver(financieelOverRaw).bedrag, sbOk]); // eslint-disable-line
   React.useEffect(() => { try { localStorage.setItem('investeringen-intraday-v1', JSON.stringify(intraday)); } catch (e) { /* ignore */ } }, [intraday]);
   const intradayRef = React.useRef({ model: null, ok: false });
-  intradayRef.current = { model, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0 };
+  intradayRef.current = { model, spots, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0 };
   React.useEffect(() => {
     if (!sbOk) return undefined;
     const client = getSupabaseClient(supabaseConfig);
@@ -2408,11 +2413,11 @@ function App() {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       const t = cur.model && cur.model.totals;
       if (!t || !Number.isFinite(t.value) || !(t.value > 0)) return;
-      const parts = buildIntradayRecipe(cur.model) || {};
+      const parts = buildIntradayRecipe(cur.model, cur.spots) || {};
       supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0, parts.bank || 0, parts.t212 || 0])
         .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
       // Recept voor de server, zodat die ook meet als de app dicht is.
-      const recipe = buildIntradayRecipe(cur.model);
+      const recipe = buildIntradayRecipe(cur.model, cur.spots);
       if (recipe) client.from('portfolio').upsert({ id: 'intraday-recipe', data: recipe }, { onConflict: 'id' }).then(() => {}, () => {});
     };
     const first = setTimeout(tick, 20000);

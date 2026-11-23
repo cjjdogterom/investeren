@@ -562,6 +562,22 @@ const TX_TYPES = [
 ];
 const TX_LABELS = Object.fromEntries(TX_TYPES.map(t => [t.key, t.label]));
 
+// Meesman publiceert één koers per week. Tussendoor schatten we hem met SPDR MSCI ACWI IMI (SPYI, Xetra, in euro): zelfde
+// breedte (groot, middel, klein; ontwikkeld + opkomend). Over 2 jaar weekrendementen: correlatie 0,963, gemiddelde afwijking 0,57%.
+// Schatting = laatste officiële koers × (SPYI nu ÷ SPYI-slot op de koersdatum van Meesman).
+const MEESMAN_PROXY = 'SPYI.DE';
+function meesmanEstimate(navEur, navHistory, quote, todayIso = todayIsoLocal()) {
+  const hist = navHistory || [];
+  const last = hist.length ? hist[hist.length - 1] : null;
+  const navDate = last && last.date;
+  if (!(navEur > 0) || !navDate || !quote || !(+quote.priceEur > 0) || navDate >= todayIso) return null;
+  let ref = null;
+  for (const h of quote.history || []) { if (h.date <= navDate) ref = +h.eur; else break; }
+  if (!(ref > 0)) return null;
+  const factor = +quote.priceEur / ref;
+  if (!(factor > 0.8 && factor < 1.25)) return null;   // onwaarschijnlijke sprong: niet schatten
+  return { nav: navEur * factor, official: navEur, navDate, factor, proxy: MEESMAN_PROXY, at: quote.marketTime || quote.fetchedAt || null };
+}
 function spotEurForParty(party, spots) {
   if (party.unit === 'gram')    return spots.goldSpotEurPerGram;
   if (party.unit === 'ounce')   return spots.silverSpotEurPerOunce;
@@ -2177,7 +2193,11 @@ function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
   if (s.cfd) return { text: cfdSummaryText(s), staleDays: null };
   const kind = dtUnitKind(p);
   switch (kind) {
-    case 'part':   return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
+    case 'part': {
+      const est = p.id === 'meesman' && spots.meesmanEst;
+      if (est) return { text: `${holdingQtyText(s)} · ±${fmtMoney(px, { decimals: 2 })} schatting · NAV ${fmtMoney(est.official, { decimals: 2 })} ${fmtDateShort(est.navDate, todayIso)}`, staleDays: null };
+      return { text: `${holdingQtyText(s)} · NAV ${fmtMoney(px, { decimals: 2 })}`, staleDays: null };
+    }
     case 'crypto': return { text: `${holdingQtyText(s)} · ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`, staleDays: null };
     case 'post':   return { text: postCoinsText(s), staleDays: null };
     case 'gram':   return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null };
@@ -2745,7 +2765,7 @@ function sumPeriodGains(list) {
 
 // Recept voor het dagverloop op de server (koersen-worker, elke 5 min): het totaal van nu plus de aantallen per
 // koersgevoelig product. De server rekent door met totaal + Σ aantal × (koers nu − koers bij het recept), in euro.
-function buildIntradayRecipe(model) {
+function buildIntradayRecipe(model, spots) {
   if (!model || !model.totals || !(model.totals.value > 0)) return null;
   const items = {};
   const add = (sym, q) => { if (sym && Number.isFinite(q) && Math.abs(q) > 1e-9) items[sym] = (items[sym] || 0) + q; };
@@ -2755,7 +2775,12 @@ function buildIntradayRecipe(model) {
     if (p.cfd && x.cfd) { x.cfd.positions.forEach(c => add(c.symbol, (c.quantity || 0) * (c.dir === 'sell' ? -1 : 1))); return; }
     if (x.stocks && x.stocks.positions) { x.stocks.positions.forEach(c => add(c.symbol, c.quantity || 0)); return; }
     if (x.leaves && x.leaves.length) { x.leaves.forEach(one); return; }
-    if (p.id === 'meesman') return add('0P0001IJJX.F', +x.quantity || 0);
+    if (p.id === 'meesman') {
+      // Meesman beweegt mee met de SPYI-ETF (zie meesmanEstimate): gevoeligheid = aantal × koers ÷ ETF-koers
+      const q = spots && spots.stockQuotes && spots.stockQuotes[MEESMAN_PROXY];
+      if (q && +q.priceEur > 0 && x.currentUnitPrice > 0) return add(MEESMAN_PROXY, (+x.quantity || 0) * x.currentUnitPrice / +q.priceEur);
+      return add('0P0001IJJX.F', +x.quantity || 0);
+    }
     if (p.unit === 'crypto') return add(COIN[String(p.coin || p.unitLabel || '').toUpperCase()], +x.quantity || 0);
     if (p.isMixed || p.unit === 'mixed') { add('GC=F', (+x.goldQty || 0) / 31.1034768); add('SI=F', +x.silverQty || 0); return; }
     if (p.unit === 'gram') return add('GC=F', (+x.quantity || 0) / 31.1034768);
@@ -3065,7 +3090,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,
