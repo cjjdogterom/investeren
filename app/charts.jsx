@@ -248,7 +248,7 @@ function chIndexFromEvent(e, el, n) {
 // ===== PerformanceChart =====
 function PerformanceChart({
   dates, primary, secondary = null, kind = 'money', height = 220, baseline = 'zero', markers = null,
-  liveDot = 'static', maxPoints = 500, cursor = null, pinned = false, pinnable = false, onCursor, compact = false,
+  liveDot = 'static', maxPoints = 500, step = false, cursor = null, pinned = false, pinnable = false, onCursor, compact = false,
   ariaLabel, valueText, privacy = false, emptyText = 'Nog te weinig historie in deze periode', tableTwin = true,
   className, style, testId,
 }) {
@@ -282,7 +282,10 @@ function PerformanceChart({
     const xs = idx.map(x);
     const yp = idx.map(i => (primary[i] == null || !Number.isFinite(primary[i]) ? null : y(primary[i])));
     const ys = showSecondary ? idx.map(i => (secondary[i] == null ? null : y(secondary[i]))) : null;
-    const line = chSmoothPath(xs, yp);
+    // step: trap (saldo dat sprongsgewijs verandert), anders vloeiend
+    const line = step
+      ? xs.reduce((d, xv, k) => (yp[k] == null ? d : d + (d ? `H${xv.toFixed(2)}V${yp[k].toFixed(2)}` : `M${xv.toFixed(2)} ${yp[k].toFixed(2)}`)), '')
+      : chSmoothPath(xs, yp);
     const out = { nt, y, x, line, xs, yp };
     const firstX = xs[yp.findIndex(v => v != null)];
     let lastK = yp.length - 1; while (lastK >= 0 && yp[lastK] == null) lastK--;
@@ -316,7 +319,7 @@ function PerformanceChart({
     }
     out.xticks = compact ? [] : chMonthTicks(dates, 6);
     return out;
-  }, [hasData, dates, primary, secondary, showSecondary, kind, signed, baseline, H, n, compact, maxPoints]);
+  }, [hasData, dates, primary, secondary, showSecondary, kind, signed, baseline, H, n, compact, maxPoints, step]);
 
   const lastIdx = useMemo(() => {
     if (!hasData) return -1;

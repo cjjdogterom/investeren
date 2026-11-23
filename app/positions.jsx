@@ -1794,7 +1794,8 @@ function PsPartyBody({ app, s }) {
   const privacy = !!prefs.privacy;
   const inc = psIncluded(p);
   const dates = model.series.dates;
-  const r = psRange(dates, prefs.period);
+  const isFin = id === FIN_OVER_PARTY_ID;
+  const r = isFin && ['1D', '1W'].includes(prefs.period) ? { ...periodRange(dates, prefs.period), key: prefs.period } : psRange(dates, prefs.period);
   const byP = model.series.byParty[id];
   const netP = model.series.netByParty[id];
   const [cursor, setCursor] = useState(null);
@@ -1807,9 +1808,28 @@ function PsPartyBody({ app, s }) {
     const min = 0.5;
     while (c0 < r.i1 - 1 && !(Math.abs(byP[c0] || 0) > min)) c0++;   // minstens twee punten
   }
-  const chartDates = r.i1 >= 0 ? dates.slice(c0, r.i1 + 1) : [];
-  const primary = byP && r.i1 >= 0 ? byP.slice(c0, r.i1 + 1) : [];
-  const secondary = netP && r.i1 >= 0 ? netP.slice(c0, r.i1 + 1) : null;
+  let chartDates = r.i1 >= 0 ? dates.slice(c0, r.i1 + 1) : [];
+  let primary = byP && r.i1 >= 0 ? byP.slice(c0, r.i1 + 1) : [];
+  let secondary = netP && r.i1 >= 0 ? netP.slice(c0, r.i1 + 1) : null;
+  // Vrij op rekening: bij 1D/1W/1M elke vastgelegde wijziging (trap), daarvoor dagstanden, en als laatste punt nu.
+  const fine = useMemo(() => {
+    if (!isFin || !['1D', '1W', '1M'].includes(r.key) || r.i1 < 0 || !byP) return null;
+    const log = app.finLog || [];
+    const pad = v => String(v).padStart(2, '0');
+    const loc = ts => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+    const startDay = dates[c0];
+    const pts = log.filter(pt => loc(pt[0]).slice(0, 10) >= startDay);
+    if (!pts.length) return null;
+    const firstDay = loc(pts[0][0]).slice(0, 10);
+    const out = { dates: [], value: [] };
+    for (let i = c0; i <= r.i1 && dates[i] < firstDay; i++) { out.dates.push(dates[i] + 'T23:59'); out.value.push(byP[i] || 0); }
+    for (const pt of pts) { out.dates.push(loc(pt[0])); out.value.push(pt[1]); }
+    // laatste punt = nu, met het bedrag zoals Financieel het geeft (zelfde bron als de vastgelegde punten)
+    const raw = app.financieelOverRaw && normalizeFinancieelOver(app.financieelOverRaw);
+    out.dates.push(loc(Date.now() / 1000)); out.value.push(raw ? raw.bedrag : (s.currentValueEur || 0));
+    return out.dates.length >= 2 ? out : null;
+  }, [isFin, r.key, r.i1, c0, app.finLog, byP, dates, s.currentValueEur, app.financieelOverRaw]); // eslint-disable-line
+  if (fine) { chartDates = fine.dates; primary = fine.value; secondary = null; }
   const hasChart = primary.length >= 2 && primary.some(v => Math.abs(v) > 0.5);
   const cg = cagrOf(s);
   const gp = goalProgress(s);
@@ -1852,8 +1872,8 @@ function PsPartyBody({ app, s }) {
       {hasChart && (
         <div className="ps-chartbox">
           <Segmented size="sm" pill={app.isMobile} full={app.isMobile} ariaLabel="Periode" value={r.key} onChange={k => app.setPrefs({ period: k })}
-            options={psPeriodOptions(dates).map(o => ({ ...o, testId: undefined }))} />
-          <PerformanceChart dates={chartDates} primary={primary} secondary={secondary} height={140} baseline="auto"
+            options={psPeriodOptions(dates, isFin ? [{ key: '1D', label: '1D' }, { key: '1W', label: '1W' }, ...PERIODS] : PERIODS).map(o => ({ ...o, testId: undefined }))} />
+          <PerformanceChart dates={chartDates} primary={primary} secondary={secondary} height={140} baseline={fine ? 'tight' : 'auto'} maxPoints={fine ? 1500 : undefined} step={!!fine}
             cursor={ci} onCursor={i => setCursor(i)} privacy={privacy} liveDot="static" tableTwin={false}
             ariaLabel={`Waardeverloop ${p.name}`}
             valueText={i => `${fmtDateLong(chartDates[i])}: ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i])}`} />

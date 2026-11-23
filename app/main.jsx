@@ -330,6 +330,17 @@ async function supabaseSaveSettings(client, state) {
 // Dagverloop: de totale waarde meermaals per dag in een eigen rij (portfolio/id 'intraday'), los van het hoofddocument.
 // points = [[epochSeconden, totaal, nettoIngelegd], …], één punt per 5 minuten, 8 dagen bewaard.
 const INTRADAY_STEP_S = 300, INTRADAY_KEEP_S = 8 * 86400, INTRADAY_KEEP_LONG_S = 35 * 86400;
+// Verloop van 'Vrij op rekening': [tijd (s), bedrag], bij elke wijziging; 35 dagen bewaard in Supabase (portfolio/financieel-log).
+const FIN_LOG_KEEP_S = 35 * 86400;
+function finLogMerge(a, b) {
+  const m = new Map();
+  for (const pt of [...(a || []), ...(b || [])]) if (Array.isArray(pt) && pt[0] > 0 && Number.isFinite(+pt[1])) m.set(Math.round(pt[0]), [Math.round(pt[0]), Math.round(+pt[1] * 100) / 100]);
+  const min = Date.now() / 1000 - FIN_LOG_KEEP_S;
+  const out = [...m.values()].filter(pt => pt[0] >= min).sort((x, y) => x[0] - y[0]);
+  // opeenvolgende gelijke bedragen samenvoegen (alleen de eerste houden): de lijn is een trap
+  return out.filter((pt, i) => i === 0 || Math.abs(pt[1] - out[i - 1][1]) >= 0.005);
+}
+
 function intradayMerge(a, b) {
   const map = new Map();
   for (const p of [...(a || []), ...(b || [])]) {
@@ -2358,6 +2369,30 @@ function App() {
 
   // ── Dagverloop: elke 5 minuten de totale waarde vastleggen (alleen met verse koersen en een geslaagde sync) ──
   const [intraday, setIntraday] = React.useState(() => { try { return intradayMerge(JSON.parse(localStorage.getItem('investeringen-intraday-v1')), []); } catch (e) { return []; } });
+  // Vrij op rekening: elke wijziging vastleggen (tijd = 'bijgewerkt' van Financieel), samen met de andere apparaten.
+  const [finLog, setFinLog] = React.useState(() => { try { return finLogMerge(JSON.parse(localStorage.getItem('investeringen-finlog-v1')), []); } catch (e) { return []; } });
+  React.useEffect(() => { try { localStorage.setItem('investeringen-finlog-v1', JSON.stringify(finLog)); } catch (e) { /* ignore */ } }, [finLog]);
+  React.useEffect(() => {
+    // Het bedrag zoals Financieel het geeft (zonder de verrekening van geld onderweg, die per apparaat kan verschillen).
+    const fo = normalizeFinancieelOver(financieelOverRaw);
+    if (!fo || !sbOk) return;
+    const client = getSupabaseClient(supabaseConfig);
+    if (!client) return;
+    const asOf = Date.parse(fo.asOf || '');
+    const ts = Number.isFinite(asOf) && Date.now() - asOf < 3 * 86400000 ? Math.min(Date.now(), asOf) / 1000 : Date.now() / 1000;
+    const point = [ts, fo.bedrag];
+    client.from('portfolio').select('data').eq('id', 'financieel-log').maybeSingle()
+      .then(({ data }) => {
+        const remote = (data && data.data && data.data.points) || [];
+        const merged = finLogMerge(remote, [...finLog, point]);
+        setFinLog(merged);
+        const last = remote.length ? remote[remote.length - 1] : null;
+        if (!last || Math.abs(last[1] - fo.bedrag) >= 0.005 || merged.length !== remote.length) {
+          return client.from('portfolio').upsert({ id: 'financieel-log', data: { points: merged } }, { onConflict: 'id' });
+        }
+        return null;
+      }).then(() => {}, () => {});
+  }, [financieelOverRaw && normalizeFinancieelOver(financieelOverRaw) && normalizeFinancieelOver(financieelOverRaw).bedrag, sbOk]); // eslint-disable-line
   React.useEffect(() => { try { localStorage.setItem('investeringen-intraday-v1', JSON.stringify(intraday)); } catch (e) { /* ignore */ } }, [intraday]);
   const intradayRef = React.useRef({ model: null, ok: false });
   intradayRef.current = { model, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0 };
@@ -2670,11 +2705,11 @@ function App() {
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
-    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday,
+    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday, finLog, financieelOverRaw,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,
-    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live, intraday,
+    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live, intraday, finLog, financieelOverRaw,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
