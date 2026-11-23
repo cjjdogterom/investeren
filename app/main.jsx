@@ -1438,42 +1438,10 @@ function App() {
     return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [financieelSleutel]);
   const financieelOverRaw = financieelApi || financieelOverRow;
-  // Storting naar / opname van Trading 212 die nog niet in de bankstand uit Financieel zit: tijdelijk verrekenen met
-  // 'Vrij op rekening', zodat het geld niet even dubbel (of nergens) meetelt. Een storting telt als 'onderweg' als Trading 212
-  // hem later meldt dan de bankstand is bijgewerkt; klaar zodra de bankstand met (bijna) dat bedrag is veranderd, of na 4 dagen.
-  const [finPending, setFinPending] = React.useState(() => { try { return JSON.parse(localStorage.getItem(FIN_PENDING_KEY)) || {}; } catch (e) { return {}; } });
-  React.useEffect(() => { try { localStorage.setItem(FIN_PENDING_KEY, JSON.stringify(finPending)); } catch (e) { /* ignore */ } }, [finPending]);
-  React.useEffect(() => {
-    const fo = normalizeFinancieelOver(financieelOverRaw);
-    if (!fo) return;
-    const asOf = Date.parse(fo.asOf || '') || 0, now = Date.now(), MAX = 4 * 86400000;
-    setFinPending(prev => {
-      const next = { ...prev };
-      let ch = false;
-      for (const t of state.transactions || []) {
-        if (t.party !== 'trading212' || !/^txn:/.test(t._t212Id || '') || !/T212:(DEPOSIT|WITHDRAW)$/.test(t.note || '')) continue;
-        const at = Date.parse(t._t212At || '');
-        if (!at || now - at > (t.type === 'opname' ? 10 * 86400000 : MAX) || next[t.id] || at <= asOf) continue;
-        next[t.id] = { amt: +t.amountEur || 0, dir: t.type === 'inleg' ? -1 : 1, base: fo.bedrag, at: t._t212At };
-        ch = true;
-      }
-      for (const [id, pd] of Object.entries(next)) {
-        const moved = (fo.bedrag - pd.base) * pd.dir;
-        const gone = !(state.transactions || []).some(t => t.id === id);
-        // Opname naar de bank duurt een paar werkdagen: tot 10 dagen wachten; storting naar Trading 212 tot 4 dagen.
-        const maxAge = pd.dir > 0 ? 10 * 86400000 : MAX;
-        if (gone || moved >= pd.amt * 0.8 || now - Date.parse(pd.at) > maxAge) { delete next[id]; ch = true; }
-      }
-      return ch ? next : prev;
-    });
-  }, [financieelOverRaw, state.transactions]);
-  const financieelOver = React.useMemo(() => {
-    const fo = normalizeFinancieelOver(financieelOverRaw);
-    if (!fo) return financieelOverRaw;
-    const onderweg = Object.values(finPending).reduce((a, pd) => a + pd.dir * pd.amt, 0);
-    if (Math.abs(onderweg) < 0.005) return financieelOverRaw;
-    return { ...fo, bedrag: Math.round((fo.bedrag + onderweg) * 100) / 100, onderweg };
-  }, [financieelOverRaw, finPending]);
+  // 'Vrij op rekening' = letterlijk het bedrag uit het Financieel Systeem. Dat houdt zelf al rekening met stortingen naar
+  // en opnames van beleggingen, dus hier niets verrekenen.
+  const financieelOver = financieelOverRaw;
+  React.useEffect(() => { try { localStorage.removeItem(FIN_PENDING_KEY); } catch (e) { /* ignore */ } }, []);
   // Dagwaarde vastleggen in state.financieelHistory (gesynct) zodra er een verse waarde is.
   // Alleen schrijven als het bedrag voor die dag verandert; nooit uit een Supabase-rij ouder dan 2 dagen.
   React.useEffect(() => {
