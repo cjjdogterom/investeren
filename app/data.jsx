@@ -986,7 +986,10 @@ function summarizeT212Live(party, txs, st, live, quotes) {
   // gegaan dat nog niet in de historie staat, bijv. een opname of overboeking die Trading 212 pas later meldt. Dat is geen
   // verlies: we behandelen het als opname/inleg 'onderweg' tot de boeking in de historie verschijnt (dan is het verschil weg).
   const histCash = st && Number.isFinite(st.cash) ? st.cash : null;
-  const gap = histCash != null ? histCash - cash : 0;
+  // Alle cash volgens Trading 212: totaal − belegd (ook geld dat nog niet als vrij saldo staat, bijv. een verse storting),
+  // plus de cash in pies (die zit al in 'belegd').
+  const cashAll = a.total != null && a.investedValue != null ? (a.total - a.investedValue) + (a.inPies || 0) : cash;
+  const gap = histCash != null ? histCash - cashAll : 0;
   const onderweg = Math.abs(gap) >= 5 ? Math.round(gap * 100) / 100 : 0;
   const contributed = base.contributed - onderweg;
   // Netto ingelegd uit de historie; kostprijs zo gekozen dat kostprijs − gerealiseerd = netto ingelegd.
@@ -1004,7 +1007,7 @@ function summarizeT212Live(party, txs, st, live, quotes) {
     realizedCostBasis: base.realizedCost, realizedProceeds: base.realizedProceeds, realizedPnl: base.realized,
     pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
     bookedQuantity: null, chainCheckedAt: null,
-    stocks: { positions, cash, onderweg, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [], startDate: st && st.startDate },
+    stocks: { positions, cash: Math.max(cash, Math.round(cashAll * 100) / 100), onderweg, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [], startDate: st && st.startDate },
   };
 }
 
