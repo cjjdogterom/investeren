@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -44,4 +44,15 @@ jobs:
 
       - name: Deploy
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+
+      # GitHub Pages geeft af en toe een tijdelijke fout ("try again later"): na een halve minuut nog eens proberen.
+      - name: Even wachten na mislukte uitrol
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 45
+
+      - name: Deploy (tweede poging)
+        if: steps.deployment.outcome == 'failure'
+        id: deployment2
         uses: actions/deploy-pages@v5
