@@ -334,7 +334,9 @@ function intradayMerge(a, b) {
   const map = new Map();
   for (const p of [...(a || []), ...(b || [])]) {
     if (!Array.isArray(p) || !(p[0] > 0) || !Number.isFinite(+p[1])) continue;
-    map.set(Math.floor(p[0] / INTRADAY_STEP_S), [Math.round(p[0]), Math.round(p[1] * 100) / 100, Math.round((+p[2] || 0) * 100) / 100]);
+    const pt = [Math.round(p[0]), Math.round(p[1] * 100) / 100, Math.round((+p[2] || 0) * 100) / 100];
+    if (Number.isFinite(+p[3]) && Number.isFinite(+p[4])) pt.push(Math.round(+p[3] * 100) / 100, Math.round(+p[4] * 100) / 100);   // inleg bank, inleg Trading 212
+    map.set(Math.floor(p[0] / INTRADAY_STEP_S), pt);
   }
   // Laatste 8 dagen per 5 minuten, daarna één punt per uur tot 35 dagen (voor week- en maandgrafiek).
   const now = Date.now() / 1000, fine = now - INTRADAY_KEEP_S, min = now - INTRADAY_KEEP_LONG_S;
@@ -648,6 +650,7 @@ async function fetchMeesmanHistory() {
 
 // ── Trading 212-koppeling (eigen worker, alleen-lezen; deelsleutel in tweaks.t212Sleutel) ──
 const T212_LIVE_KEY = 'investeringen-t212-v1';
+const FIN_PENDING_KEY = 'investeringen-fin-onderweg-v1';
 const T212_LIVE_MS = 2 * 60 * 1000;
 const T212_HIST_MS = 30 * 60 * 1000;
 function loadT212Live() {
@@ -664,6 +667,7 @@ async function fetchT212(path, sleutel, force) {
 function t212HistToTx(h) {
   const tx = { id: 't212_' + h.key.replace(/[^A-Za-z0-9]/g, '_'), party: 'trading212', type: h.type, date: h.date, _t212Id: h.key };
   ['amountEur', 'quantity', 'unitPriceEur', 'feeEur', 'instrument', 'note'].forEach(k => { if (h[k] != null && h[k] !== '') tx[k] = h[k]; });
+  if (h.at) tx._t212At = h.at;
   return tx;
 }
 
@@ -1421,7 +1425,41 @@ function App() {
     document.addEventListener('visibilitychange', onVis);
     return () => { stop = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [financieelSleutel]);
-  const financieelOver = financieelApi || financieelOverRow;
+  const financieelOverRaw = financieelApi || financieelOverRow;
+  // Storting naar / opname van Trading 212 die nog niet in de bankstand uit Financieel zit: tijdelijk verrekenen met
+  // 'Vrij op rekening', zodat het geld niet even dubbel (of nergens) meetelt. Een storting telt als 'onderweg' als Trading 212
+  // hem later meldt dan de bankstand is bijgewerkt; klaar zodra de bankstand met (bijna) dat bedrag is veranderd, of na 4 dagen.
+  const [finPending, setFinPending] = React.useState(() => { try { return JSON.parse(localStorage.getItem(FIN_PENDING_KEY)) || {}; } catch (e) { return {}; } });
+  React.useEffect(() => { try { localStorage.setItem(FIN_PENDING_KEY, JSON.stringify(finPending)); } catch (e) { /* ignore */ } }, [finPending]);
+  React.useEffect(() => {
+    const fo = normalizeFinancieelOver(financieelOverRaw);
+    if (!fo) return;
+    const asOf = Date.parse(fo.asOf || '') || 0, now = Date.now(), MAX = 4 * 86400000;
+    setFinPending(prev => {
+      const next = { ...prev };
+      let ch = false;
+      for (const t of state.transactions || []) {
+        if (t.party !== 'trading212' || !/^txn:/.test(t._t212Id || '') || !/T212:(DEPOSIT|WITHDRAW)$/.test(t.note || '')) continue;
+        const at = Date.parse(t._t212At || '');
+        if (!at || now - at > MAX || next[t.id] || at <= asOf) continue;
+        next[t.id] = { amt: +t.amountEur || 0, dir: t.type === 'inleg' ? -1 : 1, base: fo.bedrag, at: t._t212At };
+        ch = true;
+      }
+      for (const [id, pd] of Object.entries(next)) {
+        const moved = (fo.bedrag - pd.base) * pd.dir;
+        const gone = !(state.transactions || []).some(t => t.id === id);
+        if (gone || moved >= pd.amt * 0.8 || now - Date.parse(pd.at) > MAX) { delete next[id]; ch = true; }
+      }
+      return ch ? next : prev;
+    });
+  }, [financieelOverRaw, state.transactions]);
+  const financieelOver = React.useMemo(() => {
+    const fo = normalizeFinancieelOver(financieelOverRaw);
+    if (!fo) return financieelOverRaw;
+    const onderweg = Object.values(finPending).reduce((a, pd) => a + pd.dir * pd.amt, 0);
+    if (Math.abs(onderweg) < 0.005) return financieelOverRaw;
+    return { ...fo, bedrag: Math.round((fo.bedrag + onderweg) * 100) / 100, onderweg };
+  }, [financieelOverRaw, finPending]);
   // Dagwaarde vastleggen in state.financieelHistory (gesynct) zodra er een verse waarde is.
   // Alleen schrijven als het bedrag voor die dag verandert; nooit uit een Supabase-rij ouder dan 2 dagen.
   React.useEffect(() => {
@@ -1888,7 +1926,7 @@ function App() {
       const now = new Date().toISOString();
       setSyncedState(s => {
         const byKey = new Map(s.transactions.filter(t => t._t212Id).map(t => [t._t212Id, t]));
-        const same = (a, b) => ['type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'feeEur', 'instrument'].every(k => (a[k] ?? null) === (b[k] ?? null));
+        const same = (a, b) => ['type', 'date', 'amountEur', 'quantity', 'unitPriceEur', 'feeEur', 'instrument', '_t212At'].every(k => (a[k] ?? null) === (b[k] ?? null));
         const changes = new Map();
         for (const tx of incoming) {
           const cur = byKey.get(tx._t212Id);
@@ -2316,7 +2354,8 @@ function App() {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       const t = cur.model && cur.model.totals;
       if (!t || !Number.isFinite(t.value) || !(t.value > 0)) return;
-      supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0])
+      const parts = buildIntradayRecipe(cur.model) || {};
+      supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0, parts.bank || 0, parts.t212 || 0])
         .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
       // Recept voor de server, zodat die ook meet als de app dicht is.
       const recipe = buildIntradayRecipe(cur.model);

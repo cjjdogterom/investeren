@@ -60,6 +60,7 @@ function normalizeFinancieelOver(raw) {
     label: typeof raw.label === 'string' ? raw.label : null,
     asOf: typeof raw.asOf === 'string' ? raw.asOf : null,
     bron: raw.bron || 'financieel',
+    onderweg: Number.isFinite(+raw.onderweg) && Math.abs(+raw.onderweg) > 0.005 ? +raw.onderweg : 0,
   };
 }
 const FINANCIEEL_API_URL = 'https://financieel.financieel-chris.workers.dev/api/vrij-besteedbaar';
@@ -92,6 +93,7 @@ function financieelOverSubtitle(fo) {
   const parts = ['Financieel'];
   if (maand) parts.push(maand);
   if (fo && fo.asOf) parts.push(`bijgewerkt ${fmtTime(fo.asOf)}`);
+  if (fo && fo.onderweg) parts.push(`${fmtMoney(Math.abs(fo.onderweg), { decimals: 2 })} ${fo.onderweg < 0 ? 'naar' : 'van'} Trading 212 verrekend`);
   return parts.join(' · ');
 }
 // Dagelijkse historie van Vrij op rekening (gesynct in state.financieelHistory):
@@ -2729,7 +2731,9 @@ function buildIntradayRecipe(model) {
   };
   (model.included || []).forEach(one);
   const list = Object.entries(items).filter(([k]) => /^[A-Za-z0-9.\-=^]{1,24}$/.test(k)).slice(0, 40).map(([s2, q]) => ({ s: s2, q: Math.round(q * 1e8) / 1e8 }));
-  return { asOf: new Date().toISOString(), total: Math.round(model.totals.value * 100) / 100, net: Math.round((model.totals.netInvested || 0) * 100) / 100, items: list };
+  const netOf = id => { const x = (model.included || []).find(z => z.party.id === id); return x ? Math.round(((x.costBasis || 0) - (x.realizedPnl || 0)) * 100) / 100 : 0; };
+  return { asOf: new Date().toISOString(), total: Math.round(model.totals.value * 100) / 100, net: Math.round((model.totals.netInvested || 0) * 100) / 100,
+    bank: netOf(FIN_OVER_PARTY_ID), t212: netOf(STOCK_PARTY_ID), items: list };
 }
 
 // Compacte momentopname voor de iOS-widget: exact dezelfde getallen als de Overzicht-hero

@@ -239,7 +239,7 @@ async function buildHistory(env) {
       : { DEPOSIT: "inleg", WITHDRAW: "opname", FEE: "kosten", INTEREST_ON_FREE_CASH: "rente", LENDING_INTEREST: "rente" }[t.type];
     if (!kind || !t.reference) continue;
     if (t.currency && t.currency !== "EUR") warnings.push(`${t.type} ${t.reference} in ${t.currency}`);
-    out.push({ key: "txn:" + t.reference, type: kind, date: day(t.dateTime), amountEur: Math.abs(num(t.amount)), note: `T212:${t.type}` });
+    out.push({ key: "txn:" + t.reference, type: kind, date: day(t.dateTime), at: t.dateTime || null, amountEur: Math.abs(num(t.amount)), note: `T212:${t.type}` });
   }
   for (const h of orders) {
     const f = h.fill, o = h.order || {};
