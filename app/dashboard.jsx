@@ -324,7 +324,7 @@ function useOvPerformance(app) {
   // Week: één punt per 10 minuten, maand: één punt per uur (24 per dag), uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
   // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
   const intra = app.intraday || [];
-  const hyStep = prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
+  const hyStep = prefs.chartMode !== 'return' ? (periodKey === '1D' ? 300 : periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
   const hy = useMemo(() => {
     if (!hyStep || !r.enabled || intra.length < 2) return null;
     const pad = v => String(v).padStart(2, '0');
@@ -353,6 +353,12 @@ function useOvPerformance(app) {
     const dayIdx = new Map(dates.map((d, i) => [d, i]));
     const peOn = day => { let i = dayIdx.get(day); if (i == null) i = dates.length - 1; return exclPE ? [(full.value[i] || 0) - (series.value[i] || 0), (full.net[i] || 0) - (series.net[i] || 0)] : [0, 0]; };
     for (const pt of ip) { const ts = loc(pt[0]); const [pv, pn] = peOn(ts.slice(0, 10)); out.dates.push(ts); out.value.push(+pt[1] - pv); out.net.push((+pt[2] || 0) - pn); }
+    // Laatste punt = nu (actuele totale waarde), zodat de lijn en de slider tot dit moment lopen.
+    const tot = model.totals, nowS = Date.now() / 1000;
+    if (tot && tot.value > 0 && nowS - ip[ip.length - 1][0] > 60) {
+      const [pv, pn] = peOn(loc(nowS).slice(0, 10));
+      out.dates.push(loc(nowS)); out.value.push(tot.value - pv); out.net.push((tot.netInvested || 0) - pn);
+    }
     return out.dates.length >= 2 ? out : null;
   }, [hyStep, r.enabled, r.i1, c0, intra, series, dates, exclPE, model]); // eslint-disable-line
 
@@ -1202,9 +1208,9 @@ function OvMobile({ app }) {
 
       <div className="ov-m__chartblock">
         <div className="ov-m__chart">
-          {pf.periodKey === '1D' && (app.intraday || []).length >= 2 ? <OvIntraday app={app} height={150} mode={pf.mode === 'gain' ? 'gain' : 'value'} /> :
-          <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} maxPoints={pf.fine ? 1500 : undefined} compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
-            kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
+          {pf.periodKey === '1D' && !pf.fine && (app.intraday || []).length >= 2 ? <OvIntraday app={app} height={150} mode={pf.mode === 'gain' ? 'gain' : 'value'} /> :
+          <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : 'auto'} maxPoints={pf.fine ? 1500 : undefined} compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
+            kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176}
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.c0 : null} onCursor={pf.onCursor}
             ariaLabel={pf.mode === 'return' ? 'Tijdgewogen rendement over de periode' : pf.mode === 'gain' ? 'Winst over de periode' : 'Waarde en netto ingelegd over de periode'}
