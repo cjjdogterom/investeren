@@ -1220,6 +1220,18 @@ function summarizePartyBase(party, transactions, spots, ctx) {
     }
   }
 
+  // Stortingen, aankopen, opnames en verkopen ná de laatste waardering: de waardering is een momentopname, wat er daarna
+  // bij of af gaat verandert de waarde één op één (anders lijkt een storting verlies en een opname winst). Gelijk aan de dagreeks.
+  let flowSinceVal = 0;
+  for (const t of txs) {
+    if (t.type === 'waardering' && (t.valueEur != null || t.unitPriceEur != null)) { flowSinceVal = 0; continue; }
+    if (t.party !== party.id) continue;
+    const amt = (+t.amountEur || 0) || ((+t.quantity || 0) * (+t.unitPriceEur || 0));
+    if (t.type === 'inleg' || t.type === 'koop' || t.type === 'cashback') flowSinceVal += amt;
+    else if (t.type === 'opname' || t.type === 'verkoop') flowSinceVal -= amt;
+  }
+  const withFlows = v => (v == null ? v : Math.max(0, v + flowSinceVal));
+
   // Determine current value
   let currentValueEur;
   let currentUnitPrice = null;
@@ -1240,13 +1252,13 @@ function summarizePartyBase(party, transactions, spots, ctx) {
     currentUnitPrice = spotEurForParty(party, spots) ?? lastUnitPrice;
     currentValueEur  = (currentUnitPrice || 0) * quantity;
   } else if (party.unit === 'eur') {
-    currentValueEur = lastTotalValue ?? quantity;
+    currentValueEur = lastTotalValue != null ? withFlows(lastTotalValue) : quantity;
     currentUnitPrice = 1;
   } else if (party.unit === 'bundle') {
     // Top 25 Bundel: inleg optellen, waarde handmatig herwaarderen
     // Backwards compat: als oude transactie unitPriceEur gebruikte als totaalwaarde, accepteer dat ook
     const bundleVal = lastTotalValue ?? (lastUnitPrice != null ? lastUnitPrice : null);
-    currentValueEur = bundleVal ?? quantity; // quantity = totaal ingelegd in €
+    currentValueEur = bundleVal != null ? withFlows(bundleVal) : quantity; // quantity = totaal ingelegd in €
     currentUnitPrice = null;
   } else if (lastTotalValue != null && lastUnitPrice == null) {
     currentValueEur = lastTotalValue;
@@ -1396,7 +1408,7 @@ function cfdLive(cfd, quotes, ticks) {
 function cfdBake(cfd, quotes, ticks, date) {
   const c = cfdLive(cfd, quotes, ticks) || cfd;
   return {
-    asOf: date, accountValue: c.accountValue, cash: c.cash, margin: c.margin, health: c.health,
+    asOf: date, bakedAt: new Date().toISOString(), accountValue: c.accountValue, cash: c.cash, margin: c.margin, health: c.health,
     positions: c.positions.map(x => ({ id: x.id, symbol: x.symbol, name: x.name, dir: x.dir, quantity: x.quantity, openPrice: x.openPrice,
       currentPrice: x.currentPrice, currency: x.currency, pnl: x.pnl, marginRate: x.marginRate, openedAt: x.openedAt || null })),
     trades: (cfd.trades || []).slice(),
@@ -1489,12 +1501,22 @@ function isCfdParty(p) { return !!(p && (p.cfd || p.id === 'trading212-cfd')); }
 function summarizeParty(party, transactions, spots, ctx) {
   const s = summarizePartyBase(party, transactions, spots, ctx);
   if (!s || !party || !party.cfd) return s;
-  const cfd = cfdLive(cfdNormalize(party.cfd), spots && spots.stockQuotes, spots && spots.liveTicks);
-  if (!cfd) return s;
+  const cfd0 = cfdLive(cfdNormalize(party.cfd), spots && spots.stockQuotes, spots && spots.liveTicks);
+  if (!cfd0) return s;
+  const cfd = { ...cfd0 };   // kopie: hieronder kan de accountwaarde worden bijgesteld
   // Accountwaarde (live) is de waarde van de positie zolang de stand de laatste waardering is. Zonder open posities
   // wint een waardering op dezelfde dag (bijv. rekening leeggehaald: stand 0, kleine restverschillen tellen als kosten).
   const lastVal = s.lastValuationDate || null;
   const open = (cfd.positions || []).length > 0;
+  // Geld dat na de stand op de CFD-rekening bij of af kwam (dag ná de stand, of op dezelfde dag maar later vastgelegd).
+  const bakedMs = Date.parse(cfd.bakedAt || '') || 0;
+  let sinceSnap = 0;
+  for (const t of transactions || []) {
+    if (t.party !== party.id || (t.type !== 'inleg' && t.type !== 'opname') || !cfd.asOf) continue;
+    const later = t.date > cfd.asOf || (t.date === cfd.asOf && bakedMs && (Date.parse(t.updatedAt || '') || 0) > bakedMs);
+    if (later) sinceSnap += (t.type === 'inleg' ? 1 : -1) * (+t.amountEur || 0);
+  }
+  if (Math.abs(sinceSnap) > 0.005 && cfd.accountValue != null) cfd.accountValue = Math.max(0, cfd.accountValue + sinceSnap);
   if (cfd.accountValue != null && (!lastVal || !cfd.asOf || cfd.asOf > lastVal || (open && cfd.asOf === lastVal))) {
     const diff = cfd.accountValue - (s.currentValueEur || 0);
     const pnl = (s.pnl || 0) + diff;
