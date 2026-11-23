@@ -417,7 +417,9 @@ function PerformanceChart({
   const pctX = i => (i / (n - 1)) * 100;
   const pctY = v => (g.y(v) / H) * 100;
   const rangeKey = `${dates[0]}|${n}|${kind}`;
-  const tickLabel = t => (kind === 'pct' ? chPctLabel(t) : (privacy ? '' : fmtCompact(t)));
+  // Bij een smal bereik (bijv. €13.300–€13.700) volle bedragen, anders staan er dubbele labels als "€14k".
+  const tickStep = g && g.nt && g.nt.ticks.length > 1 ? Math.abs(g.nt.ticks[1] - g.nt.ticks[0]) : Infinity;
+  const tickLabel = t => (kind === 'pct' ? chPctLabel(t) : (privacy ? '' : (tickStep < 1000 && Math.abs(t) >= 1000 ? fmtMoney(t).replace(/\s/g, '') : fmtCompact(t))));
   const curPrimary = cur != null ? primary[cur] : null;
   const curSecondary = cur != null && showSecondary ? secondary[cur] : null;
   const flagSide = cur == null ? '' : (cur / (n - 1) < 0.08 ? 'l' : cur / (n - 1) > 0.92 ? 'r' : '');

@@ -176,6 +176,8 @@ injectStyles('overzicht', `
 .ov-m__modes { display: flex; justify-content: center; gap: 4px; margin-top: 2px; }
 .ov-m__mode { height: 40px; padding: 0 12px; border: 0; background: none; cursor: pointer; font: 500 13.5px/1 var(--font); color: var(--fg-subtle); position: relative; }
 .ov-m__mode[aria-checked="true"] { color: var(--fg); font-weight: 600; }
+.ov-m__pe { align-self: center; height: 28px; margin-left: 6px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: none; cursor: pointer; font: 500 12.5px/1 var(--font); color: var(--fg-muted); white-space: nowrap; }
+.ov-m__pe[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .ov-m__mode[aria-checked="true"]::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 7px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--chart-a), var(--chart-b)); }
 .ov-secthead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
 .ov-secthead .ov-sect { margin: 0; }
@@ -322,7 +324,7 @@ function useOvPerformance(app) {
   // Week: één punt per 10 minuten, maand: één punt per uur (24 per dag), uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
   // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
   const intra = app.intraday || [];
-  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
+  const hyStep = prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
   const hy = useMemo(() => {
     if (!hyStep || !r.enabled || intra.length < 2) return null;
     const pad = v => String(v).padStart(2, '0');
@@ -346,9 +348,13 @@ function useOvPerformance(app) {
         out.value.push(v0 + (v1 - v0) * k / perDay); out.net.push(series.net[i]);
       }
     }
-    for (const pt of ip) { out.dates.push(loc(pt[0])); out.value.push(+pt[1]); out.net.push(+pt[2] || 0); }
+    // Excl. PE: de metingen zijn het totaal; trek per dag de PE-waarde en -inleg af (verschil tussen beide reeksen).
+    const full = model.series;
+    const dayIdx = new Map(dates.map((d, i) => [d, i]));
+    const peOn = day => { let i = dayIdx.get(day); if (i == null) i = dates.length - 1; return exclPE ? [(full.value[i] || 0) - (series.value[i] || 0), (full.net[i] || 0) - (series.net[i] || 0)] : [0, 0]; };
+    for (const pt of ip) { const ts = loc(pt[0]); const [pv, pn] = peOn(ts.slice(0, 10)); out.dates.push(ts); out.value.push(+pt[1] - pv); out.net.push((+pt[2] || 0) - pn); }
     return out.dates.length >= 2 ? out : null;
-  }, [hyStep, r.enabled, r.i1, c0, intra, series, dates]); // eslint-disable-line
+  }, [hyStep, r.enabled, r.i1, c0, intra, series, dates, exclPE, model]); // eslint-disable-line
 
   // Cursor keyed by date string so background pulls do not cancel it.
   const [cursor, setCursor] = useState(null);
@@ -1231,6 +1237,12 @@ function OvMobile({ app }) {
               {m.label}
             </button>
           ))}
+          {pf.hasPE && (
+            <button type="button" className="ov-m__pe" aria-pressed={!!prefs.exclPE} data-testid="toggle-excl-pe"
+              onClick={() => app.setPrefs({ exclPE: !prefs.exclPE })} title="Waarde zonder private equity">
+              Excl. PE
+            </button>
+          )}
         </div>
       </div>
 
