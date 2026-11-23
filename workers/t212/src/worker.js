@@ -161,7 +161,8 @@ async function liveSnapshot(env) {
       unrealized: +inv.unrealizedProfitLoss || 0,
       realized: +inv.realizedProfitLoss || 0,
       totalValue: summary.totalValue != null ? +summary.totalValue : null,
-      total: (+inv.currentValue || 0) + free + inPies + reserved,
+      // Het totaal van Trading 212 zelf. De cash in pies zit al in de beleggingswaarde (currentValue), dus niet nog eens optellen.
+      total: summary.totalValue != null ? +summary.totalValue : (+inv.currentValue || 0) + free + reserved,
     },
     positions: posList.map(p => {
       const ins = p.instrument || {}, w = p.walletImpact || {};
