@@ -627,6 +627,10 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
 
   const closedList = psSortSummaries(model.closed, { key: 'name', dir: 'asc' }, totalValue);
   const closedPnl = model.closed.filter(s => psIncluded(s.party)).reduce((a, s) => a + (s.pnl || 0), 0);
+  // Resultaat van gesloten posities in de gekozen periode (telt mee in het periodetotaal bovenaan).
+  const closedGainSum = gains ? sumPeriodGains(model.closed.filter(s => psIncluded(s.party)).map(s => gains[s.party.id])) : null;
+  const closedGain = closedGainSum && Math.abs(closedGainSum.gain) > 0.005 ? closedGainSum.gain : null;
+  const closedCol = (PS_GAIN_PERIODS.find(p => p.key === gk) || {}).col;
   const fold = (label, count, isOpen, setOpen, extra) => (
     <tr className="ps-fold">
       <td colSpan={compact ? 1 : colCount - 3}>
@@ -683,7 +687,9 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
               );
             })}
             {!at && closedList.length > 0 && fold('Gesloten posities', closedList.length, closedOpen, setClosedOpen,
-              <>gerealiseerd <span className={psTone(closedPnl)}><PsMoney value={closedPnl} sign /></span></>)}
+              closedGain != null
+                ? <>{closedCol} <span className={psTone(closedGain)}><PsMoney value={closedGain} sign /></span> · totaal <span className={psTone(closedPnl)}><PsMoney value={closedPnl} sign /></span></>
+                : <>gerealiseerd <span className={psTone(closedPnl)}><PsMoney value={closedPnl} sign /></span></>)}
             {!at && closedOpen && closedList.map(s => renderRow(s, { closed: true }))}
             {!at && !compact && model.empty.length > 0 && fold('Zonder transacties', model.empty.length, emptyOpen, setEmptyOpen, null)}
             {!at && !compact && emptyOpen && model.empty.map(s => renderRow(s, { empty: true }))}
@@ -882,7 +888,7 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
       </span>
       <span className="ps-lrow__end">
         <span className="ps-lrow__val"><Money value={s.currentValueEur} /></span>
-        {closed ? <span className={psCx('ps-lrow__sec', psTone(s.pnl))}>{privacy ? '€ •••••' : fmtMoney(s.pnl, { sign: true })}</span>
+        {closed ? (() => { const g = gain ? (gain.gain || 0) : s.pnl; return <span className={psCx('ps-lrow__sec', psTone(g))}>{privacy ? '€ •••••' : fmtMoney(g, { sign: true })}</span>; })()
           : empty ? <span className="ps-lrow__sec">—</span>
           : psSecondary(s, mode, totalValue, privacy, gain)}
       </span>
@@ -943,6 +949,10 @@ function HoldingsList({ app, variant = 'overview', period = null }) {
     app.setPrefs({ collapsedGroups: next });
   };
   const closedPnl = model.closed.filter(s => psIncluded(s.party)).reduce((a, s) => a + (s.pnl || 0), 0);
+  // Resultaat van gesloten posities in de gekozen periode (telt mee in het periodetotaal bovenaan).
+  const closedGainSum = gains ? sumPeriodGains(model.closed.filter(s => psIncluded(s.party)).map(s => gains[s.party.id])) : null;
+  const closedGain = closedGainSum && Math.abs(closedGainSum.gain) > 0.005 ? closedGainSum.gain : null;
+  const closedCol = (PS_GAIN_PERIODS.find(p => p.key === gk) || {}).col;
   const privacy = !!prefs.privacy;
   return (
     <div className="ps-list">
@@ -969,12 +979,14 @@ function HoldingsList({ app, variant = 'overview', period = null }) {
           <span className="monogram monogram--40 monogram--closed" aria-hidden="true"><Icon name="layers" size={16} /></span>
           <span className="ps-lfold__main">
             <span className="ps-lfold__title">Gesloten posities</span>
-            <span className="ps-lfold__sub">{model.closed.length} partijen · gerealiseerd <span className={psTone(closedPnl)}>{privacy ? '€ •••••' : fmtMoney(closedPnl, { sign: true })}</span></span>
+            <span className="ps-lfold__sub">{model.closed.length} partijen · {closedGain != null
+              ? <>{closedCol} <span className={psTone(closedGain)}>{privacy ? '€ •••••' : fmtMoney(closedGain, { sign: true })}</span> · totaal <span className={psTone(closedPnl)}>{privacy ? '€ •••••' : fmtMoney(closedPnl, { sign: true })}</span></>
+              : <>gerealiseerd <span className={psTone(closedPnl)}>{privacy ? '€ •••••' : fmtMoney(closedPnl, { sign: true })}</span></>}</span>
           </span>
           <Icon name={closedOpen ? 'chevron-up' : 'chevron-down'} size={16} style={{ color: 'var(--fg-subtle)' }} />
         </button>
       )}
-      {closedOpen && model.closed.map(s => <PsListRow key={s.party.id} app={app} s={s} closed totalValue={totalValue} mode={mode} />)}
+      {closedOpen && model.closed.map(s => <PsListRow key={s.party.id} app={app} s={s} closed totalValue={totalValue} mode={mode} gain={gainOf(s)} />)}
       {page && model.empty.length > 0 && (
         <button type="button" className="ps-lfold" aria-expanded={emptyOpen} onClick={() => setEmptyOpen(!emptyOpen)}>
           <span className="ps-lfold__main">
