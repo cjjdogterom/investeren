@@ -745,7 +745,7 @@ function shParseRoute(hash) {
   if (name === 'kosten' && segs.length === 1) return { route: mk('kosten'), redirect: null };
   if (name === 'plan') {
     if (segs.length === 1) return { route: mk('plan', { tab: 'verdeling' }), redirect: '/plan/verdeling' + (qs ? '?' + qs : '') };
-    if (segs.length === 2 && (segs[1] === 'verdeling' || segs[1] === 'pensioen' || segs[1] === 'jaaroverzicht')) return { route: mk('plan', { tab: segs[1] }), redirect: null };
+    if (segs.length === 2 && (segs[1] === 'verdeling' || segs[1] === 'inleg' || segs[1] === 'pensioen' || segs[1] === 'jaaroverzicht')) return { route: mk('plan', { tab: segs[1] }), redirect: null };
   }
   if (name === 'instellingen') {
     if (segs.length === 1) return { route: mk('instellingen', { section: null }), redirect: null };
@@ -953,6 +953,7 @@ function ShSidebar({ app, collapsed, counts, driftWarn }) {
         <ShNavLink to="/plan/verdeling" icon="target" label="Plan" current={r.name === 'plan' && collapsed} testId="nav-plan" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" label="Verdeling" sub current={r.name === 'plan' && r.params.tab === 'verdeling'} pip={driftWarn}
           title={driftWarn ? 'Verdeling: categorie buiten bandbreedte' : 'Verdeling'} testId="nav-verdeling" onNavigate={go} />
+        <ShNavLink to="/plan/inleg" label="Inleg" sub current={r.name === 'plan' && r.params.tab === 'inleg'} testId="nav-inleg" onNavigate={go} />
         <ShNavLink to="/plan/pensioen" label="Pensioen" sub current={r.name === 'plan' && r.params.tab === 'pensioen'} testId="nav-pensioen" onNavigate={go} />
         <ShNavLink to="/plan/jaaroverzicht" label="Jaaroverzicht" sub current={r.name === 'plan' && r.params.tab === 'jaaroverzicht'} testId="nav-jaaroverzicht" onNavigate={go} />
       </div>

@@ -408,10 +408,11 @@ function AlVerdelingView({ app }) {
 
 function PlanScreen({ app }) {
   const rt = app.route && app.route.params && app.route.params.tab;
-  const tab = rt === 'pensioen' || rt === 'jaaroverzicht' ? rt : 'verdeling';
+  const tab = rt === 'pensioen' || rt === 'jaaroverzicht' || rt === 'inleg' ? rt : 'verdeling';
   const go = v => app.navigate('/plan/' + v);
   const tabs = [
     { value: 'verdeling', label: 'Verdeling', testId: 'plan-tab-verdeling' },
+    { value: 'inleg', label: 'Inleg', testId: 'plan-tab-inleg' },
     { value: 'pensioen', label: 'Pensioen', testId: 'plan-tab-pensioen' },
     { value: 'jaaroverzicht', label: 'Jaaroverzicht', testId: 'plan-tab-jaaroverzicht' },
   ];
@@ -423,9 +424,11 @@ function PlanScreen({ app }) {
       </div>
       {app.isMobile && (
         <Segmented ariaLabel="Plan" full pill value={tab} onChange={go}
-          options={tabs.map(t => ({ value: t.value, label: t.label, testId: t.testId }))} />
+          options={tabs.map(t => ({ value: t.value, label: t.value === 'jaaroverzicht' ? 'Jaar' : t.label, testId: t.testId }))} />
       )}
-      {tab === 'pensioen'
+      {tab === 'inleg'
+        ? (window.InlegView ? <InlegView app={app} /> : null)
+        : tab === 'pensioen'
         ? (window.PensioenView ? <PensioenView app={app} /> : null)
         : tab === 'jaaroverzicht'
           ? (window.JaaroverzichtView ? <JaaroverzichtView app={app} /> : null)
