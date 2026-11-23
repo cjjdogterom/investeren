@@ -4,6 +4,9 @@ const YF = "https://query2.finance.yahoo.com";
 const SYM = /^[A-Za-z0-9.\-=^]{1,24}$/;
 const RANGES = new Set(["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"]);
 const TYPES = new Set(["EQUITY", "ETF", "MUTUALFUND", "INDEX"]);
+// Trading 212 gebruikt soms een oude ticker; bij Yahoo is dat inmiddels een ander fonds (FB = Meta heet daar META).
+const YH_ALIAS = { FB: "META" };
+const yh = s => YH_ALIAS[s] || s;
 
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, OPTIONS" };
 const json = (body, status = 200, maxAge = 300) => new Response(JSON.stringify(body), {
@@ -34,7 +37,7 @@ async function zoek(q) {
 const day = ts => new Date(ts * 1000).toISOString().slice(0, 10);
 
 async function chart(symbol, range) {
-  const j = await yahoo(`/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`);
+  const j = await yahoo(`/v8/finance/chart/${encodeURIComponent(yh(symbol))}?range=${range}&interval=1d`);
   const r = j.chart && j.chart.result && j.chart.result[0];
   if (!r) throw new Error(`Geen koers voor ${symbol}`);
   const closes = (r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || [];
@@ -78,7 +81,7 @@ async function koers(symbol, range) {
   const before = hist.filter(h => !marketDay || h.date < marketDay);
   const prev = before.length ? before[before.length - 1].close : null;
   return {
-    symbol: meta.symbol || symbol,
+    symbol,
     name: meta.longName || meta.shortName || symbol,
     currency: meta.currency || "EUR",
     exchange: meta.fullExchangeName || meta.exchangeName || "",
@@ -104,7 +107,7 @@ const GRAPH = {
 };
 async function grafiek(symbol, range) {
   const g = GRAPH[range];
-  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${g.interval}${g.prepost ? "&includePrePost=true" : ""}`, {
+  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(yh(symbol))}?range=${range}&interval=${g.interval}${g.prepost ? "&includePrePost=true" : ""}`, {
     headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)", accept: "application/json" },
     cf: { cacheTtl: g.ttl, cacheEverything: true },
   });
@@ -138,7 +141,7 @@ async function sb(env, method, path, body) {
   return method === "GET" ? res.json() : null;
 }
 async function rawPrice(symbol) {
-  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m&includePrePost=true`, {
+  const res = await fetch(`${YF}/v8/finance/chart/${encodeURIComponent(yh(symbol))}?range=1d&interval=5m&includePrePost=true`, {
     headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)", accept: "application/json" }, cf: { cacheTtl: 60, cacheEverything: true },
   });
   if (!res.ok) throw new Error(`Yahoo ${res.status}`);
@@ -416,6 +419,15 @@ export default {
         const quotes = {}, errors = {};
         out.forEach((r, i) => { if (r.status === "fulfilled") quotes[syms[i]] = r.value; else errors[syms[i]] = r.reason.message; });
         return json({ quotes, errors, fetchedAt: new Date().toISOString() });
+      }
+      // Doorgeefpunt voor de app (browsers mogen deze sites niet rechtstreeks lezen). Alleen deze twee adressen.
+      if (url.pathname === "/via") {
+        const u = url.searchParams.get("u") || "";
+        const ok = /^https:\/\/query2\.finance\.yahoo\.com\/v8\/finance\/chart\/[A-Za-z0-9.%=^\-]{1,30}\?[A-Za-z0-9=&]{0,120}$/.test(u)
+          || u === "https://www.meesman.nl/onze-fondsen/aandelen-wereldwijd-totaal/";
+        if (!ok) return json({ error: "Adres niet toegestaan" }, 400, 0);
+        const r = await fetch(u, { headers: { "user-agent": "Mozilla/5.0 (compatible; InvesterenKoersen/1.0)" }, cf: { cacheTtl: 900, cacheEverything: true } });
+        return new Response(await r.text(), { status: r.status, headers: { ...cors, "content-type": r.headers.get("content-type") || "text/plain; charset=utf-8", "cache-control": "public, max-age=900" } });
       }
       if (url.pathname === "/dagverloop") return json({ status: await intradayTick(env) }, 200, 0);
       if (url.pathname === "/nieuws") {

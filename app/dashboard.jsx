@@ -334,9 +334,17 @@ function useOvPerformance(app) {
     if (ip.length < 2) return null;
     const firstDay = loc(ip[0][0]).slice(0, 10);
     const out = { dates: [], value: [], net: [] };
+    // Dagen vóór de eerste meting: gelijkmatig opvullen (rechte lijn tussen de dagstanden), zodat de tijdas klopt.
+    const perDay = Math.round(86400 / hyStep);
     for (let i = c0; i <= r.i1; i++) {
       if (dates[i] >= firstDay) break;
-      out.dates.push(dates[i]); out.value.push(series.value[i]); out.net.push(series.net[i]);
+      if (i === c0) { out.dates.push(dates[i] + 'T23:59'); out.value.push(series.value[i]); out.net.push(series.net[i]); continue; }
+      const v0 = series.value[i - 1], v1 = series.value[i];
+      for (let k = 1; k <= perDay; k++) {
+        const mins = Math.min(1439, Math.round(k * 1440 / perDay));
+        out.dates.push(`${dates[i]}T${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`);
+        out.value.push(v0 + (v1 - v0) * k / perDay); out.net.push(series.net[i]);
+      }
     }
     for (const pt of ip) { out.dates.push(loc(pt[0])); out.value.push(+pt[1]); out.net.push(+pt[2] || 0); }
     return out.dates.length >= 2 ? out : null;
@@ -900,7 +908,7 @@ function OvPrestatiesCard({ app, pf }) {
           {pf.mode === 'value' ? (
             <>
               <span className="ov-key"><span className="ov-key__line" />Waarde</span>
-              <span className="ov-key"><span className="ov-key__step" />Netto ingelegd</span>
+              {!pf.fine && <span className="ov-key"><span className="ov-key__step" />Netto ingelegd</span>}
               <span className="ov-key"><span className="ov-key__band" />Winst</span>
             </>
           ) : pf.mode === 'gain'

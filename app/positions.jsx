@@ -417,11 +417,11 @@ function PsBadges({ party }) {
   return out.length ? <>{out}</> : null;
 }
 
-function PsSortTh({ label, k, sort, onSort, num = true, style }) {
+function PsSortTh({ label, k, sort, onSort, num = true, style, className }) {
   const active = sort.key === k;
   const ariaSort = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined;
   return (
-    <th scope="col" className={num ? 'num' : undefined} aria-sort={ariaSort} style={style}>
+    <th scope="col" className={psCx(num && 'num', className) || undefined} aria-sort={ariaSort} style={style}>
       <button type="button" className="ps-sort" data-active={active || undefined} onClick={() => onSort(k)}>
         {active && num && <Icon name={sort.dir === 'asc' ? 'chevron-up' : 'chevron-down'} size={12} />}
         {label}
@@ -450,6 +450,17 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const [emptyOpen, setEmptyOpen] = useState(false);
   useEffect(() => { if (!compact) setClosedOpen(!!prefs.showClosed); }, [prefs.showClosed, compact]);
   const tbodyRef = useRef(null);
+  // Kolommen die niet passen vallen weg (hoeveelheid en koers staan ook onder de naam, dus die eerst).
+  const rootRef = useRef(null);
+  const [boxW, setBoxW] = useState(9999);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
+    ro.observe(el); setBoxW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const hide = { trend: compact && boxW < 450, qty: !compact && boxW < 1540, cagr: !compact && boxW < 1150, share: !compact && boxW < 1060 };
 
   const asOf = asOfIndex != null && asOfIndex >= 0 && asOfIndex < model.series.dates.length ? asOfIndex : null;
   const at = useMemo(() => (asOf != null ? holdingsAt(model, asOf) : null), [model, asOf]);
@@ -497,7 +508,8 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   };
 
   const today = todayIsoLocal();
-  const colCount = compact ? 4 : (11 + (anyGoal ? 1 : 0));
+  const colCount = compact ? (hide.trend ? 3 : 4) : (11 + (anyGoal ? 1 : 0) - (hide.qty ? 2 : 0) - (hide.cagr ? 1 : 0) - (hide.share ? 1 : 0));
+  const tailCols = (hide.cagr ? 0 : 1) + (anyGoal ? 1 : 0) + 2;
 
   const renderRow = (s, opts = {}) => {
     const p = s.party;
@@ -529,7 +541,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
       return (
         <tr {...common}>
           <td>{pos}</td>
-          <td>{trend}</td>
+          {!hide.trend && <td>{trend}</td>}
           <td className="num"><span className="ps-val">{v == null ? '—' : <PsMoney value={v} />}</span></td>
           <td className="num">
             {pn == null ? '—' : (
@@ -548,16 +560,18 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
     return (
       <tr {...common}>
         <td style={{ minWidth: 200 }}>{pos}</td>
-        <td className="num ps-muted" style={{ whiteSpace: 'nowrap' }}>{holdingQtyText(s)}</td>
-        <td className="num ps-muted" style={{ whiteSpace: 'nowrap', fontSize: 12.5 }}>{holdingPriceText(s, spots)}</td>
+        {!hide.qty && <td className="num ps-muted" style={{ whiteSpace: 'nowrap' }}>{holdingQtyText(s)}</td>}
+        {!hide.qty && <td className="num ps-muted" style={{ whiteSpace: 'nowrap', fontSize: 12.5 }}>{holdingPriceText(s, spots)}</td>}
         <td className="num"><span className="ps-val">{v == null ? '—' : <PsMoney value={v} />}</span></td>
-        <td className="num ps-muted">{share == null ? '—' : fmtPct(share, { decimals: 1, sign: false })}</td>
+        {!hide.share && <td className="num ps-muted">{share == null ? '—' : fmtPct(share, { decimals: 1, sign: false })}</td>}
         <td className="num ps-muted"><PsMoney value={s.invested} /></td>
         <td className="num"><span className={psCx('ps-val', psTone(pn))}>{pn == null ? '—' : <PsMoney value={pn} sign />}</span></td>
         <td className={psCx('num', psTone(pn))}>{pctOf(s) != null ? fmtPct(pctOf(s), { decimals: 1 }) : '—'}</td>
-        <td className="num" title={cg.pct == null ? 'minder dan 1 jaar historie' : `CAGR ${cg.years.toFixed(1).replace('.', ',')} j`}>
-          {cg.pct == null ? <span className="ps-subtle">—</span> : <span className={psTone(cg.pct)}>{fmtPct(cg.pct, { decimals: 1 })} p.j.</span>}
-        </td>
+        {!hide.cagr && (
+          <td className="num" title={cg.pct == null ? 'minder dan 1 jaar historie' : `CAGR ${cg.years.toFixed(1).replace('.', ',')} j`}>
+            {cg.pct == null ? <span className="ps-subtle">—</span> : <span className={psTone(cg.pct)}>{fmtPct(cg.pct, { decimals: 1 })} p.j.</span>}
+          </td>
+        )}
         {anyGoal && (
           <td className="num">
             {gp ? (
@@ -586,25 +600,26 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
             {g.label} <span className="ps-group__share">{fmtPct(g.share, { decimals: 1, sign: false })}</span>
           </button>
         </td>
-        <td><span className="ps-minibar"><span style={{ width: Math.min(100, g.share) + '%', background: g.color }} /></span></td>
+        {!hide.trend && <td><span className="ps-minibar"><span style={{ width: Math.min(100, g.share) + '%', background: g.color }} /></span></td>}
         <td className="num"><span className="ps-val ps-muted"><PsMoney value={g.value} /></span></td>
         <td className="num"><span className={psCx('ps-val', psTone(g.pnl))}><PsMoney value={g.pnl} sign /></span></td>
       </>
     ) : (
       <>
-        <td colSpan={3}>
+        <td>
           <button type="button" className="ps-group__btn" aria-expanded={isOpen} onClick={() => toggleGroup(g.key)}>
             <Icon name="chevron-down" size={14} className="ps-chev" />
             <Swatch color={g.color} size={9} />
             {g.label} <span className="ps-group__share">{fmtPct(g.share, { decimals: 1, sign: false })}</span>
           </button>
         </td>
+        {!hide.qty && <><td /><td /></>}
         <td className="num"><span className="ps-val ps-muted"><PsMoney value={g.value} /></span></td>
-        <td className="num ps-muted">{fmtPct(g.share, { decimals: 1, sign: false })}</td>
+        {!hide.share && <td className="num ps-muted">{fmtPct(g.share, { decimals: 1, sign: false })}</td>}
         <td />
         <td className="num"><span className={psCx('ps-val', psTone(g.pnl))}><PsMoney value={g.pnl} sign /></span></td>
         <td className={psCx('num', psTone(g.pnl))}>{gains && g.pct != null ? fmtPct(g.pct, { decimals: 1 }) : ''}</td>
-        <td colSpan={colCount - 8} />
+        <td colSpan={tailCols} />
       </>
     );
     return <tr key={'g-' + g.key} className="ps-group">{cells}</tr>;
@@ -614,12 +629,13 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const closedPnl = model.closed.filter(s => psIncluded(s.party)).reduce((a, s) => a + (s.pnl || 0), 0);
   const fold = (label, count, isOpen, setOpen, extra) => (
     <tr className="ps-fold">
-      <td colSpan={compact ? 2 : colCount - 3}>
+      <td colSpan={compact ? 1 : colCount - 3}>
         <button type="button" className="ps-fold__btn" aria-expanded={isOpen} onClick={() => setOpen(!isOpen)}>
           <Icon name="chevron-right" size={14} className="ps-chev" />
           {label} <span className="ps-subtle">{count}</span>
         </button>
       </td>
+      {compact && !hide.trend && <td />}
       <td className="num ps-muted" colSpan={compact ? 2 : 3} style={{ whiteSpace: 'nowrap', fontSize: 12.5 }}>{extra}</td>
     </tr>
   );
@@ -627,21 +643,21 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const head = compact ? (
     <tr>
       <PsSortTh label="Positie" k="name" sort={sort} onSort={onSort} num={false} />
-      <th scope="col" style={{ width: 92 }}>Trend {perLabel}</th>
+      {!hide.trend && <th scope="col" style={{ width: 92 }}>Trend {perLabel}</th>}
       <PsSortTh style={{ width: at ? 118 : 88 }} label={at ? `Waarde op ${fmtDateShort(model.series.dates[asOf])}` : 'Waarde'} k="value" sort={sort} onSort={onSort} />
       <PsSortTh style={{ width: 104 }} label={at ? 'Winst' : psGainLabel(gk)} k="pnl" sort={sort} onSort={onSort} />
     </tr>
   ) : (
     <tr>
       <PsSortTh label="Positie" k="name" sort={sort} onSort={onSort} num={false} />
-      <th scope="col" className="num">Hoeveelheid</th>
-      <th scope="col" className="num">Koers/waardering</th>
+      {!hide.qty && <th scope="col" className="num">Hoeveelheid</th>}
+      {!hide.qty && <th scope="col" className="num">Koers/waardering</th>}
       <PsSortTh label="Waarde" k="value" sort={sort} onSort={onSort} />
-      <PsSortTh label="Aandeel" k="share" sort={sort} onSort={onSort} />
+      {!hide.share && <PsSortTh label="Aandeel" k="share" sort={sort} onSort={onSort} />}
       <th scope="col" className="num">Ingelegd</th>
       <PsSortTh label={psGainLabel(gk) + ' €'} k="pnl" sort={sort} onSort={onSort} />
       <PsSortTh label={psGainLabel(gk) + ' %'} k="pnlPct" sort={sort} onSort={onSort} />
-      <PsSortTh label="Per jaar" k="cagr" sort={sort} onSort={onSort} />
+      {!hide.cagr && <PsSortTh label="Per jaar" k="cagr" sort={sort} onSort={onSort} />}
       {anyGoal && <th scope="col" className="num">Doel</th>}
       <th scope="col">Trend {perLabel}</th>
       <th scope="col"><span className="sr-only">Openen</span></th>
@@ -651,7 +667,7 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
   const orphanCount = model.orphans.length;
 
   return (
-    <div className={psCx('ps-ht', compact && 'ps-ht--compact', className)} style={style}>
+    <div ref={rootRef} className={psCx('ps-ht', compact && 'ps-ht--compact', className)} style={style}>
       {at && <div className="ps-ht__asof">Waarden op {fmtDateLong(model.series.dates[asOf])}</div>}
       <div className="ps-ht__scroll" style={maxHeight ? { maxHeight } : undefined}>
         <table>
@@ -688,19 +704,20 @@ function HoldingsTable({ app, variant = 'full', period, asOfIndex = null, maxHei
             <tr data-testid="holdings-total">
               {compact ? (
                 <>
-                  <td colSpan={2}><span className="ps-total-label">Totaal{at ? ` op ${fmtDateShort(model.series.dates[asOf])}` : ''}</span></td>
+                  <td><span className="ps-total-label">Totaal{at ? ` op ${fmtDateShort(model.series.dates[asOf])}` : ''}</span></td>
+                  {!hide.trend && <td />}
                   <td className="num"><span className="ps-val"><PsMoney value={totalValue} /></span></td>
                   <td className="num"><span className={psCx('ps-val', psTone(totalPnl))}><PsMoney value={totalPnl} sign /></span></td>
                 </>
               ) : (
                 <>
-                  <td colSpan={3}>Totaal</td>
+                  <td>Totaal</td>{!hide.qty && <><td /><td /></>}
                   <td className="num"><span className="ps-val"><PsMoney value={totalValue} /></span></td>
-                  <td className="num">100%</td>
+                  {!hide.share && <td className="num">100%</td>}
                   <td className="num"><PsMoney value={model.totals.invested} /></td>
                   <td className="num"><span className={psCx('ps-val', psTone(totalPnl))}><PsMoney value={totalPnl} sign /></span></td>
                   <td className={psCx('num', psTone(totalPnl))}>{totalPct == null ? '—' : fmtPct(totalPct, { decimals: 1 })}</td>
-                  <td colSpan={colCount - 8} />
+                  <td colSpan={tailCols} />
                 </>
               )}
             </tr>
@@ -2008,7 +2025,7 @@ function PartyPanel({ app, partyId, onClose, asPage = false }) {
     return (
       <div className="ps-pagewrap" data-testid="party-panel">
         <div className="ps-pagehead">
-          <IconButton icon="chevron-left" label="Terug naar Posities" onClick={close} />
+          {!app.isMobile && <IconButton icon="chevron-left" label="Terug naar Posities" onClick={close} />}
           <div className="ps-pagehead__title">
             {s && <h1><PsPanelTitle app={app} party={s.party} /></h1>}
           </div>

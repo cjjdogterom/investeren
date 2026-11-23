@@ -548,9 +548,7 @@ async function fetchMetalHistory() {
   const end = Math.floor(Date.now() / 1000);
   const start = end - 730 * 86400;
   const wrappers = [
-    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    u => `https://api.codetabs.com/v1/proxy/?quest=${u}`,
-    u => u,
+    u => `${STOCK_API_URL}/via?u=${encodeURIComponent(u)}`,
   ];
   const yahoo = symbol =>
     `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d`;
@@ -585,9 +583,7 @@ async function fetchMetalHistory() {
 async function fetchMeesmanLatestFromWebsite() {
   const url = 'https://www.meesman.nl/onze-fondsen/aandelen-wereldwijd-totaal/';
   const wrappers = [
-    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    u => `https://api.codetabs.com/v1/proxy/?quest=${u}`,
-    u => u,
+    u => `${STOCK_API_URL}/via?u=${encodeURIComponent(u)}`,
   ];
   for (const wrap of wrappers) {
     try {
@@ -606,6 +602,8 @@ async function fetchMeesmanLatestFromWebsite() {
 }
 
 async function refreshPricesViaServer() {
+  // De server-functie bestaat alleen op de Vercel-uitrol, niet op GitHub Pages.
+  if (/\.github\.io$/.test(location.hostname)) throw new Error('geen server-functie op deze site');
   const res = await fetch(`/api/update-weekly-prices?ts=${Date.now()}`, {
     method: 'POST',
     headers: { Accept: 'application/json' },
@@ -625,9 +623,7 @@ async function fetchMeesmanHistory() {
   const yf = 'https://query2.finance.yahoo.com/v8/finance/chart/0P0001IJJX.F?interval=1d&range=2y';
   // Probeer meerdere CORS-proxies na elkaar
   const wrappers = [
-    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    u => `https://api.codetabs.com/v1/proxy/?quest=${u}`,
-    u => u, // direct (laatste poging, browser kan dit blokkeren)
+    u => `${STOCK_API_URL}/via?u=${encodeURIComponent(u)}`, // direct (laatste poging, browser kan dit blokkeren)
   ];
   for (const wrap of wrappers) {
     try {
@@ -967,7 +963,7 @@ function ShSidebar({ app, collapsed, counts, driftWarn }) {
             </button>
           ))}
         </div>
-        <ShNavLink to="/instellingen" icon="settings" label="Instellingen" kbd="," current={r.name === 'instellingen'} testId="nav-instellingen" onNavigate={go} />
+        <ShNavLink to="/instellingen" icon="settings" label="Instellingen" kbd="," current={r.name === 'instellingen' || r.name === 'nieuws' || r.name === 'kosten'} testId="nav-instellingen" onNavigate={go} />
       </div>
     </nav>
   );
@@ -1725,7 +1721,7 @@ function App() {
         }
       } catch (e) {
         serverRefreshFailed = true;
-        console.warn('[prijzen] server-refresh mislukt, probeer browser fallback:', e.message);
+        if (!/geen server-functie/.test(e.message)) console.warn('[prijzen] server-refresh mislukt, probeer browser fallback:', e.message);
       }
     }
 
@@ -2156,14 +2152,7 @@ function App() {
       });
       const errs = Object.entries(j.errors || {}).map(([sym, m]) => `${sym}: ${m}`);
       setStockStatus({ loading: false, error: errs.length ? errs.join(' · ') : null, fetchedAt });
-      // Dagkoers vastleggen zodat de dagwaarden (server) de aandelen ook kunnen waarderen.
-      const client = getSupabaseClient(supabaseConfig);
-      if (client && !symbols) {
-        const today = new Date().toISOString().slice(0, 10);
-        const rows = Object.entries(j.quotes || {}).filter(([, q]) => q.priceEur > 0)
-          .map(([sym, q]) => ({ asset: 'stock:' + sym, date: today, nav: +(+q.priceEur).toFixed(6), source: 'koersen-worker' }));
-        if (rows.length) supabaseUpsertAssetPriceRows(client, rows).catch(e => console.warn('[koersen] opslaan mislukt:', e.message));
-      }
+      // (Dagkoersen van aandelen worden niet in asset_price_history gezet: die tabel staat alleen vaste assets toe.)
     } catch (e) {
       setStockStatus(st => ({ ...st, loading: false, error: (e && e.name === 'TimeoutError') ? 'Time-out bij ophalen koersen' : ((e && e.message) || 'Koersen ophalen mislukt') }));
     }

@@ -105,6 +105,9 @@ function nwRandomTopic() {
   return 'investeren-' + Array.from(a, b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
 }
 
+// Trading 212 gebruikt voor Meta nog de oude ticker FB; nieuwsbronnen kennen het bedrijf als META.
+const NW_ALIAS = { FB: 'META' };
+const NW_ALIAS_BACK = Object.fromEntries(Object.entries(NW_ALIAS).map(([a, b]) => [b, a]));
 // Aandelen die je nu hebt (Trading 212: netto aantal > 0) plus de CFD-symbolen.
 function nwHeldSymbols(app) {
   const qty = {};
@@ -113,7 +116,7 @@ function nwHeldSymbols(app) {
     const s = normalizeTicker(t.instrument);
     qty[s] = (qty[s] || 0) + (t.type === 'verkoop' ? -1 : 1) * (+t.quantity || 0);
   }
-  const held = Object.keys(qty).filter(s => qty[s] > 1e-6);
+  const held = Object.keys(qty).filter(s => qty[s] > 1e-6).map(s => NW_ALIAS[s] || s);
   const cfd = cfdSymbolsOf((app.state && app.state.parties) || []);
   return [...new Set([...cfd, ...held])].slice(0, 16);
 }
@@ -282,7 +285,7 @@ function NieuwsScreen({ app }) {
 
   const syms = [...new Set([...(focus ? [focus.symbol] : []), ...held])].slice(0, 16);
   const names = {};
-  syms.forEach(s => { const qn = quotes[s] && quotes[s].name; names[s] = (focus && focus.symbol === s && focus.name !== s) ? focus.name : (qn || s); });
+  syms.forEach(s => { const qq = quotes[s] || quotes[NW_ALIAS_BACK[s]]; const qn = qq && qq.name; names[s] = (focus && focus.symbol === s && focus.name !== s) ? focus.name : (qn || s); });
   const shortName = s => String(names[s] || s).replace(/,?\s+(Inc|Corp(oration)?|N\.?V\.?|plc|Ltd|Limited|Holding(s)?|Group|SE|AG|S\.?A\.?|Co)\.?$/i, '');
   const newsUrl = syms.length || true
     ? `${STOCK_API_URL}/nieuws?s=${encodeURIComponent(syms.join(','))}&n=${encodeURIComponent(syms.map(shortName).join('|'))}`
@@ -308,7 +311,7 @@ function NieuwsScreen({ app }) {
     <div className="nw-chips" role="group" aria-label="Filter">
       <Chip active={filter === 'alles'} onClick={() => setFilter('alles')} count={items.length}>Alles</Chip>
       {held.length > 0 && <Chip active={filter === 'mijn'} onClick={() => setFilter('mijn')}>Mijn aandelen</Chip>}
-      {syms.map(s => <Chip key={s} active={filter === s} onClick={() => setFilter(s)} count={counts[s] || 0}>{nameMap[s]}</Chip>)}
+      {syms.filter(s => counts[s] > 0 || filter === s).map(s => <Chip key={s} active={filter === s} onClick={() => setFilter(s)} count={counts[s] || 0}>{nameMap[s]}</Chip>)}
     </div>
   );
   const feed = (
