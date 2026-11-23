@@ -214,4 +214,4 @@ function OvDividendCard({ app, mini = false }) {
   );
 }
 
-Object.assign(window, { DividendScreen, OvDividendCard });
+Object.assign(window, { DividendScreen, OvDividendCard, dvCollect, dvStats });

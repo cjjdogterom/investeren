@@ -160,6 +160,25 @@ injectStyles('overzicht', `
 .ov-m__herotop .ov-label { font-size: 13.5px; line-height: 18px; }
 .ov-m__herotop .icon-btn { width: 44px; height: 44px; margin-right: -12px; color: var(--fg); }
 .ov-m__hero .ov-hero { font-size: 44px; line-height: 48px; letter-spacing: -0.035em; margin: 0; }
+.ov-facts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ov-fact { display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 10px 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--fg); font: inherit; font-size: 13.5px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.ov-fact:hover { background: var(--surface-2); }
+.ov-fact__l { color: var(--fg-muted); font-size: 12.5px; }
+.ov-fact b { font-weight: 650; }
+.ov-fact svg { align-self: center; color: var(--fg-subtle); }
+.ov-facts--c { margin-top: 12px; }
+.ov-inleg { display: grid; gap: 12px; padding-bottom: 8px; }
+.ov-inleg__big { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ov-inleg__sub, .ov-inleg__note { margin: 0; color: var(--fg-muted); font-size: 13px; line-height: 1.5; }
+.ov-inleg__note { font-size: 12px; }
+.ov-inleg__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: clip; }
+.ov-inleg__grid > div { background: var(--surface); padding: 10px 12px; display: grid; gap: 2px; }
+.ov-inleg__grid span { font-size: 12px; color: var(--fg-muted); }
+.ov-inleg__grid b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.ov-inleg__h { font-weight: 650; font-size: 14px; margin-top: 4px; }
+.ov-inleg__row { display: flex; justify-content: space-between; font-size: 13.5px; padding: 6px 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.ov-inleg__row span { display: inline-flex; align-items: center; gap: 8px; }
+.ov-inleg__row i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ov-m__delta { margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; min-height: 22px; }
 .ov-m__delta .delta { font-size: 14.5px; font-weight: 550; }
 .ov-m__ctx { font-size: 14px; line-height: 20px; color: var(--fg-muted); }
@@ -729,6 +748,69 @@ function OvCfdLive({ app, s: sProp = null, embedded = false }) {
 }
 
 // ===================================================================
+// ===================================================================
+// Onder het grote bedrag: Ingelegd en Dividend (klikbaar)
+// ===================================================================
+// Inleg op drie manieren:
+//  1. netto in beleggingen = wat er per saldo in je posities zit (stortingen/aankopen − opnames/verkopen), zonder je bankrekening
+//  2. gestort / opgenomen = bruto stromen in en uit je posities (overboekingen tussen posities tellen aan beide kanten)
+//  3. incl. Vrij op rekening = de inleg-lijn in de grafiek (je bankrekening telt mee, als bedrag = inleg)
+function ovInlegFacts(model) {
+  const ser = model.series;
+  const exBank = seriesExcluding(ser, [FIN_OVER_PARTY_ID]);
+  const months = monthlyNetFlows(exBank, 0);
+  const gestort = months.reduce((a, m) => a + (m.inflow || 0), 0);
+  const opgenomen = months.reduce((a, m) => a + (m.outflow || 0), 0);
+  const inc = model.included.filter(s2 => s2.party.id !== FIN_OVER_PARTY_ID);
+  const netto = inc.reduce((a, s2) => a + ((s2.costBasis || 0) - (s2.realizedPnl || 0)), 0);
+  const waarde = inc.reduce((a, s2) => a + (s2.currentValueEur || 0), 0);
+  const perKlasse = ASSET_CLASSES.map(c => {
+    const ss = inc.filter(s2 => assetClassOf(s2.party) === c.key);
+    return { key: c.key, label: c.label, color: c.color, net: ss.reduce((a, s2) => a + ((s2.costBasis || 0) - (s2.realizedPnl || 0)), 0) };
+  }).filter(r => Math.abs(r.net) >= 0.5);
+  return { netto, gestort, opgenomen, waarde, inclBank: model.totals.netInvested || 0, perKlasse };
+}
+function OvHeroFacts({ app, compact = false }) {
+  const [open, setOpen] = useState(false);
+  const privacy = !!app.prefs.privacy;
+  const f = useMemo(() => ovInlegFacts(app.model), [app.model]);
+  const div = useMemo(() => (window.dvCollect ? dvStats(dvCollect(app)) : null), [app.state.transactions, app.model]); // eslint-disable-line
+  const m = (v, d = 0) => (privacy ? '€ •••••' : fmtMoney(v, { decimals: d }));
+  const winst = f.waarde - f.netto;
+  return (
+    <>
+      <div className={'ov-facts' + (compact ? ' ov-facts--c' : '')}>
+        <button type="button" className="ov-fact" onClick={() => setOpen(true)} data-testid="hero-inleg">
+          <span className="ov-fact__l">Ingelegd</span><b>{m(f.netto)}</b><Icon name="chevron-right" size={13} />
+        </button>
+        {div && (
+          <button type="button" className="ov-fact" onClick={() => app.navigate('/dividend')} data-testid="hero-dividend">
+            <span className="ov-fact__l">Dividend</span><b>{m(div.totaal, 2)}</b><Icon name="chevron-right" size={13} />
+          </button>
+        )}
+      </div>
+      <Sheet open={open} onClose={() => setOpen(false)} title="Ingelegd" size="medium">
+        <div className="ov-inleg">
+          <div className="ov-inleg__big">{m(f.netto)}</div>
+          <p className="ov-inleg__sub">Netto ingelegd in je beleggingen: alles wat je erin stopte min wat je eruit haalde. Je bankrekening (Vrij op rekening) telt niet mee. Waarde nu <b style={{ whiteSpace: 'nowrap' }}>{m(f.waarde)}</b>, dus <b style={{ whiteSpace: 'nowrap' }}>{privacy ? '€ •••••' : fmtMoney(winst, { sign: true })}</b> resultaat.</p>
+          <div className="ov-inleg__grid">
+            <div><span>Gestort in posities</span><b>{m(f.gestort)}</b></div>
+            <div><span>Opgenomen uit posities</span><b>{m(-f.opgenomen)}</b></div>
+            <div><span>Netto</span><b>{m(f.gestort - f.opgenomen)}</b></div>
+            <div><span>Incl. Vrij op rekening</span><b>{m(f.inclBank)}</b></div>
+          </div>
+          <p className="ov-inleg__note">Gestort en opgenomen tellen ook overboekingen tussen je eigen posities (bijv. Trading 212 → CFD) aan beide kanten mee; het netto bedrag klopt daardoor wel.</p>
+          <div className="ov-inleg__h">Per categorie</div>
+          {f.perKlasse.map(r => (
+            <div key={r.key} className="ov-inleg__row"><span><i style={{ background: r.color }} />{r.label}</span><b>{m(r.net)}</b></div>
+          ))}
+          <Button variant="secondary" full onClick={() => { setOpen(false); app.navigate('/plan/inleg'); }}>Inleg per maand en per positie</Button>
+        </div>
+      </Sheet>
+    </>
+  );
+}
+
 // Dagverloop: de totale waarde binnen één dag (punten per 5 minuten uit app.intraday)
 // ===================================================================
 function ovDayKey(ts) { const x = new Date(ts * 1000); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
@@ -896,8 +978,9 @@ function OvPrestatiesCard({ app, pf }) {
           <div className="ov-deltarow" data-testid="hero-delta">
             <Delta value={pf.deltaGain} pct={pf.deltaPct} size="md" context={pf.context} />
           </div>
+          {pf.ci == null && <OvHeroFacts app={app} />}
           <div className="ov-subrow">
-            <span>Netto ingelegd <b>{privacy ? '€ •••••' : fmtMoney(pf.heroNet)}</b></span>
+            {pf.ci != null && <span>Netto ingelegd <b>{privacy ? '€ •••••' : fmtMoney(pf.heroNet)}</b></span>}
             <span className={pf.heroWinst > 0.5 ? 'ov-gain' : pf.heroWinst < -0.5 ? 'ov-loss' : null}>
               <span style={{ color: 'var(--fg-muted)' }}>Totale winst </span><b>{privacy ? '€ •••••' : fmtMoney(pf.heroWinst, { sign: true })}</b>
               {pf.ci == null && pf.restPnlPct != null && <span style={{ color: 'var(--fg-muted)' }}> ({fmtPct(pf.restPnlPct, { decimals: 1 })} op inleg)</span>}
@@ -1205,6 +1288,7 @@ function OvMobile({ app }) {
             <Icon name="info" size={14} />
           </button>
         </div>
+        <OvHeroFacts app={app} compact />
       </section>
 
       <div className="ov-m__chartblock">
