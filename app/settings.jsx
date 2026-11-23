@@ -5,6 +5,7 @@ const ST_SECTIONS = [
   { key: 'overzicht',   label: 'Overzicht',      icon: 'layout-dashboard',   desc: 'Modules en standaardperiode' },
   { key: 'koersen',     label: 'Koersen',        icon: 'trending-up',        desc: 'Live prijzen en Meesman NAV' },
   { key: 'nieuws',      label: 'Nieuws',         icon: 'newspaper',          desc: 'Beursnieuws, grote bewegers en meldingen', to: '/nieuws' },
+  { key: 'dividend',    label: 'Dividend',       icon: 'coins',              desc: 'Ontvangen dividend per maand, jaar en aandeel', to: '/dividend' },
   { key: 'kosten',      label: 'Kosten',         icon: 'receipt',            desc: 'Kosten per aanbieder: geboekt en lopend', to: '/kosten' },
   { key: 'wallet',      label: 'Wallet',         icon: 'wallet',             desc: 'Coinbase Wallet alleen-lezen koppelen' },
   { key: 'financieel',  label: 'Financieel',     icon: 'wallet',             desc: 'Vrij op rekening uit je Financieel Systeem' },
@@ -15,7 +16,7 @@ const ST_SECTIONS = [
   { key: 'gevarenzone', label: 'Gevarenzone',    icon: 'triangle-alert',     desc: 'Verwijderen en terugzetten' },
   { key: 'over',        label: 'Over',           icon: 'info',               desc: 'Versie, uitleg en sneltoetsen' },
 ];
-const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'nieuws', 'kosten', 'wallet', 'financieel', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
+const ST_GROUPS = [['weergave', 'overzicht'], ['koersen', 'nieuws', 'dividend', 'kosten', 'wallet', 'financieel', 'sync', 't212'], ['partijen', 'gegevens'], ['gevarenzone', 'over']];
 const ST_SETTINGS_PRICE_ORDER = ['gold', 'silver', 'btc', 'eth', 'paxg'];
 const ST_PRICE_UNITS = { gold: '€/g', silver: '€/oz', btc: '€/BTC', eth: '€/ETH', paxg: '€/PAXG', meesman: '€/part.' };
 const ST_SQL = `create table if not exists portfolio (\n  id text primary key,\n  data jsonb not null default '{}',\n  updated_at timestamptz default now()\n);\nalter table portfolio enable row level security;\ndrop policy if exists "allow all" on portfolio;\ncreate policy "allow all" on portfolio\n  for all using (true) with check (true);`;

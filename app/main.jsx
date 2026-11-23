@@ -727,7 +727,7 @@ const SH_SECTION_TITLES = {
   weergave: 'Weergave', overzicht: 'Overzicht', koersen: 'Koersen', wallet: 'Wallet', sync: 'Synchronisatie', t212: 'Trading 212',
   partijen: 'Partijen', gegevens: 'Gegevens', gevarenzone: 'Gevarenzone', over: 'Over', financieel: 'Financieel',
 };
-const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', nieuws: 'Nieuws', kosten: 'Kosten', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
+const SH_TITLES = { overzicht: 'Overzicht', posities: 'Posities', nieuws: 'Nieuws', kosten: 'Kosten', dividend: 'Dividend', transacties: 'Transacties', plan: 'Plan', instellingen: 'Instellingen' };
 const SH_STALE_MS = 2 * 60 * 60 * 1000;
 
 function shNormalizePath(path) {
@@ -754,6 +754,7 @@ function shParseRoute(hash) {
   if (name === 'transacties' && segs.length === 1) return { route: mk('transacties'), redirect: null };
   if (name === 'nieuws' && segs.length === 1) return { route: mk('nieuws'), redirect: null };
   if (name === 'kosten' && segs.length === 1) return { route: mk('kosten'), redirect: null };
+  if (name === 'dividend' && segs.length === 1) return { route: mk('dividend'), redirect: null };
   if (name === 'plan') {
     if (segs.length === 1) return { route: mk('plan', { tab: 'verdeling' }), redirect: '/plan/verdeling' + (qs ? '?' + qs : '') };
     if (segs.length === 2 && (segs[1] === 'verdeling' || segs[1] === 'inleg' || segs[1] === 'pensioen' || segs[1] === 'jaaroverzicht')) return { route: mk('plan', { tab: segs[1] }), redirect: null };
@@ -961,6 +962,7 @@ function ShSidebar({ app, collapsed, counts, driftWarn }) {
         <ShNavLink to="/posities" icon="layers" label="Posities" current={r.name === 'posities'} count={counts.open} testId="nav-posities" onNavigate={go}
           pip={counts.finOpen > 0} title={counts.finOpen > 0 ? `Posities · ${counts.finOpen} open ${counts.finOpen === 1 ? 'belegging' : 'beleggingen'} uit Financieel` : undefined} />
         <ShNavLink to="/transacties" icon="arrow-left-right" label="Transacties" current={r.name === 'transacties'} count={counts.tx} testId="nav-transacties" onNavigate={go} />
+        <ShNavLink to="/dividend" icon="coins" label="Dividend" current={r.name === 'dividend'} testId="nav-dividend" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" icon="target" label="Plan" current={r.name === 'plan' && collapsed} testId="nav-plan" onNavigate={go} />
         <ShNavLink to="/plan/verdeling" label="Verdeling" sub current={r.name === 'plan' && r.params.tab === 'verdeling'} pip={driftWarn}
           title={driftWarn ? 'Verdeling: categorie buiten bandbreedte' : 'Verdeling'} testId="nav-verdeling" onNavigate={go} />
@@ -1051,7 +1053,7 @@ function ShMobileHeader({ app }) {
   } else if (r.name === 'instellingen' && r.params.section) {
     back = '/instellingen';
     title = SH_SECTION_TITLES[r.params.section] || 'Instellingen';
-  } else if (r.name === 'nieuws' || r.name === 'kosten') {
+  } else if (r.name === 'nieuws' || r.name === 'kosten' || r.name === 'dividend') {
     back = '/instellingen';
   } else if (r.name === 'plan') {
     back = '/overzicht';   // Plan heeft geen eigen tab; je komt er via het plus-menu of het Overzicht
@@ -1137,7 +1139,7 @@ function ShTabBar({ app }) {
     <nav className="sh-tabbar" aria-label="Hoofdnavigatie">
       {tabs.map(t => {
         if (!t) return <ShAddMenu key="add" app={app} />;
-        const active = r.name === t.name || (t.name === 'instellingen' && (r.name === 'nieuws' || r.name === 'kosten'));
+        const active = r.name === t.name || (t.name === 'instellingen' && (r.name === 'nieuws' || r.name === 'kosten' || r.name === 'dividend'));
         return (
           <a key={t.name} href={'#' + t.to} className="sh-tab" aria-current={active ? 'page' : undefined} data-testid={'nav-' + t.name}
             onClick={e => {
@@ -1196,6 +1198,7 @@ function ShScreen({ app }) {
   if (name === 'transacties') return window.TransactiesScreen ? <TransactiesScreen app={app} /> : ph('Transacties');
   if (name === 'nieuws') return window.NieuwsScreen ? <NieuwsScreen app={app} /> : ph('Nieuws');
   if (name === 'kosten') return window.KostenScreen ? <KostenScreen app={app} /> : ph('Kosten');
+  if (name === 'dividend') return window.DividendScreen ? <DividendScreen app={app} /> : ph('Dividend');
   if (name === 'plan') return window.PlanScreen ? <PlanScreen app={app} /> : ph('Plan');
   if (name === 'instellingen') return window.InstellingenScreen ? <InstellingenScreen app={app} /> : ph('Instellingen');
   return window.OverzichtScreen ? <OverzichtScreen app={app} /> : ph('Overzicht');

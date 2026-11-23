@@ -1062,7 +1062,7 @@ function OvDesktop({ app }) {
   const items = useMemo(() => ovAttentionItems(app), [app.model, app.state.targetAllocation, app.syncStatus, app.spotStatus, app.spots]);
   const pinIndex = pf.pinned ? (pf.pinDay != null ? pf.pinDay : pf.ci) : null;
   const showVerd = on('allocation');
-  const row3 = [on('monthly_inleg') && <OvMonthlyCard key="m" app={app} />, on('returns') && <OvResultCard key="r" app={app} />, on('activity_feed') && <OvActivityCard key="a" app={app} />,
+  const row3 = [on('monthly_inleg') && <OvMonthlyCard key="m" app={app} />, window.OvDividendCard && <OvDividendCard key="div" app={app} />, on('returns') && <OvResultCard key="r" app={app} />, on('activity_feed') && <OvActivityCard key="a" app={app} />,
     on('attention') && <OvAttentionCard key="att" app={app} items={items} />].filter(Boolean);
   return (
     <div className="ov-desk">
@@ -1135,6 +1135,7 @@ function OvVoorJou({ app, items }) {
       </Card>
     );
   }
+  if (window.OvDividendCard) cards.push(<OvDividendCard key="div" app={app} mini />);
   if (!cards.length) return null;
   const onScroll = () => {
     const el = ref.current;
