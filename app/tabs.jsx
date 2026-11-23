@@ -28,6 +28,14 @@ injectStyles('tabs', `
 .tr-table .tr-month td { position: sticky; top: calc(var(--topbar-h) + 31px); background: var(--surface-2); color: var(--fg); font-weight: 600; font-size: 12.5px; height: 32px; cursor: default; }
 .tr-table .tr-month:hover { background: none; }
 .tr-month__meta { color: var(--fg-muted); font-weight: 500; margin-left: 6px; }
+.tr-small-row td { padding: 0 !important; height: auto !important; }
+.tr-small-row:hover { background: none; }
+.tr-small { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 16px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.tr-small:hover { background: var(--surface-2); color: var(--fg); }
+.tr-small__ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-2); color: var(--fg-muted); flex-shrink: 0; }
+.tr-small__t { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.tr-small__t b { color: var(--fg); font-weight: 600; font-size: 13px; }
+.tr-small__t span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tr-tnum { font-variant-numeric: tabular-nums lining-nums; }
 .tr-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tr-type { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); }
@@ -162,6 +170,7 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
             {g.title != null && (
               <tr className="tr-month"><td colSpan={cols}>{g.title}<span className="tr-month__meta">· {g.txs.length} {g.txs.length === 1 ? 'transactie' : 'transacties'}</span></td></tr>
             )}
+            {g.small && <tr className="tr-small-row"><td colSpan={cols}><TrSmallBundle app={app} small={g.small} /></td></tr>}
             {g.txs.map(tx => {
               const party = trPartyOf(app, tx.party);
               return (
@@ -220,12 +229,29 @@ function TrMobileRow({ app, tx, showParty }) {
   );
 }
 
+function TrSmallBundle({ app, small }) {
+  const privacy = usePrivacy();
+  const m = v => (privacy ? '€ •••••' : fmtMoney(v, { decimals: 2 }));
+  const parts = [];
+  if (Math.abs(small.koop) > 0.005) parts.push(`belegd ${m(small.koop)}`);
+  if (Math.abs(small.rente) > 0.005) parts.push(`rente ${m(small.rente)}`);
+  if (Math.abs(small.netto) > 0.005) parts.push(`${small.netto >= 0 ? 'gestort' : 'opgenomen'} ${m(Math.abs(small.netto))}`);
+  return (
+    <button type="button" className="tr-small" onClick={() => app.setPrefs({ txShowSmall: true })} title="Toon deze boekingen los">
+      <span className="tr-small__ic"><Icon name="layers" size={14} /></span>
+      <span className="tr-small__t"><b>Wisselgeld &amp; kleine boekingen</b><span>{small.count} {small.count === 1 ? 'boeking' : 'boekingen'} · Trading 212{parts.length ? ' · ' + parts.join(' · ') : ''}</span></span>
+      <Icon name="chevron-right" size={14} />
+    </button>
+  );
+}
+
 function TrMobileGroups({ app, groups, showParty = true }) {
   return (
     <div>
       {groups.map(g => (
         <div key={g.key}>
           {g.title != null && <div className="tr-mmonth">{g.title} <span className="tr-month__meta">· {g.txs.length}</span></div>}
+          {g.small && <div className="tr-small-m"><TrSmallBundle app={app} small={g.small} /></div>}
           {g.txs.map(tx => <TrMobileRow key={tx.id} app={app} tx={tx} showParty={showParty} />)}
         </div>
       ))}
@@ -462,6 +488,10 @@ function TransactiesScreen({ app }) {
     return s;
   }, [filtered]);
 
+  // Kleine automatische boekingen (wisselgeld, rente) per maand bundelen, tenzij je ze wilt zien of op type/zoekterm filtert.
+  const showSmall = !!(app.prefs && app.prefs.txShowSmall);
+  const bundleSmall = !showSmall && !selTypes.length && !(q.q || '').trim();
+  const smallTotal = React.useMemo(() => filtered.filter(isSmallAutoTx).length, [filtered]);
   const groups = React.useMemo(() => {
     const sorted = trSort(filtered);
     const orphans = sorted.filter(t => !byId[dispId(t.party)]);
@@ -474,10 +504,16 @@ function TransactiesScreen({ app }) {
     }
     const out = [];
     if (orphans.length) out.push({ key: TR_ORPHAN, title: `Zonder partij (${orphans.length})`, txs: orphans, orphan: true });
-    for (const [k, txs] of map) out.push({ key: k, title: fmtMonthName(k), txs });
+    for (const [k, all0] of map) {
+      if (!bundleSmall) { out.push({ key: k, title: fmtMonthName(k), txs: all0 }); continue; }
+      const small = all0.filter(isSmallAutoTx);
+      const txs = all0.filter(t => !isSmallAutoTx(t));
+      const sumOf = ty => small.filter(t => t.type === ty).reduce((a, t) => a + (+t.amountEur || 0), 0);
+      out.push({ key: k, title: fmtMonthName(k), txs, small: small.length ? { count: small.length, koop: sumOf('koop') - sumOf('verkoop'), rente: sumOf('rente'), netto: sumOf('inleg') - sumOf('opname') } : null });
+    }
     return out;
-  }, [filtered, byId]);
-  const monthGroups = groups.filter(g => !g.orphan);
+  }, [filtered, byId, bundleSmall]);
+  const monthGroups = groups.filter(g => !g.orphan && (g.txs.length || g.small));
   const visibleGroups = [...groups.filter(g => g.orphan), ...monthGroups.slice(0, monthsShown)];
   const hiddenMonths = Math.max(0, monthGroups.length - monthsShown);
 
@@ -503,6 +539,11 @@ function TransactiesScreen({ app }) {
     <div className="tr-head">
       <h1 className="sr-only">Transacties</h1>
       <span className="tr-count num" data-testid="tx-count">{filtered.length} van {all.length} transacties</span>
+      {smallTotal > 0 && (selTypes.length === 0 && !(q.q || '').trim()) && (
+        <Chip active={showSmall} onClick={() => app.setPrefs({ txShowSmall: !showSmall })}>
+          {showSmall ? 'Wisselgeld bundelen' : `Wisselgeld tonen (${smallTotal})`}
+        </Chip>
+      )}
       <span className="tr-head__spacer" />
       {!isMobile && (
         <>

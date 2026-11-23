@@ -743,6 +743,17 @@ const T212_API_URL = 'https://t212-koppeling.financieel-chris.workers.dev';
 function isT212ApiTx(t) { return !!t && t.party === STOCK_PARTY_ID && /^(txn|ord|div):/.test(t._t212Id || ''); }
 function t212Linked(txs) { return (txs || []).some(isT212ApiTx); }
 function normalizeTicker(v) { return String(v || '').trim().toUpperCase(); }
+// Wisselgeld en andere kleine automatische Trading 212-boekingen (afronding, dagrente, kleine stortingen/opnames).
+// Die bundelen we in Transacties zodat de gewone boekingen overzichtelijk blijven.
+const SMALL_AUTO_EUR = 5;
+function isSmallAutoTx(t) {
+  if (!t || t.party !== STOCK_PARTY_ID || !t._t212Id) return false;
+  const a = Math.abs(+t.amountEur || 0);
+  if (t.type === 'rente') return true;
+  if (t.type === 'koop' || t.type === 'verkoop') return a < SMALL_AUTO_EUR && /AUTOINVEST/.test(t.note || '');
+  if (t.type === 'inleg' || t.type === 'opname') return a < SMALL_AUTO_EUR && !/TRANSFER/.test(t.note || '');
+  return false;
+}
 function isStockTx(t) { return !!t && t.party === STOCK_PARTY_ID && !!t.instrument && (t.type === 'koop' || t.type === 'verkoop'); }
 function stockSymbolsOf(transactions) {
   return [...new Set((transactions || []).filter(isStockTx).map(t => normalizeTicker(t.instrument)))].sort();
@@ -2999,7 +3010,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, isSmallAutoTx, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

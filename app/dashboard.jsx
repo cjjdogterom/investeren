@@ -997,7 +997,7 @@ function OvResultCard({ app }) {
 }
 
 function ovRecentTxs(app, n = 5) {
-  return app.state.transactions.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))).slice(0, n);
+  return app.state.transactions.filter(t => !isSmallAutoTx(t)).sort((a, b) => (b.date || '').localeCompare(a.date || '') || String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))).slice(0, n);
 }
 
 function OvActivityCard({ app }) {
