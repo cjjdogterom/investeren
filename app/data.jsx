@@ -579,8 +579,8 @@ function findNavForDate(history, date) {
 }
 
 function daysBetween(a, b) {
-  const start = new Date(`${a}T00:00:00Z`);
-  const end = new Date(`${b}T00:00:00Z`);
+  const start = new Date(`${String(a).slice(0, 10)}T00:00:00Z`);
+  const end = new Date(`${String(b).slice(0, 10)}T00:00:00Z`);
   return Math.max(0, Math.round((end - start) / 86400000));
 }
 
@@ -1905,7 +1905,8 @@ function dtParseIso(iso) {
 
 function fmtDateLong(iso) {
   const p = dtParseIso(iso);
-  return p ? `${p.d} ${MONTHS_NL[p.m - 1]} ${p.y}` : '—';
+  const tm = typeof iso === 'string' && /T(\d{2}:\d{2})/.exec(iso);
+  return p ? `${p.d} ${MONTHS_NL[p.m - 1]} ${p.y}${tm ? ' · ' + tm[1] : ''}` : '—';
 }
 
 function fmtDateShort(iso, todayIso = todayIsoLocal()) {

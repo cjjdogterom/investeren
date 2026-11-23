@@ -319,6 +319,29 @@ function useOvPerformance(app) {
     if (!(Math.abs(series.value[c0] || 0) > min)) c0 = r.i0;
   }
 
+  // Week: één punt per uur, maand: één punt per 5 uur, uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
+  // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
+  const intra = app.intraday || [];
+  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 3600 : periodKey === '1M' ? 5 * 3600 : 0) : 0;
+  const hy = useMemo(() => {
+    if (!hyStep || !r.enabled || intra.length < 2) return null;
+    const pad = v => String(v).padStart(2, '0');
+    const loc = ts => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+    const startDay = dates[c0];
+    const b = new Map();
+    for (const pt of intra) { if (loc(pt[0]).slice(0, 10) >= startDay) b.set(Math.floor(pt[0] / hyStep), pt); }
+    const ip = [...b.values()].sort((a, z) => a[0] - z[0]);
+    if (ip.length < 2) return null;
+    const firstDay = loc(ip[0][0]).slice(0, 10);
+    const out = { dates: [], value: [], net: [] };
+    for (let i = c0; i <= r.i1; i++) {
+      if (dates[i] >= firstDay) break;
+      out.dates.push(dates[i]); out.value.push(series.value[i]); out.net.push(series.net[i]);
+    }
+    for (const pt of ip) { out.dates.push(loc(pt[0])); out.value.push(+pt[1]); out.net.push(+pt[2] || 0); }
+    return out.dates.length >= 2 ? out : null;
+  }, [hyStep, r.enabled, r.i1, c0, intra, series, dates]); // eslint-disable-line
+
   // Cursor keyed by date string so background pulls do not cancel it.
   const [cursor, setCursor] = useState(null);
   useEffect(() => { setCursor(null); }, [periodKey, prefs.chartMode, exclPE]);
@@ -346,7 +369,7 @@ function useOvPerformance(app) {
 
   const onCursor = (i, info = {}) => {
     if (i == null) { setCursor(null); return; }
-    const d = dates[c0 + i];
+    const d = hy ? hy.dates[i] : dates[c0 + i];
     if (!d) return;
     setCursor({ date: d, pinned: !isMobile && !!info.pinned });
   };
@@ -408,6 +431,34 @@ function useOvPerformance(app) {
     return `${fmtDateLong(d)}: ${privacy ? 'bedrag verborgen' : fmtMoney(primary[i])}`;
   };
 
+  // Fijnmazige week/maand: grafiek, cursor en held op de uurpunten.
+  if (hy) {
+    const hci = cursor ? hy.dates.indexOf(cursor.date) : -1;
+    const V0 = series.value[r.i0] || 0, N0 = series.net[r.i0] || 0;
+    const denom = fullStats && fullStats.pct ? fullStats.gain / (fullStats.pct / 100) : V0;
+    const gainAt = k => (hy.value[k] - hy.net[k]) - (V0 - N0);
+    const out = {
+      dates: hy.dates, c0: 0, chartDates: hy.dates,
+      primary: mode === 'gain' ? hy.value.map((v, k) => (v == null ? null : gainAt(k))) : hy.value,
+      secondary: null,   // inleg-lijn valt ver onder de strakke as; de inleg staat bij het slepen in de kop
+      markers: model.markers.filter(m => !peSet.has(m.partyId) && m.index >= c0 && m.index <= r.i1)
+        .map(m => ({ ...m, index: hy.dates.findIndex(d => d.slice(0, 10) >= dates[m.index]) })).filter(m => m.index >= 0),
+    };
+    out.valueText = i => {
+      const d = hy.dates[i];
+      if (!d) return '';
+      return mode === 'gain' ? `${fmtDateLong(d)}: winst ${privacy ? 'bedrag verborgen' : fmtMoney(out.primary[i], { sign: true })}`
+        : `${fmtDateLong(d)}: ${privacy ? 'bedrag verborgen' : fmtMoney(hy.value[i])}`;
+    };
+    if (hci >= 0) {
+      const g = gainAt(hci);
+      Object.assign(out, { ci: hci, heroValue: hy.value[hci], heroNet: hy.net[hci], heroWinst: hy.value[hci] - hy.net[hci],
+        deltaGain: g, deltaPct: denom > 0 ? g / denom * 100 : null, context: 't.o.v. begin periode',
+        pinned: !!(cursor.pinned && !isMobile), pinDay: Math.max(r.i0, dates.findLastIndex(d => d <= hy.dates[hci].slice(0, 10))) });
+    } else out.ci = null;
+    var hyOut = out;   // eslint-disable-line no-var
+  }
+
   const includedIds = new Set(model.included.map(s => s.party.id));
   const chartSet = new Set(model.chartIds);
   const notInChart = [...includedIds].filter(id => !chartSet.has(id)).length;
@@ -419,6 +470,8 @@ function useOvPerformance(app) {
     heroValue, heroNet, heroWinst, deltaGain, deltaPct, context, restPnlPct,
     mode, chartDates, primary, secondary, twrAllNull, markers, valueText,
     setsDiffer, notInChart: notInChart || model.chartIds.filter(id => !includedIds.has(id)).length,
+    pinDay: pinned ? ci : null, fine: !!hy,
+    ...(hy ? hyOut : {}),
   };
 }
 
@@ -861,7 +914,7 @@ function OvPrestatiesCard({ app, pf }) {
           options={OV_CHART_MODES} />
       </div>
       <div className="ov-chartwrap">
-        <PerformanceChart testId="perf-chart" dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
+        <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
           kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={220}
           liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
           cursor={pf.ci != null ? pf.ci - pf.c0 : null} pinned={pf.pinned} pinnable onCursor={pf.onCursor}
@@ -987,7 +1040,7 @@ function OvDesktop({ app }) {
     return () => ro.disconnect();
   }, []);
   const items = useMemo(() => ovAttentionItems(app), [app.model, app.state.targetAllocation, app.syncStatus, app.spotStatus, app.spots]);
-  const pinIndex = pf.pinned ? pf.ci : null;
+  const pinIndex = pf.pinned ? (pf.pinDay != null ? pf.pinDay : pf.ci) : null;
   const showVerd = on('allocation');
   const row3 = [on('monthly_inleg') && <OvMonthlyCard key="m" app={app} />, on('returns') && <OvResultCard key="r" app={app} />, on('activity_feed') && <OvActivityCard key="a" app={app} />,
     on('attention') && <OvAttentionCard key="att" app={app} items={items} />].filter(Boolean);
@@ -1136,7 +1189,7 @@ function OvMobile({ app }) {
       <div className="ov-m__chartblock">
         <div className="ov-m__chart">
           {pf.periodKey === '1D' && (app.intraday || []).length >= 2 ? <OvIntraday app={app} height={150} mode={pf.mode === 'gain' ? 'gain' : 'value'} /> :
-          <PerformanceChart testId="perf-chart" compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
+          <PerformanceChart testId="perf-chart" baseline={pf.fine && pf.mode === 'value' ? 'tight' : undefined} compact dates={pf.chartDates} primary={pf.primary} secondary={pf.secondary}
             kind={pf.mode === 'return' ? 'pct' : pf.mode === 'gain' ? 'gain' : 'money'} height={176} baseline="auto"
             liveDot={app.spotStatus && !app.spotStatus.error && app.spotStatus.fetchedAt ? 'live' : 'static'}
             cursor={pf.ci != null ? pf.ci - pf.c0 : null} onCursor={pf.onCursor}

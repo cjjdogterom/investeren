@@ -329,15 +329,21 @@ async function supabaseSaveSettings(client, state) {
 // van anderen. Bestaat de rij nog niet, dan niets doen.
 // Dagverloop: de totale waarde meermaals per dag in een eigen rij (portfolio/id 'intraday'), los van het hoofddocument.
 // points = [[epochSeconden, totaal, nettoIngelegd], …], één punt per 5 minuten, 8 dagen bewaard.
-const INTRADAY_STEP_S = 300, INTRADAY_KEEP_S = 8 * 86400;
+const INTRADAY_STEP_S = 300, INTRADAY_KEEP_S = 8 * 86400, INTRADAY_KEEP_LONG_S = 35 * 86400;
 function intradayMerge(a, b) {
   const map = new Map();
   for (const p of [...(a || []), ...(b || [])]) {
     if (!Array.isArray(p) || !(p[0] > 0) || !Number.isFinite(+p[1])) continue;
     map.set(Math.floor(p[0] / INTRADAY_STEP_S), [Math.round(p[0]), Math.round(p[1] * 100) / 100, Math.round((+p[2] || 0) * 100) / 100]);
   }
-  const min = Date.now() / 1000 - INTRADAY_KEEP_S;
-  return [...map.values()].filter(p => p[0] >= min).sort((x, y) => x[0] - y[0]);
+  // Laatste 8 dagen per 5 minuten, daarna één punt per uur tot 35 dagen (voor week- en maandgrafiek).
+  const now = Date.now() / 1000, fine = now - INTRADAY_KEEP_S, min = now - INTRADAY_KEEP_LONG_S;
+  const out = new Map();
+  for (const p of [...map.values()].sort((x, y) => x[0] - y[0])) {
+    if (p[0] < min) continue;
+    out.set(p[0] >= fine ? 'f' + Math.floor(p[0] / INTRADAY_STEP_S) : 'h' + Math.floor(p[0] / 3600), p);
+  }
+  return [...out.values()];
 }
 async function supabaseLoadIntraday(client) {
   const { data, error } = await client.from('portfolio').select('data').eq('id', 'intraday').maybeSingle();

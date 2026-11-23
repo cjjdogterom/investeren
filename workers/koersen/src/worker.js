@@ -128,7 +128,7 @@ async function grafiek(symbol, range) {
 // ── Dagverloop (cron, elke 5 minuten): totale waarde doorrekenen en opslaan, ook als de app dicht is ──
 // De app publiceert een recept (portfolio/id 'intraday-recipe': totaal + aantallen per symbool). Bij een nieuw recept
 // leggen we de koersen van dat moment vast als referentie; daarna: totaal + Σ aantal × (koers nu − referentie), in euro.
-const INTRA_STEP = 300, INTRA_KEEP = 8 * 86400;
+const INTRA_STEP = 300, INTRA_KEEP = 8 * 86400, INTRA_KEEP_LONG = 35 * 86400;
 async function sb(env, method, path, body) {
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
     method, body: body ? JSON.stringify(body) : undefined,
@@ -185,7 +185,9 @@ async function intradayTick(env) {
   const t = Math.floor(Date.now() / 1000);
   const map = new Map();
   for (const p of [...((get("intraday") || {}).points || []), [t, Math.round(total * 100) / 100, recipe.net || 0]]) {
-    if (Array.isArray(p) && p[0] > t - INTRA_KEEP && Number.isFinite(+p[1])) map.set(Math.floor(p[0] / INTRA_STEP), p);
+    // Laatste 8 dagen per 5 minuten, daarna één punt per uur tot 35 dagen (week- en maandgrafiek in de app).
+    if (!Array.isArray(p) || !(p[0] > t - INTRA_KEEP_LONG) || !Number.isFinite(+p[1])) continue;
+    map.set(p[0] > t - INTRA_KEEP ? "f" + Math.floor(p[0] / INTRA_STEP) : "h" + Math.floor(p[0] / 3600), p);
   }
   const points = [...map.values()].sort((a, b) => a[0] - b[0]);
   await sb(env, "POST", "portfolio?on_conflict=id", { id: "intraday", data: { points } });

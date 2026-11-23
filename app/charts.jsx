@@ -141,7 +141,13 @@ function chMonthTicks(dates, maxLabels = 6) {
   const sameYear = first.slice(0, 4) === last.slice(0, 4);
   let cands = [];
   if (span <= 40) {
-    dates.forEach((dd, i) => { if (new Date(dd + 'T00:00:00Z').getUTCDay() === 1) cands.push({ index: i, label: `${+dd.slice(8, 10)} ${MONTHS_NL[+dd.slice(5, 7) - 1]}` }); });
+    const fine = dates.some(dd => dd.length > 10);
+    dates.forEach((dd, i) => {
+      const day = dd.slice(0, 10);
+      if (i > 0 && dates[i - 1].slice(0, 10) === day) return;   // één label per dag
+      const dow = new Date(day + 'T00:00:00Z').getUTCDay();
+      if (fine && span <= 9 ? true : dow === 1) cands.push({ index: i, label: `${+dd.slice(8, 10)} ${MONTHS_NL[+dd.slice(5, 7) - 1]}` });
+    });
     if (cands.length > maxLabels) { const k = Math.ceil(cands.length / maxLabels); cands = cands.filter((_, j) => j % k === 0); }
   } else {
     const starts = [];
@@ -266,6 +272,7 @@ function PerformanceChart({
     let lo, hi;
     if (signed) { lo = Math.min(0, mn); hi = Math.max(0, mx); }
     else if (baseline === 'auto') { lo = Math.min(mn * 0.92, mn); hi = mx; }
+    else if (baseline === 'tight') { const pad = Math.max((mx - mn) * 0.12, Math.abs(mx) * 0.002, 1); lo = mn - pad; hi = mx + pad; }
     else { lo = Math.min(0, mn); hi = mx; }
     const nt = chNiceTicks(lo, hi, 4);
     const y = v => H - (v - nt.lo) / (nt.hi - nt.lo || 1) * H;
