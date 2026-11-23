@@ -288,7 +288,7 @@ function OvExplainer() {
 // ===================================================================
 function useOvPerformance(app) {
   const { model, prefs, isMobile } = app;
-  const periodList = isMobile ? OV_PERIODS_ALL : PERIODS;
+  const periodList = OV_PERIODS_ALL;   // ook op de Mac: 1D en 1W (fijnmazig, met slider)
   const privacy = !!prefs.privacy;
   const peIds = useMemo(() => model.chartIds.filter(id => model.byId[id] && assetClassOf(model.byId[id].party) === 'pe'), [model]);
   const hasPE = peIds.length > 0;
