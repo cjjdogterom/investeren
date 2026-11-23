@@ -319,10 +319,10 @@ function useOvPerformance(app) {
     if (!(Math.abs(series.value[c0] || 0) > min)) c0 = r.i0;
   }
 
-  // Week: één punt per 10 minuten, maand: één punt per 5 uur, uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
+  // Week: één punt per 10 minuten, maand: één punt per uur (24 per dag), uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
   // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
   const intra = app.intraday || [];
-  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 5 * 3600 : 0) : 0;
+  const hyStep = !exclPE && prefs.chartMode !== 'return' ? (periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
   const hy = useMemo(() => {
     if (!hyStep || !r.enabled || intra.length < 2) return null;
     const pad = v => String(v).padStart(2, '0');
