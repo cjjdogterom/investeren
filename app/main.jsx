@@ -1441,14 +1441,16 @@ function App() {
       for (const t of state.transactions || []) {
         if (t.party !== 'trading212' || !/^txn:/.test(t._t212Id || '') || !/T212:(DEPOSIT|WITHDRAW)$/.test(t.note || '')) continue;
         const at = Date.parse(t._t212At || '');
-        if (!at || now - at > MAX || next[t.id] || at <= asOf) continue;
+        if (!at || now - at > (t.type === 'opname' ? 10 * 86400000 : MAX) || next[t.id] || at <= asOf) continue;
         next[t.id] = { amt: +t.amountEur || 0, dir: t.type === 'inleg' ? -1 : 1, base: fo.bedrag, at: t._t212At };
         ch = true;
       }
       for (const [id, pd] of Object.entries(next)) {
         const moved = (fo.bedrag - pd.base) * pd.dir;
         const gone = !(state.transactions || []).some(t => t.id === id);
-        if (gone || moved >= pd.amt * 0.8 || now - Date.parse(pd.at) > MAX) { delete next[id]; ch = true; }
+        // Opname naar de bank duurt een paar werkdagen: tot 10 dagen wachten; storting naar Trading 212 tot 4 dagen.
+        const maxAge = pd.dir > 0 ? 10 * 86400000 : MAX;
+        if (gone || moved >= pd.amt * 0.8 || now - Date.parse(pd.at) > maxAge) { delete next[id]; ch = true; }
       }
       return ch ? next : prev;
     });
@@ -2279,14 +2281,30 @@ function App() {
   // 3) Het vrije saldo van Trading 212 (uit de API) gaat naar Financieel: daar is het de controle op de
   //    rekening "Trading 212" (de T212-kaart betaalt van dit saldo).
   const t212Vrij = t212Live && t212Live.account && Number.isFinite(+t212Live.account.free) ? Math.round(+t212Live.account.free * 100) / 100 : null;
+  // Opnames van Trading 212 naar de bank (laatste 30 dagen) gaan mee, zodat Financieel ze als 'onderweg' kan tonen,
+  // laten aanvinken als ontvangen of automatisch herkennen aan het bedrag. Staat de opname nog niet in de historie van
+  // Trading 212 maar is het geld al van de rekening (kasverschil), dan gaat hij mee als voorlopig (bevestigd: false).
+  const t212Opnames = React.useMemo(() => {
+    const van = addDaysIso(todayIsoLocal(), -30);
+    const lijst = (state.transactions || [])
+      .filter(t => t.party === 'trading212' && t.type === 'opname' && /T212:WITHDRAW$/.test(t.note || '') && t.date >= van && +t.amountEur > 0)
+      .map(t => ({ id: t._t212Id || t.id, datum: t.date, tijd: t._t212At || null, bedrag: Math.round(+t.amountEur * 100) / 100, bevestigd: true }));
+    const s212 = model && model.byId && model.byId.trading212;
+    const gap = s212 && s212.stocks && s212.stocks.onderweg > 0 ? Math.round(s212.stocks.onderweg * 100) / 100 : 0;
+    if (gap >= 5 && !lijst.some(o => o.datum >= addDaysIso(todayIsoLocal(), -3) && Math.abs(o.bedrag - gap) < 1)) {
+      lijst.push({ id: 't212-onderweg', datum: todayIsoLocal(), tijd: null, bedrag: gap, bevestigd: false });
+    }
+    return lijst.sort((a, b) => a.datum.localeCompare(b.datum));
+  }, [state.transactions, model]);
+  const t212OpnamesSig = JSON.stringify(t212Opnames);
   React.useEffect(() => {
     if (!financieelSleutel || t212Vrij == null) return;
     fetch(finBelUrl('/t212saldo'), {
       method: 'POST', cache: 'no-store',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ vrij: t212Vrij, valuta: 'EUR' }),
+      body: JSON.stringify({ vrij: t212Vrij, valuta: 'EUR', opnames: t212Opnames }),
     }).catch(() => { /* volgende keer opnieuw */ });
-  }, [financieelSleutel, t212Vrij]); // eslint-disable-line
+  }, [financieelSleutel, t212Vrij, t212OpnamesSig]); // eslint-disable-line
   // Verwerken zodra er een lijst is en de gesyncte transacties er zijn; ook na elke pull (idempotent:
   // vaste id's 'fin-<id>', en finBelMerge geeft null als er niets te doen is).
   React.useEffect(() => {
