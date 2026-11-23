@@ -982,8 +982,15 @@ function summarizeT212Live(party, txs, st, live, quotes) {
   });
   const currentValueEur = a.total != null ? a.total : cash + positions.reduce((s2, x) => s2 + x.value, 0);
   const base = st || { contributed: currentValueEur - (a.unrealized || 0) - (a.realized || 0), realized: a.realized || 0, realizedCost: 0, realizedProceeds: 0, income: 0, dividends: 0, cashback: 0, fees: 0 };
+  // Kasverschil: de cash volgens de historie wijkt af van de live cash bij Trading 212. Dan is er geld de rekening uit (of in)
+  // gegaan dat nog niet in de historie staat, bijv. een opname of overboeking die Trading 212 pas later meldt. Dat is geen
+  // verlies: we behandelen het als opname/inleg 'onderweg' tot de boeking in de historie verschijnt (dan is het verschil weg).
+  const histCash = st && Number.isFinite(st.cash) ? st.cash : null;
+  const gap = histCash != null ? histCash - cash : 0;
+  const onderweg = Math.abs(gap) >= 5 ? Math.round(gap * 100) / 100 : 0;
+  const contributed = base.contributed - onderweg;
   // Netto ingelegd uit de historie; kostprijs zo gekozen dat kostprijs − gerealiseerd = netto ingelegd.
-  const costBasis = base.contributed + base.realized;
+  const costBasis = contributed + base.realized;
   const invested = costBasis + base.realizedCost;
   const pnl = currentValueEur - costBasis + base.realized;
   return {
@@ -993,11 +1000,11 @@ function summarizeT212Live(party, txs, st, live, quotes) {
     invested,
     lastValuationDate: null,
     totalDividend: base.dividends, totalFees: base.fees, totalIncome: base.income,
-    totalCashback: base.cashback, netCashIn: base.contributed,
+    totalCashback: base.cashback, netCashIn: contributed,
     realizedCostBasis: base.realizedCost, realizedProceeds: base.realizedProceeds, realizedPnl: base.realized,
     pnl, pnlPct: invested > 0 ? (pnl / invested) * 100 : 0,
     bookedQuantity: null, chainCheckedAt: null,
-    stocks: { positions, cash, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [], startDate: st && st.startDate },
+    stocks: { positions, cash, onderweg, live: true, fetchedAt: live.fetchedAt, account: a, missingQuotes: [], startDate: st && st.startDate },
   };
 }
 
@@ -2111,7 +2118,8 @@ function holdingQtyText(s) {
 function stockSummaryText(s) {
   const pos = s.stocks.positions;
   const names = pos.slice(0, 3).map(x => x.symbol).join(' · ') + (pos.length > 3 ? ` +${pos.length - 3}` : '');
-  const cash = s.stocks.cash >= 0.005 ? `${fmtMoney(s.stocks.cash, { decimals: 2 })} kas` : '';
+  const cash = (s.stocks.cash >= 0.005 ? `${fmtMoney(s.stocks.cash, { decimals: 2 })} kas` : '')
+    + (s.stocks.onderweg ? `${s.stocks.cash >= 0.005 ? ' · ' : ''}${fmtMoney(Math.abs(s.stocks.onderweg), { decimals: 2 })} ${s.stocks.onderweg > 0 ? 'opgenomen' : 'gestort'}, nog niet in historie` : '');
   return [names || 'Geen posities', cash].filter(Boolean).join(' · ');
 }
 
