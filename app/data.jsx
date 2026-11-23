@@ -2296,10 +2296,20 @@ function txAmountInfo(t, party) {
   return { text: fmtMoney(signed, { decimals: 2, sign: true }), tone: income ? 'income' : 'neutral', sign: plus ? '+' : '−' };
 }
 
-function txDetailsText(t, party) {
+// Bitcoinkoers (EUR) per dag, voor de koers 'op dat moment' bij Finst-boekingen. Gezet vanuit de app (state.btcHistory).
+let TX_BTC_HIST = [];
+function setTxBtcHistory(h) { TX_BTC_HIST = Array.isArray(h) ? h : []; }
+function btcPriceOn(date) {
+  let v = null;
+  for (const h of TX_BTC_HIST) { if (h.date <= date) v = +h.nav; else break; }
+  return v > 0 ? v : null;
+}
+function txDetailsTextBase(t, party) {
   if (t.type === 'overboeking') return txTransferText(t, party);
   const prefix = t.instrument ? `${t.instrument} · ` : '';
-  const qty = +t.quantity || 0, px = +t.unitPriceEur || 0;
+  const qty = +t.quantity || 0;
+  // Geen prijs ingevuld maar wel bedrag en hoeveelheid: prijs per eenheid = bedrag ÷ hoeveelheid.
+  const px = +t.unitPriceEur || (qty > 0 && +t.amountEur > 0 && (t.type === 'koop' || t.type === 'verkoop') ? +t.amountEur / qty : 0);
   if (qty > 0 && px > 0) {
     const isCrypto = party && party.unit === 'crypto';
     return prefix + fmtQty(qty, txUnitLabel(t, party), isCrypto ? { decimals: 8 } : {}) + ' × ' + fmtMoney(px, { decimals: 2 });
@@ -2308,6 +2318,14 @@ function txDetailsText(t, party) {
   if (t.valueEur != null && t.valueEur !== '') return prefix + '= ' + fmtMoney(+t.valueEur, { decimals: 2 });
   if (px) return prefix + 'NAV ' + fmtMoney(px, { decimals: 2 });
   return t.instrument || '';
+}
+function txDetailsText(t, party) { return txDetailsTextBase(t, party); }
+// Finst: bitcoinkoers van die dag, op een eigen regel in de lijst.
+function txBtcNote(t) {
+  const id = String((t && t.party) || '');
+  if (!id.startsWith('finst') || t.type === 'waardering' || !t.date) return null;
+  const b = btcPriceOn(t.date);
+  return b ? `BTC-koers ${fmtMoney(b, { decimals: 0 })}` : null;
 }
 
 // ----- Series and model -----
@@ -3010,7 +3028,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, isSmallAutoTx, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

@@ -1307,6 +1307,7 @@ function App() {
   const chainBalancesRef = React.useRef(chainBalances);
   chainBalancesRef.current = chainBalances;
   const chainTargetsRef = React.useRef([]);
+  setTxBtcHistory(state.btcHistory);   // bitcoinkoers per dag voor Finst-boekingen
   const refreshChainRef = React.useRef(null);
   React.useEffect(() => { try { localStorage.setItem(CHAIN_CACHE_KEY, JSON.stringify(chainBalances)); } catch (e) { /* ignore */ } }, [chainBalances]);
   const [stockQuotes, setStockQuotes] = React.useState(loadStockCache);

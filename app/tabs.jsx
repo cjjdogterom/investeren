@@ -28,6 +28,7 @@ injectStyles('tabs', `
 .tr-table .tr-month td { position: sticky; top: calc(var(--topbar-h) + 31px); background: var(--surface-2); color: var(--fg); font-weight: 600; font-size: 12.5px; height: 32px; cursor: default; }
 .tr-table .tr-month:hover { background: none; }
 .tr-month__meta { color: var(--fg-muted); font-weight: 500; margin-left: 6px; }
+.tr-btc { color: #c77700; font-size: 12px; }
 .tr-small-row td { padding: 0 !important; height: auto !important; }
 .tr-small-row:hover { background: none; }
 .tr-small { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 16px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
@@ -179,7 +180,10 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                   <td className="tr-tnum tr-ell">{trDay(tx.date)}</td>
                   <td><span className="tr-type"><Icon name={trTypeIcon(tx.type)} size={14} /><span className="tr-ell">{trShortLabel(tx.type)}</span>{isFinBelAanvullen(tx) && <TrAanvulPill />}</span></td>
                   {showParty && <td><TrPartyCell party={party} id={tx.party} /></td>}
-                  <td className="tr-tnum tr-ell tr-muted" title={txDetailsText(tx, party)}>{txDetailsText(tx, party)}</td>
+                  <td className="tr-tnum tr-muted" title={txDetailsText(tx, party)}>
+                    <span className="tr-ell" style={{ display: 'block' }}>{txDetailsText(tx, party)}</span>
+                    {txBtcNote(tx) && <span className="tr-ell tr-btc" style={{ display: 'block' }}>{txBtcNote(tx)}</span>}
+                  </td>
                   <td className="num"><TrAmount tx={tx} party={party} /></td>
                   <td className="num"><TrFee tx={tx} /></td>
                   <td className="tr-ell tr-muted" title={tx.note || ''}>{tx.note || ''}</td>
@@ -220,6 +224,7 @@ function TrMobileRow({ app, tx, showParty }) {
         <span className="tr-mrow__title">{title}{isFinBelAanvullen(tx) && <> <TrAanvulPill /></>}</span>
         <span className="tr-mrow__sub">{sub}</span>
         {details && <span className="tr-mrow__sub num">{details}</span>}
+        {txBtcNote(tx) && <span className="tr-mrow__sub num tr-btc">{txBtcNote(tx)}</span>}
       </span>
       <span className="tr-mrow__end">
         <TrAmount tx={tx} party={party} className="tr-mrow__amt" />
