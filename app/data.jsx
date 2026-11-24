@@ -163,9 +163,20 @@ function financieelOverSummary(party, fo) {
 const FIN_BEL_API_URL = 'https://financieel.financieel-chris.workers.dev/api/beleggingen';
 const FIN_BEL_AANVULLEN = 'fin:aanvullen';
 const FIN_BEL_AUTO = 'fin:auto';
+// Opname uit Financieel op een positie met stukken: eerst 'vraag' (hoeveel heb je bij de aanbieder opgenomen?),
+// na het antwoord 'ok' (feeEur = opgenomen − ontvangen = opnamekosten).
+const FIN_BEL_OPNAME = 'fin:opname';
+const FIN_BEL_OPNAME_OK = 'fin:opname-ok';
 function finBelTxId(finId) { return 'fin-' + String(finId); }
 function isFinBelAanvullen(t) { return !!t && t._t212Id === FIN_BEL_AANVULLEN; }
-function isFinBelManaged(t) { return !!t && (t._t212Id === FIN_BEL_AANVULLEN || t._t212Id === FIN_BEL_AUTO); }
+function isFinBelManaged(t) { return !!t && (t._t212Id === FIN_BEL_AANVULLEN || t._t212Id === FIN_BEL_AUTO || t._t212Id === FIN_BEL_OPNAME || t._t212Id === FIN_BEL_OPNAME_OK); }
+function isFinOpnameVraag(t) { return !!t && t._t212Id === FIN_BEL_OPNAME; }
+function finStukPartij(party) { return !!party && party.unit !== 'eur' && party.unit !== 'bundle' && party.unit !== 'post'; }
+// Opname uit Financieel (zonder aantal) op een positie met stukken: gaat van de vrije kas in die positie af.
+// Ontvangen = amountEur (wat op je rekening kwam), opnamekosten = feeEur; samen = wat er uit de positie ging.
+function finBelCashOut(t, party) {
+  return !!t && t.type === 'opname' && (t._t212Id === FIN_BEL_OPNAME || t._t212Id === FIN_BEL_OPNAME_OK || String(t.id || '').indexOf('fin-') === 0) && !(+t.quantity > 0) && finStukPartij(party);
+}
 // Een openstaande boeking is een 'inleg' met alleen een bedrag. Bij eur/bundle telt een inleg al als
 // ingelegd én waarde. Bij stuk-partijen (part/crypto/gram/ounce/mixed) zou een inleg zonder aantal nergens
 // meetellen; daar rekenen we hem als geld onderweg tegen kostprijs: ingelegd = waarde = bedrag, winst 0.
@@ -251,8 +262,10 @@ function finBelMerge(transactions, beleggingen, opts = {}) {
     if (!partyIds.has(b.positie)) unknown++;
     if (!cur && tomb[id]) continue;
     // Opname (geld terug naar de betaalrekening): gewoon een opname op die positie, hoeft niet aangevuld te worden.
+    const stukOpname = b.soort === 'opname' && finStukPartij((opts.parties || []).find(x => x && x.id === b.positie));
     const want = b.soort === 'opname'
-      ? { id, party: b.positie, type: 'opname', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: FIN_BEL_AUTO }
+      ? { id, party: b.positie, type: 'opname', date: b.datum, amountEur: b.bedrag, note: finBelNote(b),
+          _t212Id: !stukOpname ? FIN_BEL_AUTO : (cur && cur._t212Id === FIN_BEL_OPNAME_OK && Math.abs((+cur.amountEur || 0) - b.bedrag) < 0.005 ? FIN_BEL_OPNAME_OK : FIN_BEL_OPNAME) }
       : { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: isT212 ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
     if (!cur) { upserts.set(id, { ...want, updatedAt: now }); added++; continue; }
     const same = ['party', 'type', 'date', 'amountEur', 'note', '_t212Id'].every(k => (cur[k] ?? null) === (want[k] ?? null));
@@ -1120,6 +1133,14 @@ function summarizePartyBase(party, transactions, spots, ctx) {
       netCashIn += a;
       continue;
     }
+    if (finBelCashOut(t, party)) {
+      const a = +t.amountEur || 0, f = Math.max(0, +t.feeEur || 0);
+      pendingEur -= a + f;     // uit de vrije kas
+      netCashIn -= a;          // ontvangen = minder ingelegd
+      realizedPnl -= f;        // opnamekosten = verlies
+      totalFees += f;
+      continue;
+    }
     // Transactiekosten tellen mee in costBasis (echte netto-investering)
     if (t.feeEur) {
       totalFees += +t.feeEur;
@@ -1602,6 +1623,7 @@ function buildPartyTimeSeries(transactions, parties, spots) {
       const s = state[t.party]; if (!s) { ti++; continue; }
       const p = parties.find(x => x.id === t.party);
       if (finBelPendingAtCost(t, p)) { s.pending += +t.amountEur || 0; ti++; continue; } // tegen kostprijs, zie summarizeParty
+      if (finBelCashOut(t, p)) { s.pending -= (+t.amountEur || 0) + Math.max(0, +t.feeEur || 0); ti++; continue; } // uit de vrije kas
       if (t.feeEur) s.cost += +t.feeEur; // fees tellen mee in investering
       switch (t.type) {
         case 'inleg':
@@ -2192,6 +2214,12 @@ function holdingPriceText(s, spots = {}) {
 }
 
 function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
+  const base = holdingSublineBase(s, spots, todayIso);
+  const kas = s.party && s.party.unit === 'post' ? (s.leaves || []).reduce((a, l) => a + (+l.pendingEur || 0), 0) : (+s.pendingEur || 0);
+  if (base && Math.abs(kas) >= 0.5) return { ...base, text: `${base.text} · vrije kas ${fmtMoney(kas)}` };
+  return base;
+}
+function holdingSublineBase(s, spots = {}, todayIso = todayIsoLocal()) {
   const p = s.party, px = s.currentUnitPrice;
   if (s.external && s.external.kind === 'financieelOver') {
     return { text: p.subtitle || financieelOverSubtitle(s.external.financieelOver), staleDays: s.external.staleDays };
@@ -3210,7 +3238,7 @@ Object.assign(window, {
   ASSET_CLASSES, ASSET_CLASS_BY_KEY, assetClassOf, partyColorOf, monogramOf, PARTY_LOGOS, partyLogo,
   PARTY_UNIT_OPTIONS, CATEGORY_OPTIONS, CUSTOM_CATEGORY_VALUE, COLOR_PRESETS,
   TX_TYPE_META, allowedTxTypes, txUnitLabel, txGross, txNetTotal, txAmountInfo, txDetailsText,
-  FIN_BEL_API_URL, FIN_BEL_AANVULLEN, FIN_BEL_AUTO, finBelTxId, isFinBelAanvullen, isFinBelManaged, finBelPendingAtCost, finBelCompletionType, finBelPosities, finBelPartyLabel, finBelOpenTitle, finBelNormalize, finBelMerge,
+  FIN_BEL_API_URL, FIN_BEL_AANVULLEN, FIN_BEL_AUTO, FIN_BEL_OPNAME, FIN_BEL_OPNAME_OK, isFinOpnameVraag, finBelCashOut, finStukPartij, finBelTxId, isFinBelAanvullen, isFinBelManaged, finBelPendingAtCost, finBelCompletionType, finBelPosities, finBelPartyLabel, finBelOpenTitle, finBelNormalize, finBelMerge,
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,

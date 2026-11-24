@@ -628,10 +628,72 @@ function OvAttentionCard({ app, items }) {
 // Open beleggingen uit Financieel (bovenaan, zodat je ze niet vergeet)
 // ===================================================================
 const OV_FIN_MAX = 5;
+// Opname uit Financieel: hoeveel heb je bij de aanbieder opgenomen? Verschil met wat je ontving = opnamekosten.
+function OvFinOpnameSheet({ app, tx, onClose }) {
+  const [val, setVal] = useState(() => alNumNl(+tx.amountEur || 0));
+  const parties = (app.model && app.model.allParties) || [];
+  const s = app.model && app.model.byId && app.model.byId[tx.party];
+  const ontvangen = +tx.amountEur || 0;
+  const opgenomen = parseNlNumber(val);
+  const kosten = opgenomen != null ? Math.round((opgenomen - ontvangen) * 100) / 100 : null;
+  const ok = opgenomen != null && kosten >= 0;
+  const kas = s ? (+s.pendingEur || 0) + ontvangen + (+tx.feeEur || 0) : null; // vrije kas vóór deze opname
+  const save = () => {
+    if (!ok) return;
+    app.setSyncedState(st => ({ ...st, transactions: (st.transactions || []).map(t => (t.id === tx.id
+      ? { ...t, feeEur: kosten > 0 ? kosten : undefined, _t212Id: FIN_BEL_OPNAME_OK, updatedAt: new Date().toISOString() } : t)) }));
+    if (app.toast) app.toast(kosten > 0 ? `Opgeslagen: ${fmtMoney(kosten, { decimals: 2 })} opnamekosten` : 'Opgeslagen: geen opnamekosten');
+    onClose();
+  };
+  return (
+    <Sheet open onClose={onClose} title="Opname invullen" subtitle={`${finBelPartyLabel(parties, tx.party)} · ${fmtDateLong(tx.date)}`} width={440}
+      footer={<div className="ps-formfoot"><Button variant="ghost" onClick={onClose}>Later</Button><Button variant="primary" disabled={!ok} onClick={save} data-testid="fin-opname-save">Opslaan</Button></div>}>
+      <div className="ov-inleg">
+        <div className="ov-inleg__grid">
+          <div><span>Ontvangen op je rekening</span><b>{fmtMoney(ontvangen, { decimals: 2 })}</b></div>
+          <div><span>Opnamekosten</span><b>{kosten == null ? '—' : fmtMoney(Math.max(0, kosten), { decimals: 2 })}</b></div>
+        </div>
+        <Field label={`Hoeveel heb je bij ${finBelPartyLabel(parties, tx.party)} opgenomen?`} htmlFor="fin-opn" error={kosten != null && kosten < 0 ? 'Kan niet minder zijn dan wat je ontving' : undefined}>
+          <MoneyInput id="fin-opn" large value={val} onChange={setVal} autoFocus data-testid="fin-opname-input" />
+        </Field>
+        <p className="ov-inleg__note">Het bedrag gaat eerst af van de vrije kas in deze positie{kas != null ? ` (${fmtMoney(Math.max(0, kas), { decimals: 2 })} vóór deze opname)` : ''}: geld dat je erheen stortte maar niet belegde. Het verschil met wat je ontving telt als kosten. Heb je ook munten of stukken verkocht? Boek dan een verkoop.</p>
+      </div>
+    </Sheet>
+  );
+}
+function alNumNl(v) { return new Intl.NumberFormat('nl-NL', { useGrouping: false, maximumFractionDigits: 2 }).format(v); }
+
 function OvFinOpen({ app }) {
-  const list = ((app.state && app.state.transactions) || []).filter(isFinBelAanvullen)
+  const [opn, setOpn] = useState(null);
+  const all = (app.state && app.state.transactions) || [];
+  const vragen = all.filter(isFinOpnameVraag).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const list = all.filter(isFinBelAanvullen)
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-  if (!list.length) return null;
+  const opnSheet = opn ? <OvFinOpnameSheet app={app} tx={opn} onClose={() => setOpn(null)} /> : null;
+  const vraagCard = vragen.length ? (
+    <Card className="ov-fin" data-testid="ov-fin-opname" padding={app.isMobile ? 14 : 16}
+      title={<><Icon name="arrow-left-right" size={16} />{vragen.length === 1 ? '1 opname invullen' : `${vragen.length} opnames invullen`}</>}>
+      <p className="ov-fin__note">Uit Financieel: geld terug op je rekening. Vul in hoeveel je bij de aanbieder opnam; het verschil zijn opnamekosten.</p>
+      <div className="ov-fin__list">
+        {vragen.slice(0, OV_FIN_MAX).map(tx => {
+          const party = ((app.model && app.model.allParties) || []).find(p => p.id === tx.party) || null;
+          return (
+            <ListRow key={tx.id} testId={`ov-opn-${tx.id}`}
+              leading={party ? <Monogram party={party} size={28} /> : null}
+              title={finBelPartyLabel((app.model && app.model.allParties) || [], tx.party)}
+              subtitle={`${fmtDateLong(tx.date)} · ontvangen`}
+              value={<Money value={+tx.amountEur || 0} decimals={2} />}
+              secondary={<Button size="sm" variant="primary" icon="pencil" onClick={() => setOpn(tx)}>Invullen</Button>} />
+          );
+        })}
+      </div>
+    </Card>
+  ) : null;
+  if (!list.length) return vraagCard || opnSheet ? <>{vraagCard}{opnSheet}</> : null;
+  if (vraagCard || opnSheet) return <>{vraagCard}{opnSheet}<OvFinOpenList app={app} list={list} /></>;
+  return <OvFinOpenList app={app} list={list} />;
+}
+function OvFinOpenList({ app, list }) {
   const parties = (app.model && app.model.allParties) || [];
   const shown = list.slice(0, OV_FIN_MAX);
   const total = list.reduce((a, t) => a + (+t.amountEur || 0), 0);
@@ -639,7 +701,7 @@ function OvFinOpen({ app }) {
     <Card className="ov-fin" data-testid="ov-fin-open" padding={app.isMobile ? 14 : 16}
       title={<><Icon name="pencil" size={16} />{finBelOpenTitle(list.length)}</>}
       meta={list.length > 1 ? <Money value={total} decimals={2} /> : null}>
-      <p className="ov-fin__note">Uit Financieel (Vermogensopbouw). Tot je ze aanvult tellen ze als ingelegd tegen kostprijs.</p>
+      <p className="ov-fin__note">Uit Financieel (Vermogensopbouw). Tot je ze aanvult staan ze als vrije kas in die positie (ingelegd = waarde).</p>
       <div className="ov-fin__list">
         {shown.map(tx => {
           const party = parties.find(p => p.id === tx.party) || null;
