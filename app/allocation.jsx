@@ -121,6 +121,10 @@ injectStyles('allocation', `
 .al-mp__max { display: grid; gap: 6px; font-size: 13px; color: var(--fg-muted); max-width: 260px; }
 .al-mp__list { display: grid; }
 .al-mp__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.al-mp__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.al-mp__edit { display: grid; }
+.al-mp__pct { color: var(--fg-subtle); font-size: 12px; margin-left: 4px; }
+.al-mp__tot { font-weight: 600; }
 .al-mp__amt { display: grid; justify-items: end; gap: 2px; }
 .al-mp__amt b { font-weight: 650; }
 .al-mp__amt small { font-size: 12px; color: var(--fg-muted); }
@@ -420,6 +424,108 @@ function AlVerdelingView({ app }) {
 // 2. De rest gaat naar de onderdelen die het verst onder hun doel zitten (computeAllocation).
 // Gerekend vanaf de stand aan het begin van de maand, zodat het plan niet verschuift terwijl je inlegt;
 // 'al gedaan' = netto inleg deze maand, 'nog' = plan − al gedaan.
+// Vaste verdeling van je maandbedrag: per positie een percentage dat bewaard blijft (monthlyPlan.split).
+// Elke maand vul je in wat je overhoudt; per positie zie je wat je stort (op hele euro's), min wat je deze maand al inlegde.
+function AlFixedSplit({ app, amount }) {
+  const privacy = usePrivacy();
+  const money = (v, o) => (privacy ? '€ •••••' : fmtMoney(v, o));
+  const model = app.model;
+  const saved = ((app.state && app.state.monthlyPlan) || {}).split || {};
+  const savedKey = JSON.stringify(saved);
+  const [draft, setDraft] = useState(saved);
+  const pending = useRef(false);
+  useEffect(() => { if (!pending.current) setDraft(saved); }, [savedKey]); // eslint-disable-line
+  const write = useDebouncedCallback(next => {
+    pending.current = false;
+    app.setSyncedState(s => ({ ...s, monthlyPlan: { ...(s.monthlyPlan || {}), split: next, updatedAt: new Date().toISOString() } }));
+  }, 400);
+  const setPct = (id, v) => {
+    const next = { ...draft };
+    if (v === '' || !(+v > 0)) delete next[id]; else next[id] = +v;
+    pending.current = true; setDraft(next); write(next); setEditing(true);
+  };
+  const [editing, setEditing] = useState(false);
+
+  const [showAll, setShowAll] = useState(false);
+  // Kiesbare posities: zonder Vrij op rekening; een crypto-post (Finst, Wallet) per munt. Standaard alleen posities met
+  // waarde, een doel of een percentage; 'Alle posities' toont de rest.
+  const all = React.useMemo(() => {
+    const inflow = monthInflowByParty(model);
+    const leaves = model.leavesByPost || {};
+    const out = [];
+    (model.summaries || []).filter(x => x.party.id !== FIN_OVER_PARTY_ID && dtIncluded(x.party)).forEach(x => {
+      const ls = (leaves[x.party.id] || []).filter(l => model.byId[l.id]).map(l => ({ s: model.byId[l.id], name: l.coin ? (l.coin === 'BTC' ? 'Bitcoin' : l.coin === 'ETH' ? 'Ethereum' : l.coin) : l.name }));
+      const list = ls.length ? ls.map(l => ({ s: l.s, label: `${l.name} via ${x.party.name}` })) : [{ s: x, label: x.party.name }];
+      list.forEach(({ s: y, label }) => out.push({
+        key: y.party.id, label, color: partyColorOf(y.party), done: inflow[y.party.id] || 0,
+        main: (y.currentValueEur || 0) > 0.5 || +y.party.goal > 0 || y.party.id === 'buffer',
+      }));
+    });
+    return out;
+  }, [model]);
+  const items = showAll ? all : all.filter(x => x.main || +draft[x.key] > 0);
+  const sum = items.reduce((a, x) => a + (+draft[x.key] || 0), 0);
+  const sumOk = Math.abs(sum - 100) < 0.05;
+  const hasSplit = sum > 0;
+
+  // Bedragen op hele euro's (grootste-restmethode, zodat het totaal precies klopt).
+  const rows = React.useMemo(() => {
+    const act = items.filter(x => +draft[x.key] > 0).map(x => ({ ...x, pct: +draft[x.key], plan: Math.floor(amount * (+draft[x.key]) / 100) }));
+    const target = Math.round(amount * Math.min(100, sum) / 100);
+    // grootste-restmethode: de overgebleven euro's naar de posten met de grootste afgekapte rest
+    let diff = target - act.reduce((a, x) => a + x.plan, 0);
+    [...act].sort((a, b) => (amount * b.pct / 100 - b.plan) - (amount * a.pct / 100 - a.plan)).forEach(x => { if (diff > 0) { x.plan += 1; diff -= 1; } });
+    return act.map(x => ({ ...x, todo: Math.max(0, x.plan - Math.max(0, x.done)) })).sort((a, b) => b.pct - a.pct);
+  }, [items, draft, amount, sum]);
+  const todo = rows.reduce((a, x) => a + x.todo, 0);
+  const normalize = () => { if (sum > 0) { const next = {}; items.forEach(x => { if (+draft[x.key] > 0) next[x.key] = +((+draft[x.key]) / sum * 100).toFixed(1); }); pending.current = true; setDraft(next); write(next); } };
+  const showEdit = editing || !hasSplit;
+
+  return (
+    <div className="al-mp">
+      <div className="al-mp__head">
+        <span className="al-kicker" style={{ margin: 0 }}>Jouw vaste verdeling</span>
+        <span style={{ flex: 1 }} />
+        {hasSplit && <Pill tone={sumOk ? 'neutral' : 'warn'} className="num">{sumOk ? 'Σ 100%' : `Σ ${fmtPct(sum, { decimals: 1, sign: false })}`}</Pill>}
+        {hasSplit && <Button size="sm" variant={showEdit ? 'primary' : 'secondary'} onClick={() => setEditing(!editing)} data-testid="split-edit">{showEdit ? 'Klaar' : 'Aanpassen'}</Button>}
+      </div>
+      {showEdit && (
+        <div className="al-mp__edit">
+          {!hasSplit && <div className="al-msg" style={{ marginTop: 0 }}>Geef per positie aan welk deel van je maandbedrag erheen gaat. Dit wordt onthouden.</div>}
+          {items.map(x => (
+            <div className="al-mp__row" key={x.key}>
+              <span className="al-label"><Swatch color={x.color} />{x.label}</span>
+              <AlTargetInput value={draft[x.key]} onChange={v => setPct(x.key, v)} label={`Deel ${x.label}`} testId={`split-${x.key}`} />
+            </div>
+          ))}
+          {all.length > items.length || showAll ? <button type="button" className="ps-link" style={{ justifySelf: 'start', marginTop: 6 }} onClick={() => setShowAll(!showAll)}>{showAll ? 'Minder posities' : `Alle posities (${all.length})`}</button> : null}
+          {hasSplit && !sumOk && <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="al-msg" style={{ margin: 0 }}>Samen {fmtPct(sum, { decimals: 1, sign: false })}{sum < 100 ? ': de rest blijft onverdeeld.' : ': meer dan 100%.'}</span>
+            <Button size="sm" onClick={normalize}>Schaal naar 100%</Button></div>}
+        </div>
+      )}
+      {!showEdit && amount > 0 && (
+        <div className="al-mp__list">
+          {rows.map(x => (
+            <div className="al-mp__row" key={x.key}>
+              <span className="al-label"><Swatch color={x.color} />{x.label} <small className="al-mp__pct num">{fmtPct(x.pct, { decimals: x.pct % 1 ? 1 : 0, sign: false })}</small></span>
+              <span className="al-mp__amt num">
+                <b>{money(x.plan, { decimals: 0 })}</b>
+                <small>{x.done >= 0.5 ? <>al {money(x.done)} · {x.todo >= 0.5 ? <>nog <b>{money(x.todo, { decimals: 0 })}</b></> : 'klaar ✓'}</> : 'nog niets ingelegd'}</small>
+              </span>
+            </div>
+          ))}
+          <div className="al-mp__row al-mp__tot">
+            <span>Totaal{sum < 99.95 ? ` (${fmtPct(sum, { decimals: 0, sign: false })} verdeeld)` : ''}</span>
+            <span className="al-mp__amt num"><b>{money(rows.reduce((a, x) => a + x.plan, 0), { decimals: 0 })}</b><small>nog {money(todo, { decimals: 0 })} deze maand</small></span>
+          </div>
+        </div>
+      )}
+      {!showEdit && !(amount > 0) && <div className="al-msg" style={{ marginTop: 0 }}>Vul hierboven in wat je deze maand overhoudt.</div>}
+    </div>
+  );
+}
+
 function AlMonthPlan({ app, grouping, targets, sumOk, hasTargets }) {
   const privacy = usePrivacy();
   const money = (v, o) => (privacy ? '€ •••••' : fmtMoney(v, o));
@@ -431,6 +537,8 @@ function AlMonthPlan({ app, grouping, targets, sumOk, hasTargets }) {
     app.setSyncedState(s => ({ ...s, monthlyPlan: { ...(s.monthlyPlan || {}), ...patch, updatedAt: new Date().toISOString() } }));
   }, 400);
   const bufferFirst = saved.bufferFirst !== false;
+  const mode = saved.mode === 'doel' ? 'doel' : 'vast';
+  const finOver = (() => { const fo = normalizeFinancieelOver(app.financieelOver); return fo && fo.bedrag > 0.5 ? Math.floor(fo.bedrag) : null; })();
   const amount = Math.max(0, parseNlNumber(amt) || 0);
   const bufMaxNum = Math.max(0, parseNlNumber(maxBuf) || 0);
 
@@ -485,13 +593,20 @@ function AlMonthPlan({ app, grouping, targets, sumOk, hasTargets }) {
     </div>
   );
   return (
-    <Card title="Maandelijks inleggen" meta={amount > 0 ? `${month} · nog ${money(calc.todo)} te doen` : null}>
+    <Card title="Maandelijks inleggen" meta={amount > 0 && mode === 'doel' ? `${month} · nog ${money(calc.todo)} te doen` : null}>
       <div className="al-mp">
         <div className="al-storten">
           <MoneyInput id="al-mp-amount" large value={amt} placeholder="0" data-testid="monthly-amount" ariaLabel="Bedrag per maand"
             onChange={v => { setAmt(v); write({ amount: Math.max(0, parseNlNumber(v) || 0) }); }} />
+          {finOver != null && Math.round(amount) !== finOver && (
+            <Button variant="secondary" size={app.isMobile ? 'md' : 'lg'} onClick={() => { setAmt(String(finOver)); write({ amount: finOver }); }}
+              title="Wat je volgens je Financieel-systeem deze maand overhoudt">Wat ik overhoud: {money(finOver, { decimals: 0 })}</Button>
+          )}
         </div>
-        <div className="al-msg">Per maand. Je ziet hoeveel je in elk onderdeel stopt om je doelverdeling aan te houden. Wat je deze maand al inlegde, wordt eraf gehaald.</div>
+        <Segmented ariaLabel="Verdelen" size="sm" value={mode} onChange={v => write({ mode: v })}
+          options={[{ value: 'vast', label: 'Vaste verdeling' }, { value: 'doel', label: 'Naar doelverdeling' }]} />
+        {mode === 'vast' ? <AlFixedSplit app={app} amount={amount} /> : <>
+        <div className="al-msg">Je ziet hoeveel je in elk onderdeel stopt om je doelverdeling aan te houden. Wat je deze maand al inlegde, wordt eraf gehaald.</div>
         {calc.pots.length > 0 && (
           <div className="al-mp__buf">
             <Switch checked={bufferFirst} onChange={v => write({ bufferFirst: v })} label={`Eerst ${calc.pots.map(x => x.label.toLowerCase()).join(' en ')} aanvullen tot het doel`}
@@ -515,6 +630,7 @@ function AlMonthPlan({ app, grouping, targets, sumOk, hasTargets }) {
             {hasTargets && sumOk && calc.rows.map(x => row(x))}
           </div>
         )}
+        </>}
       </div>
     </Card>
   );
