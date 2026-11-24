@@ -2106,7 +2106,9 @@ function App() {
   // alleen zolang er nog nooit partijen (of tombstones) waren.
   const allParties = React.useMemo(() => {
     const list = state.parties; const tomb = state.deletedPartyIds || {};
-    return (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? migrateCryptoPosts(list, tomb) : PARTIES;
+    const base = (Array.isArray(list) && (list.length > 0 || Object.keys(tomb).length > 0)) ? migrateCryptoPosts(list, tomb) : PARTIES;
+    // Trading 212 (zonder de goud-/zilver-ETF's, die bij Goud/Zilver staan) heet 'Aandelen'.
+    return base.map(p => (p && p.id === 'trading212' && p.name === 'Trading 212' ? { ...p, name: 'Aandelen', subtitle: 'Trading 212' } : p));
   }, [state.parties, state.deletedPartyIds]);
   const allPartiesRef = React.useRef(allParties);
   useCfdAlerts(allParties, stockQuotesRef, toast);
@@ -2214,7 +2216,7 @@ function App() {
   const flows       = React.useMemo(() => buildFlowSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const valueSeries = React.useMemo(() => buildPartyTimeSeries(valTxs, allParties, spots), [valTxs, allParties, spots]);
   const model       = React.useMemo(
-    () => buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver, financieelHistory: state.financieelHistory }),
+    () => pmRegroup(buildPortfolioModel({ parties: allParties, transactions: valTxs, summaries, flows, valueSeries, spots, financieelOver, financieelHistory: state.financieelHistory })),
     [allParties, valTxs, summaries, flows, valueSeries, spots, financieelOver, state.financieelHistory]
   );
 

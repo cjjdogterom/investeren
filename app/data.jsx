@@ -2200,8 +2200,13 @@ function holdingSubline(s, spots = {}, todayIso = todayIsoLocal()) {
     }
     case 'crypto': return { text: `${holdingQtyText(s)} · ${fmtMoney(px, { decimals: px >= 1000 ? 0 : 2 })}`, staleDays: null };
     case 'post':   return { text: postCoinsText(s), staleDays: null };
-    case 'gram':   return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null };
-    case 'ounce':  return { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`, staleDays: null };
+    case 'gram':
+    case 'ounce': {
+      if (s.pmParts) return { text: s.pmParts.map(x => `${x.key === 'fysiek' ? 'Fysiek' : 'ETF'} ${fmtMoney(x.value)}`).join(' · '), staleDays: null };
+      return kind === 'gram'
+        ? { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null }
+        : { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`, staleDays: null };
+    }
     case 'mixed':  return { text: `Au ${fmtQty(s.goldQty || 0, 'g', { decimals: 2 })} · Ag ${fmtQty(s.silverQty || 0, 'oz', { decimals: 2 })}`, staleDays: null };
     default: {
       const text = s.lastValuationDate ? `Waardering · ${fmtDateShort(s.lastValuationDate, todayIso)}` : (p.subtitle || 'Geen waardering');
@@ -2948,6 +2953,57 @@ function allocPartsOf(s) {
   return [{ category: cat, value: Math.max(0, v - pm) }, { category: 'Edelmetaal', value: Math.min(v, pm) }];
 }
 
+// Goud- en zilver-ETF's uit Trading 212 horen bij de posities Fysiek Goud / Fysiek Zilver (uitklapbaar: fysiek + ETF);
+// Trading 212 houdt de rest (aandelen). Alleen een verschuiving tussen posities: totalen blijven gelijk.
+function pmMetalOf(pos) {
+  const t = `${pos.symbol || ''} ${pos.name || ''}`;
+  if (/silver|zilver|\bPHAG\b|\bSSLN\b|\bSLV\b|\bSIVR\b|\bPSLV\b|\bXSLV\b|\bSLVR\b/i.test(t)) return 'zilver';
+  if (/gold|goud|\bPHAU\b|\bSGLN\b|\bIGLN\b|\bGLD\b|\bIAU\b|\b4GLD\b|\bEWG2\b/i.test(t)) return 'goud';
+  return null;
+}
+function pmRegroup(model) {
+  const t = model && model.byId && model.byId[STOCK_PARTY_ID];
+  if (!t || !t.stocks || !Array.isArray(t.stocks.positions)) return model;
+  const moved = { goud: [], zilver: [] };
+  const rest = [];
+  for (const x of t.stocks.positions) {
+    const metal = isPreciousMetalEtf(x) ? pmMetalOf(x) : null;
+    if (metal && model.byId[metal]) moved[metal].push(x); else rest.push(x);
+  }
+  if (!moved.goud.length && !moved.zilver.length) return model;
+  const sum = (arr, k) => arr.reduce((a, x) => a + (+x[k] || 0), 0);
+  const all = [...moved.goud, ...moved.zilver];
+  const pct = (pnl, inv) => (inv > 0 ? pnl / inv * 100 : 0);
+  const repl = new Map();
+  const tv = sum(all, 'value'), tc = sum(all, 'cost'), tp = tv - tc;
+  const nt = { ...t, currentValueEur: t.currentValueEur - tv, costBasis: t.costBasis - tc, invested: t.invested - tc, pnl: t.pnl - tp,
+    stocks: { ...t.stocks, positions: rest, pmMoved: all } };
+  nt.pnlPct = pct(nt.pnl, nt.invested);
+  repl.set(STOCK_PARTY_ID, nt);
+  for (const metal of ['goud', 'zilver']) {
+    const etfs = moved[metal];
+    if (!etfs.length) continue;
+    const g = model.byId[metal];
+    const v = sum(etfs, 'value'), c = sum(etfs, 'cost');
+    const parts = [{ key: 'fysiek', label: metal === 'goud' ? 'Fysiek goud' : 'Fysiek zilver', sub: 'Eigen bezit', value: g.currentValueEur || 0, pnl: g.pnl || 0 }]
+      .concat(etfs.map(x => ({ key: x.symbol, label: x.name || x.symbol, sub: `ETF via Trading 212 · ${x.symbol}`, value: x.value, pnl: x.value - x.cost, quantity: x.quantity, priceEur: x.priceEur })));
+    const ng = { ...g, currentValueEur: (g.currentValueEur || 0) + v, costBasis: (g.costBasis || 0) + c, invested: (g.invested || 0) + c, pnl: (g.pnl || 0) + (v - c), pmParts: parts };
+    ng.pnlPct = pct(ng.pnl, ng.invested);
+    repl.set(metal, ng);
+  }
+  const swap = list => (list || []).map(x => repl.get(x.party.id) || x);
+  const summaries = swap(model.summaries);
+  const isOpen = x => (x.currentValueEur || 0) > 0.5 || (x.quantity || 0) > 1e-9;
+  let open = swap(model.open), closed = swap(model.closed);
+  for (const id of ['goud', 'zilver']) {
+    const x = repl.get(id);
+    if (x && closed.some(c => c.party.id === id) && isOpen(x)) { closed = closed.filter(c => c.party.id !== id); open = [...open, x]; }
+  }
+  const byId = { ...model.byId };
+  repl.forEach((x, id) => { byId[id] = x; });
+  return { ...model, summaries, open, closed, included: swap(model.included), byId };
+}
+
 function driftRows(summaries, targetAllocation, tolerancePt = ATTENTION_THRESHOLDS.driftPt) {
   const grouping = (targetAllocation && targetAllocation.grouping) || 'category';
   const map = new Map();
@@ -3090,7 +3146,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

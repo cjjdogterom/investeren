@@ -784,6 +784,27 @@ function psSecondary(s, mode, totalValue, privacy, g) {
 }
 
 // Aandelen binnen een brokerpositie (Trading 212): per aandeel het aantal, de koers en de waarde.
+function PsPmRows({ app, parts }) {
+  const privacy = !!app.prefs.privacy;
+  return (
+    <div className="ps-lsub">
+      {parts.map(x => (
+        <div className="ps-lstock" key={x.key}>
+          <span className="ps-lstock__tick" aria-hidden="true">{x.key === 'fysiek' ? <Icon name="layers" size={14} /> : String(x.key).replace(/\..*$/, '').slice(0, 4)}</span>
+          <span className="ps-lrow__main">
+            <span className="ps-lstock__name">{x.label}</span>
+            <span className="ps-lrow__sub">{x.sub}{x.quantity ? ` · ${fmtQty(x.quantity, '', { decimals: 4 }).trim()} st.` : ''}</span>
+          </span>
+          <span className="ps-lrow__end">
+            <span className="ps-lstock__val"><Money value={x.value} /></span>
+            <span className={psCx('ps-lrow__sec', psTone(x.pnl))}>{privacy ? '€ •••••' : fmtMoney(x.pnl, { sign: true })}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PsStockRows({ app, s }) {
   const privacy = !!app.prefs.privacy;
   const st = s.stocks;
@@ -875,7 +896,8 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
   const stocks = !closed && !empty && s.stocks && s.stocks.positions && s.stocks.positions.length > 0 ? s.stocks : null;
   const openIds = app.prefs.openHoldings || [];
   const cfd = !closed && !empty && !stocks && s.cfd ? s.cfd : null;
-  const isOpen = !!(stocks || cfd) && openIds.includes(p.id);
+  const pm = !closed && !empty && s.pmParts ? s.pmParts : null;
+  const isOpen = !!(stocks || cfd || pm) && openIds.includes(p.id);
   const row = (
     <button type="button" className={psCx('ps-lrow', (!inc || closed) && 'ps-lrow--muted')} data-testid={`holding-row-${p.id}`}
       onClick={() => app.navigate('/posities/' + encodeURIComponent(p.id))}>
@@ -905,6 +927,19 @@ function PsListRow({ app, s, closed = false, empty = false, totalValue, mode, ga
           <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} />
         </button>
         {isOpen && (window.OvCfdLive ? <OvCfdLive app={app} s={s} embedded /> : <PsCfdRows app={app} s={s} />)}
+      </>
+    );
+  }
+  if (pm) {
+    return (
+      <>
+        {row}
+        <button type="button" className="ps-lmore" aria-expanded={isOpen} data-testid={`holding-expand-${p.id}`}
+          onClick={() => app.setPrefs({ openHoldings: isOpen ? openIds.filter(id => id !== p.id) : [...openIds, p.id] })}>
+          <span>{isOpen ? 'Verbergen' : `Waar zit je ${p.id === 'zilver' ? 'zilver' : 'goud'} · ${pm.length} delen`}</span>
+          <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={15} />
+        </button>
+        {isOpen && <PsPmRows app={app} parts={pm} />}
       </>
     );
   }
@@ -1766,7 +1801,10 @@ function PsFinAanvul({ app, partyIds = null, inline = false }) {
         subtitle={party ? `${fmtDateLong(tx.date)} · uit Financieel`
           : `${fmtDateLong(tx.date)} · uit Financieel · onbekende positie, kies de juiste bij aanvullen`}
         value={<Money value={+tx.amountEur || 0} decimals={2} />}
-        secondary={<Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>} />
+        secondary={<span style={{ display: 'inline-flex', gap: 6 }}>
+          <Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>
+          <IconButton size="sm" icon="x" label="Annuleren" title="Annuleren: niet als belegging meetellen" onClick={() => app.cancelFinTx(tx)} />
+        </span>} />
     );
   });
   const note = 'Uit Financieel (Vermogensopbouw). Vul aantal, prijs en kosten aan; tot dan telt het bedrag als ingelegd tegen kostprijs.';
