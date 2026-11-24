@@ -3103,6 +3103,24 @@ function monthInflowByParty(model, monthKey = todayIsoLocal().slice(0, 7)) {
   return out;
 }
 
+// Metingen van het dagverloop opschonen voor weergave: losse uitschieters (A-B-A) waarbij de winst (waarde − inleg)
+// even ver afwijkt en daarna terugkeert, komen van een apparaat met verouderde gegevens, niet van koersen.
+function intradayClean(points) {
+  const pts = (points || []).filter(p => Array.isArray(p) && Number.isFinite(+p[1]));
+  if (pts.length < 3) return pts;
+  const g = p => (+p[1]) - (+p[2] || 0);
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0 && i < pts.length - 1) {
+      const a = g(pts[i - 1]), b = g(pts[i]), c = g(pts[i + 1]);
+      const lim = Math.max(60, Math.abs(+pts[i][1]) * 0.004);
+      if (Math.abs(b - a) > lim && Math.abs(b - c) > lim && Math.abs(a - c) < lim / 2 && Math.sign(b - a) === Math.sign(b - c)) continue;
+    }
+    out.push(pts[i]);
+  }
+  return out;
+}
+
 function driftRows(summaries, targetAllocation, tolerancePt = ATTENTION_THRESHOLDS.driftPt) {
   const grouping = (targetAllocation && targetAllocation.grouping) || 'category';
   const map = new Map();
@@ -3245,7 +3263,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, inAllocation, dtIncluded, finSpaarList, bankSyncMerge, isBankSyncTx, monthInflowByParty, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  intradayClean, allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, inAllocation, dtIncluded, finSpaarList, bankSyncMerge, isBankSyncTx, monthInflowByParty, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

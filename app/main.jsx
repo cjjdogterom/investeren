@@ -330,6 +330,14 @@ async function supabaseSaveSettings(client, state) {
 // Dagverloop: de totale waarde meermaals per dag in een eigen rij (portfolio/id 'intraday'), los van het hoofddocument.
 // points = [[epochSeconden, totaal, nettoIngelegd], …], één punt per 5 minuten, 8 dagen bewaard.
 const INTRADAY_STEP_S = 300, INTRADAY_KEEP_S = 8 * 86400, INTRADAY_KEEP_LONG_S = 35 * 86400;
+// Vaste id van dit apparaat/deze browser (voor 'één apparaat tegelijk meet').
+const INTRADAY_DEVICE = (() => {
+  try {
+    let id = localStorage.getItem('investeringen-device-id');
+    if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem('investeringen-device-id', id); }
+    return id;
+  } catch (e) { return 'onbekend'; }
+})();
 // Verloop van 'Vrij op rekening': [tijd (s), bedrag], bij elke wijziging; 35 dagen bewaard in Supabase (portfolio/financieel-log).
 const FIN_LOG_KEEP_S = 35 * 86400;
 function finLogMerge(a, b) {
@@ -1355,6 +1363,9 @@ function App() {
   const t212Sleutel = (state.tweaks && state.tweaks.t212Sleutel) || '';
   const [t212Live, setT212Live] = React.useState(() => (state.tweaks && state.tweaks.t212Sleutel ? loadT212Live() : null));
   const [t212LiveError, setT212LiveError] = React.useState(null);
+  // Welke live-bronnen zijn in deze sessie echt (vers) geladen? Pas dan mag dit apparaat het dagverloop meten:
+  // anders schrijft een net geopende app een totaal met verouderde gegevens (bijv. de bewaarde T212-stand) en springt de lijn.
+  const liveSeenRef = React.useRef({ t212: false, fin: false });
   React.useEffect(() => { try { if (t212Live) localStorage.setItem(T212_LIVE_KEY, JSON.stringify(t212Live)); else localStorage.removeItem(T212_LIVE_KEY); } catch (e) { /* ignore */ } }, [t212Live]);
   const [importMsg, setImportMsg]   = React.useState(null);
   const [supabaseConfig, setSupabaseConfig] = React.useState(loadSupabaseConfig);
@@ -1434,6 +1445,7 @@ function App() {
         const fo = financieelApiToOver(j);
         if (!fo) throw new Error('Geen bedrag ontvangen');
         setFinancieelApi(prev => (JSON.stringify(prev) === JSON.stringify(fo) ? prev : fo));
+        liveSeenRef.current.fin = true;
         setFinancieelStatus({ error: null });
       })
       .catch(e => { if (!stop) setFinancieelStatus({ error: e.message || 'Ophalen mislukt' }); });
@@ -1940,6 +1952,7 @@ function App() {
       const j = await fetchT212('/snapshot', t212Sleutel, force);
       setT212Live(j);
       setT212LiveError(null);
+      liveSeenRef.current.t212 = true;
     } catch (e) {
       setT212LiveError(e.message || 'Ophalen mislukt');
     }
@@ -2397,7 +2410,9 @@ function App() {
   }, [financieelOverRaw && normalizeFinancieelOver(financieelOverRaw) && normalizeFinancieelOver(financieelOverRaw).bedrag, sbOk]); // eslint-disable-line
   React.useEffect(() => { try { localStorage.setItem('investeringen-intraday-v1', JSON.stringify(intraday)); } catch (e) { /* ignore */ } }, [intraday]);
   const intradayRef = React.useRef({ model: null, ok: false });
-  intradayRef.current = { model, spots, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0 };
+  intradayRef.current = { model, spots, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0
+    && (!t212Sleutel || liveSeenRef.current.t212) && (!financieelSleutel || liveSeenRef.current.fin)
+    && !!stockStatus.fetchedAt && !stockStatus.loading };
   React.useEffect(() => {
     if (!sbOk) return undefined;
     const client = getSupabaseClient(supabaseConfig);
@@ -2410,12 +2425,19 @@ function App() {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       const t = cur.model && cur.model.totals;
       if (!t || !Number.isFinite(t.value) || !(t.value > 0)) return;
-      const parts = buildIntradayRecipe(cur.model, cur.spots) || {};
-      supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0, parts.bank || 0, parts.t212 || 0])
-        .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
-      // Recept voor de server, zodat die ook meet als de app dicht is.
-      const recipe = buildIntradayRecipe(cur.model, cur.spots);
-      if (recipe) client.from('portfolio').upsert({ id: 'intraday-recipe', data: recipe }, { onConflict: 'id' }).then(() => {}, () => {});
+      // Eén apparaat tegelijk meet: staan de app op de Mac en de iPhone allebei open, dan wisselden hun (net iets
+      // verschillende) totalen elkaar af en zigzagde de lijn. Wie het laatst schreef (< 6 min) houdt de beurt.
+      client.from('portfolio').select('data').eq('id', 'intraday-recipe').maybeSingle().then(({ data }) => {
+        const prev = data && data.data;
+        const other = prev && prev.by && prev.by !== INTRADAY_DEVICE && Date.now() - (+prev.at || 0) < 6 * 60 * 1000;
+        if (dead || other) return;
+        const parts = buildIntradayRecipe(cur.model, cur.spots) || {};
+        supabaseAppendIntraday(client, [Date.now() / 1000, t.value, t.netInvested || 0, parts.bank || 0, parts.t212 || 0])
+          .then(p => { if (!dead) setIntraday(p); }).catch(e => console.warn('[Supabase] dagverloop mislukt:', e.message));
+        // Recept voor de server, zodat die ook meet als de app dicht is.
+        const recipe = buildIntradayRecipe(cur.model, cur.spots);
+        if (recipe) client.from('portfolio').upsert({ id: 'intraday-recipe', data: { ...recipe, by: INTRADAY_DEVICE, at: Date.now() } }, { onConflict: 'id' }).then(() => {}, () => {});
+      }, () => {});
     };
     const first = setTimeout(tick, 20000);
     const id = setInterval(tick, INTRADAY_STEP_S * 1000);

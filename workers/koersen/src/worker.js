@@ -186,8 +186,12 @@ async function intradayTick(env) {
     else if (now > 0 && !(was > 0)) { ref.prices[it.s] = now; }
   }
   const t = Math.floor(Date.now() / 1000);
+  // Een app die open is meet zelf (met live gegevens); dan niet ertussendoor schrijven met het recept.
+  const prevPts = (get("intraday") || {}).points || [];
+  const lastTs = prevPts.length ? +prevPts[prevPts.length - 1][0] : 0;
+  if (t - lastTs < 240) return "app meet zelf";
   const map = new Map();
-  for (const p of [...((get("intraday") || {}).points || []), [t, Math.round(total * 100) / 100, recipe.net || 0, recipe.bank || 0, recipe.t212 || 0]]) {
+  for (const p of [...prevPts, [t, Math.round(total * 100) / 100, recipe.net || 0, recipe.bank || 0, recipe.t212 || 0]]) {
     // Laatste 8 dagen per 5 minuten, daarna één punt per uur tot 35 dagen (week- en maandgrafiek in de app).
     if (!Array.isArray(p) || !(p[0] > t - INTRA_KEEP_LONG) || !Number.isFinite(+p[1])) continue;
     map.set(p[0] > t - INTRA_KEEP ? "f" + Math.floor(p[0] / INTRA_STEP) : "h" + Math.floor(p[0] / 3600), p);

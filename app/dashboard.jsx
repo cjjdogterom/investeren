@@ -160,6 +160,7 @@ injectStyles('overzicht', `
 .ov-m__herotop .ov-label { font-size: 13.5px; line-height: 18px; }
 .ov-m__herotop .icon-btn { width: 44px; height: 44px; margin-right: -12px; color: var(--fg); }
 .ov-m__hero .ov-hero { font-size: 44px; line-height: 48px; letter-spacing: -0.035em; margin: 0; }
+.ov-flownote { margin-top: 4px; font-size: 12.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .ov-facts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .ov-fact { display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 10px 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--fg); font: inherit; font-size: 13.5px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .ov-fact:hover { background: var(--surface-2); }
@@ -342,7 +343,7 @@ function useOvPerformance(app) {
 
   // Week: één punt per 10 minuten, maand: één punt per uur (24 per dag), uit de metingen van het dagverloop (elke 5 min, ook als de app dicht is).
   // Dagen vóór de eerste meting blijven dagpunten. Datums krijgen dan een tijd: 'YYYY-MM-DDTHH:MM'.
-  const intra = app.intraday || [];
+  const intra = useMemo(() => intradayClean(app.intraday || []), [app.intraday]);
   const hyStep = prefs.chartMode !== 'return' ? (periodKey === '1D' ? 300 : periodKey === '1W' ? 600 : periodKey === '1M' ? 3600 : 0) : 0;
   const hy = useMemo(() => {
     if (!hyStep || !r.enabled || intra.length < 2) return null;
@@ -876,11 +877,24 @@ function OvHeroFacts({ app, compact = false }) {
   );
 }
 
+// Onder de winst: waarom de waarde anders veranderde dan de winst (geld erin of eruit in deze periode).
+function OvFlowNote({ pf, privacy }) {
+  const st = pf.ci == null ? pf.fullStats : null;
+  if (!st || pf.r.all || !(Math.abs(st.netFlow) >= 1)) return null;
+  const dv = st.endValue - st.startValue;
+  const m = v => (privacy ? '€ •••••' : fmtMoney(Math.abs(v)));
+  return (
+    <div className="ov-flownote" data-testid="hero-flow">
+      Waarde {dv >= 0 ? '+' : '−'}{m(dv)}: {st.netFlow > 0 ? `${m(st.netFlow)} gestort` : `${m(st.netFlow)} opgenomen`} en {pf.deltaGain >= 0 ? `${m(pf.deltaGain)} winst` : `${m(pf.deltaGain)} verlies`}
+    </div>
+  );
+}
+
 // Dagverloop: de totale waarde binnen één dag (punten per 5 minuten uit app.intraday)
 // ===================================================================
 function ovDayKey(ts) { const x = new Date(ts * 1000); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
 function OvIntraday({ app, height = 176, mode = 'value' }) {
-  const pts = app.intraday || [];
+  const pts = useMemo(() => intradayClean(app.intraday || []), [app.intraday]);
   const privacy = !!app.prefs.privacy;
   const days = useMemo(() => [...new Set(pts.map(p => ovDayKey(p[0])))].slice(-7), [pts]);
   const today = todayIsoLocal();
@@ -896,7 +910,16 @@ function OvIntraday({ app, height = 176, mode = 'value' }) {
   }, [pts, day, today, app.model]);
   const prev = useMemo(() => { let b = null; for (const p of pts) { if (ovDayKey(p[0]) < day) b = p; else break; } return b; }, [pts, day]);
   const val = p => (mode === 'value' ? p[1] : p[1] - p[2]);
-  const base = prev || dayPts[0] || null;
+  // Vergelijk met de dagstand van de vorige dag uit je posities (zelfde basis als 'sinds gisteren' bovenaan);
+  // alleen als die er niet is met de laatste meting van de vorige dag.
+  const dayBase = useMemo(() => {
+    const ser = app.model && app.model.series;
+    if (!ser || !ser.dates) return null;
+    let i = -1;
+    for (let k = 0; k < ser.dates.length; k++) { if (ser.dates[k] < day) i = k; else break; }
+    return i >= 0 && Number.isFinite(ser.value[i]) ? [null, ser.value[i], ser.net[i] || 0] : null;
+  }, [app.model, day]);
+  const base = dayBase || prev || dayPts[0] || null;
   const chips = days.length > 1 && (
     <div className="ov-intra__days" role="tablist" aria-label="Dag">
       {days.map(k => <button key={k} type="button" role="tab" aria-selected={k === day} className={'ov-intra__day' + (k === day ? ' is-on' : '')} onClick={() => { setPick(k); setHover(null); }}>{k === today ? 'Vandaag' : fmtDateShort(k)}</button>)}
@@ -916,7 +939,10 @@ function OvIntraday({ app, height = 176, mode = 'value' }) {
   const y = v => H - (v - lo) / (hi - lo) * H;
   const path = dayPts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val(p)).toFixed(1)}`).join('');
   const hp = hover != null && dayPts[hover] ? dayPts[hover] : dayPts[dayPts.length - 1];
-  const chg = val(hp) - b0;
+  // Het getal is altijd winst excl. stortingen/opnames (zoals bovenaan), ook als de lijn de waarde toont:
+  // een opname laat de lijn zakken, maar is geen verlies.
+  const chg = (hp[1] - (+hp[2] || 0)) - (base[1] - (+base[2] || 0));
+  const flowChg = (+hp[2] || 0) - (+base[2] || 0);
   const pct = base[1] > 0 ? chg / base[1] * 100 : null;
   const col = chg < -0.005 ? 'var(--negative)' : chg > 0.005 ? 'var(--positive)' : 'var(--fg-muted)';
   const onMove = e => {
@@ -933,7 +959,7 @@ function OvIntraday({ app, height = 176, mode = 'value' }) {
       {chips}
       <div className="ov-intra__head">
         <span className="ov-intra__chg" style={{ color: col }}>{privacy ? '€ •••••' : fmtMoney(chg, { sign: true, decimals: 2 })}{pct != null ? ` · ${fmtPct(pct, { decimals: 2 })}` : ''}</span>
-        <span className="ov-intra__meta">{hover != null ? `${hm(hp[0])} · ${money(hp[1])} · ingelegd ${money(hp[2])}` : `${prev ? 'sinds slot vorige dag' : 'sinds eerste meting'} · laag ${money(Math.min(...dayPts.map(p => p[1])))} · hoog ${money(Math.max(...dayPts.map(p => p[1])))}`}</span>
+        <span className="ov-intra__meta">{hover != null ? `${hm(hp[0])} · ${money(hp[1])} · ingelegd ${money(hp[2])}` : `winst excl. stortingen · ${dayBase ? (day === today ? 'sinds gisteren' : 't.o.v. de dag ervoor') : prev ? 'sinds slot vorige dag' : 'sinds eerste meting'}${Math.abs(flowChg) >= 1 ? ` · ${flowChg > 0 ? 'gestort' : 'opgenomen'} ${money(Math.abs(flowChg))}` : ''} · laag ${money(Math.min(...dayPts.map(p => p[1])))} · hoog ${money(Math.max(...dayPts.map(p => p[1])))}`}</span>
       </div>
       <div className="ov-intra__plot" style={{ height }} onMouseMove={onMove} onMouseLeave={() => setHover(null)} onTouchStart={onMove} onTouchMove={onMove} onTouchEnd={() => setHover(null)}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Waardeverloop binnen de dag">
@@ -1043,6 +1069,7 @@ function OvPrestatiesCard({ app, pf }) {
           <div className="ov-deltarow" data-testid="hero-delta">
             <Delta value={pf.deltaGain} pct={pf.deltaPct} size="md" context={pf.context} />
           </div>
+          <OvFlowNote pf={pf} privacy={privacy} />
           {pf.ci == null && <OvHeroFacts app={app} />}
           <div className="ov-subrow">
             {pf.ci != null && <span>Netto ingelegd <b>{privacy ? '€ •••••' : fmtMoney(pf.heroNet)}</b></span>}
@@ -1353,6 +1380,7 @@ function OvMobile({ app }) {
             <Icon name="info" size={14} />
           </button>
         </div>
+        <OvFlowNote pf={pf} privacy={privacy} />
         <OvHeroFacts app={app} compact />
       </section>
 
