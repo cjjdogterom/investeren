@@ -214,9 +214,10 @@ function finBelNormalize(b) {
     id: String(b.id), datum, bedrag: Math.round(bedrag * 100) / 100, positie: String(b.positie),
     omschrijving: typeof b.omschrijving === 'string' ? b.omschrijving.trim() : '',
     rekening: typeof b.rekening === 'string' ? b.rekening.trim() : '',
+    soort: b.soort === 'opname' ? 'opname' : 'inleg',
   };
 }
-function finBelNote(b) { return ['Uit Financieel', b.omschrijving, b.rekening].filter(Boolean).join(' · '); }
+function finBelNote(b) { return [b.soort === 'opname' ? 'Opname via Financieel' : 'Uit Financieel', b.omschrijving, b.rekening].filter(Boolean).join(' · '); }
 // Pure merge van de (complete) lijst uit Financieel in de transacties. Geeft null als er niets verandert,
 // anders { transactions, deleted: { id: iso }, added, updated, removed, skipped }.
 // - nieuw → inleg met markering (T212: 'fin:auto'; bij een actieve T212-koppeling niets: stortingen komen via de API)
@@ -249,7 +250,10 @@ function finBelMerge(transactions, beleggingen, opts = {}) {
     if (b.positie === FIN_OVER_PARTY_ID) { skipped++; continue; }
     if (!partyIds.has(b.positie)) unknown++;
     if (!cur && tomb[id]) continue;
-    const want = { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: isT212 ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
+    // Opname (geld terug naar de betaalrekening): gewoon een opname op die positie, hoeft niet aangevuld te worden.
+    const want = b.soort === 'opname'
+      ? { id, party: b.positie, type: 'opname', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: FIN_BEL_AUTO }
+      : { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: isT212 ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
     if (!cur) { upserts.set(id, { ...want, updatedAt: now }); added++; continue; }
     const same = ['party', 'type', 'date', 'amountEur', 'note', '_t212Id'].every(k => (cur[k] ?? null) === (want[k] ?? null));
     if (!same) {

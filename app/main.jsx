@@ -2260,7 +2260,9 @@ function App() {
       }))
       .then(j => {
         if (stop) return;
-        setFinBel(prev => (prev && JSON.stringify(prev.list) === JSON.stringify(j.beleggingen) ? prev : { list: j.beleggingen, at: j.bijgewerkt || null }));
+        // opnames (geld terug uit een positie naar de betaalrekening, bv. van de buffer) gaan mee als soort 'opname'
+        const list = j.beleggingen.concat((Array.isArray(j.opnames) ? j.opnames : []).map(o => ({ ...o, soort: 'opname' })));
+        setFinBel(prev => (prev && JSON.stringify(prev.list) === JSON.stringify(list) ? prev : { list, at: j.bijgewerkt || null }));
         setFinBelStatus(st => ({ ...st, error: null, at: new Date().toISOString(), count: j.beleggingen.length }));
       })
       .catch(e => { if (!stop) setFinBelStatus(st => ({ ...st, error: e.message || 'Ophalen mislukt' })); });
