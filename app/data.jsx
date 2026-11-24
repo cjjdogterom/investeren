@@ -250,6 +250,14 @@ function finBelMerge(transactions, beleggingen, opts = {}) {
     if (raw && raw.id != null && raw.id !== '') seen.add(finBelTxId(raw.id));
     const b = finBelNormalize(raw);
     if (!b) { skipped++; continue; }
+    // 'finst-kies' e.d.: geld naar een crypto-post waarvan de munt nog niet gekozen is → als vrije kas op de
+    // hoofdmunt van die post (bij Finst: Bitcoin). Bij aanvullen kies je zo nodig een andere munt.
+    if (!partyIds.has(b.positie)) {
+      const mk = /^(.+)-kies$/.exec(b.positie);
+      const leaves = mk ? (opts.parties || []).filter(x => x && x.postId === mk[1] && x.unit === 'crypto') : [];
+      const pick = leaves.find(x => x.coin === 'BTC') || leaves[0];
+      if (pick) b.positie = pick.id;
+    }
     const id = finBelTxId(b.id);
     const cur = byId.get(id);
     if (cur && !isFinBelManaged(cur)) continue;
@@ -2578,7 +2586,7 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   for (const s of summaries) {
     // De buffer staat altijd bij je posities, ook leeg (dan zie je hem en kun je er een doel voor zetten).
     if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5) && s.party.id !== 'buffer') empty.push(s);
-    else if (isClosedSummary(s)) closed.push(s);
+    else if (isClosedSummary(s) && s.party.id !== 'buffer') closed.push(s);
     else open.push(s);
   }
 
