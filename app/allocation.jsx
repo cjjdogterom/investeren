@@ -7,7 +7,7 @@ const ALLOC_GROUPINGS = [
 
 // Groepeer de (in totaal meegetelde) partijen per categorie of per partij.
 function allocationGroups(summaries, grouping) {
-  const included = summaries.filter(s => (s.party.includeInTotal ?? s.party.includeInPortfolio) !== false);
+  const included = summaries.filter(s => inAllocation(s.party));
   const map = new Map();
   for (const s of included) {
     const parts = grouping === 'party' ? [{ category: s.party.id, value: Math.max(0, s.currentValueEur || 0) }] : allocPartsOf(s);
@@ -116,6 +116,14 @@ injectStyles('allocation', `
 .al-mcard__meta b { color: var(--fg); font-weight: 600; }
 .al-stepper { display: inline-flex; align-items: center; gap: 4px; }
 .al-stepper .input { width: 64px; text-align: center; height: 44px; }
+.al-mp { display: grid; gap: 12px; }
+.al-mp__buf { display: grid; gap: 10px; padding: 10px 12px; border-radius: var(--r-2); background: var(--surface-2); }
+.al-mp__max { display: grid; gap: 6px; font-size: 13px; color: var(--fg-muted); max-width: 260px; }
+.al-mp__list { display: grid; }
+.al-mp__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.al-mp__amt { display: grid; justify-items: end; gap: 2px; }
+.al-mp__amt b { font-weight: 650; }
+.al-mp__amt small { font-size: 12px; color: var(--fg-muted); }
 @media (max-width: 767.98px) {
   .al-page { padding: 12px 16px 24px; }
   .al-bar { grid-template-columns: 76px 1fr; }
@@ -397,12 +405,118 @@ function AlVerdelingView({ app }) {
           options={ALLOC_GROUPINGS.map(g => ({ value: g.key, label: g.label }))} />
         {!isMobile && sumPill}
       </div>
-      {isMobile ? <>{calcCards}{bars}{mobileCards}</> : <>{bars}{calcCards}{desktopTable}</>}
+      {(() => { const mp = <AlMonthPlan app={app} grouping={grouping} targets={targets} sumOk={sumOk} hasTargets={hasTargets} />;
+        return isMobile ? <>{mp}{calcCards}{bars}{mobileCards}</> : <>{mp}{bars}{calcCards}{desktopTable}</>; })()}
       <div className="al-foot">
         <b>Bijstorten</b> = alleen kopen, niet verkopen. <b>Herbalanceren</b> = kopen én verkopen binnen je huidige totaal.
-        Alleen partijen die in het totaal meetellen worden meegenomen. Doelen worden gesynct.
+        Alleen partijen die in het totaal en in de doelverdeling meetellen worden meegenomen (de buffer niet). Doelen worden gesynct.
       </div>
     </div>
+  );
+}
+
+// ===== Maandplan: vast bedrag per maand verdelen volgens de doelverdeling =====
+// 1. Buffer/potjes (niet in de verdeling, met een doel) eerst aanvullen tot hun doel, eventueel met een maximum per maand.
+// 2. De rest gaat naar de onderdelen die het verst onder hun doel zitten (computeAllocation).
+// Gerekend vanaf de stand aan het begin van de maand, zodat het plan niet verschuift terwijl je inlegt;
+// 'al gedaan' = netto inleg deze maand, 'nog' = plan − al gedaan.
+function AlMonthPlan({ app, grouping, targets, sumOk, hasTargets }) {
+  const privacy = usePrivacy();
+  const money = (v, o) => (privacy ? '€ •••••' : fmtMoney(v, o));
+  const saved = (app.state && app.state.monthlyPlan) || {};
+  const [amt, setAmt] = useState(saved.amount ? alNum(saved.amount) : '');
+  const [maxBuf, setMaxBuf] = useState(saved.bufferMax ? alNum(saved.bufferMax) : '');
+  useEffect(() => { setAmt(saved.amount ? alNum(saved.amount) : ''); setMaxBuf(saved.bufferMax ? alNum(saved.bufferMax) : ''); }, [saved.updatedAt]); // eslint-disable-line
+  const write = useDebouncedCallback(patch => {
+    app.setSyncedState(s => ({ ...s, monthlyPlan: { ...(s.monthlyPlan || {}), ...patch, updatedAt: new Date().toISOString() } }));
+  }, 400);
+  const bufferFirst = saved.bufferFirst !== false;
+  const amount = Math.max(0, parseNlNumber(amt) || 0);
+  const bufMaxNum = Math.max(0, parseNlNumber(maxBuf) || 0);
+
+  const model = app.model;
+  const calc = React.useMemo(() => {
+    const summaries = model.summaries || [];
+    const inflow = monthInflowByParty(model);
+    // potjes: niet in de verdeling, wel een eurodoel
+    const pots = summaries.filter(x => x.party.excludeFromAllocation === true && +x.party.goal > 0 && x.party.unit === 'eur' && dtIncluded(x.party))
+      .map(x => {
+        const done = inflow[x.party.id] || 0;
+        const start = (x.currentValueEur || 0) - done;
+        return { key: x.party.id, label: x.party.name, color: partyColorOf(x.party), goal: +x.party.goal, value: x.currentValueEur || 0, gap: Math.max(0, +x.party.goal - start), done };
+      });
+    let left = amount;
+    pots.forEach(pt => {
+      const cap = bufferFirst ? (bufMaxNum > 0 ? Math.min(bufMaxNum, pt.gap) : pt.gap) : 0;
+      pt.plan = Math.min(left, cap); left -= pt.plan;
+      pt.todo = Math.max(0, pt.plan - Math.max(0, pt.done));
+    });
+    // onderdelen van de verdeling, met de waarde aan het begin van de maand
+    const doneByGroup = {};
+    summaries.filter(x => inAllocation(x.party)).forEach(x => {
+      const k = grouping === 'party' ? x.party.id : (x.party.category || 'Overig');
+      // Vrij op rekening schommelt met je betaalrekening: dat is geen inleg.
+      if (x.party.id !== FIN_OVER_PARTY_ID) doneByGroup[k] = (doneByGroup[k] || 0) + (inflow[x.party.id] || 0);
+    });
+    const byParty = Object.fromEntries(summaries.map(x => [x.party.id, x.party]));
+    const groups = allocationGroups(summaries, grouping).map(g => ({
+      ...g,
+      color: grouping === 'party' ? partyColorOf(byParty[g.key] || {}) : ASSET_CLASS_BY_KEY[assetClassOf({ category: g.key })].color,
+      value: Math.max(0, g.value - (doneByGroup[g.key] || 0)),
+    }));
+    const res = computeAllocation(groups, targets, left);
+    const rows = res.rows.filter(r => r.plan >= 0.5 || (doneByGroup[r.key] || 0) >= 0.5).map(r => {
+      const done = doneByGroup[r.key] || 0;
+      return { ...r, done, todo: Math.max(0, r.plan - Math.max(0, done)) };
+    }).sort((a, b) => b.plan - a.plan);
+    const todo = pots.reduce((a, x) => a + x.todo, 0) + rows.reduce((a, x) => a + x.todo, 0);
+    const done = pots.reduce((a, x) => a + Math.max(0, x.done), 0) + rows.reduce((a, x) => a + Math.max(0, x.done), 0);
+    return { pots, rows, rest: left, todo, done };
+  }, [model, grouping, targets, amount, bufferFirst, bufMaxNum]);
+
+  const month = MONTHS_NL_LONG[new Date().getMonth()];
+  const row = (r, extra) => (
+    <div className="al-mp__row" key={r.key}>
+      <span className="al-label"><Swatch color={r.color} />{r.label}</span>
+      <span className="al-mp__amt num">
+        <b>{money(r.plan)}</b>
+        <small>{r.done >= 0.5 ? <>al {money(r.done)} · {r.todo >= 0.5 ? <>nog <b>{money(r.todo)}</b></> : 'klaar ✓'}</> : extra || 'nog niets ingelegd'}</small>
+      </span>
+    </div>
+  );
+  return (
+    <Card title="Maandelijks inleggen" meta={amount > 0 ? `${month} · nog ${money(calc.todo)} te doen` : null}>
+      <div className="al-mp">
+        <div className="al-storten">
+          <MoneyInput id="al-mp-amount" large value={amt} placeholder="0" data-testid="monthly-amount" ariaLabel="Bedrag per maand"
+            onChange={v => { setAmt(v); write({ amount: Math.max(0, parseNlNumber(v) || 0) }); }} />
+        </div>
+        <div className="al-msg">Per maand. Je ziet hoeveel je in elk onderdeel stopt om je doelverdeling aan te houden. Wat je deze maand al inlegde, wordt eraf gehaald.</div>
+        {calc.pots.length > 0 && (
+          <div className="al-mp__buf">
+            <Switch checked={bufferFirst} onChange={v => write({ bufferFirst: v })} label={`Eerst ${calc.pots.map(x => x.label.toLowerCase()).join(' en ')} aanvullen tot het doel`}
+              description={calc.pots.map(x => `${x.label}: ${money(x.value)} van ${money(x.goal)}${x.gap < 0.5 ? ' · doel bereikt' : ''}`).join(' · ')} />
+            {bufferFirst && (
+              <label className="al-mp__max">
+                <span>Maximaal per maand naar {calc.pots.length === 1 ? calc.pots[0].label.toLowerCase() : 'potjes'}</span>
+                <MoneyInput value={maxBuf} placeholder="geen max." ariaLabel="Maximum per maand naar buffer"
+                  onChange={v => { setMaxBuf(v); write({ bufferMax: Math.max(0, parseNlNumber(v) || 0) }); }} />
+              </label>
+            )}
+          </div>
+        )}
+        {amount > 0 && (!hasTargets || !sumOk) && calc.rest > 0.5 && (
+          <div className="al-warn"><Icon name="triangle-alert" size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+            <span>{hasTargets ? 'Je doelpercentages tellen niet op tot 100%.' : 'Stel hieronder eerst je doelverdeling in.'} Dan zie je per onderdeel wat je inlegt.</span></div>
+        )}
+        {amount > 0 && (
+          <div className="al-mp__list">
+            {calc.pots.filter(x => x.plan >= 0.5 || x.done >= 0.5).map(x => row(x))}
+            {hasTargets && sumOk && calc.rows.map(x => row(x))}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

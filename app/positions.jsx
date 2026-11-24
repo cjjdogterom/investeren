@@ -2179,6 +2179,8 @@ function psBlankForm(p) {
     ticker: p?.ticker || '',
     includeInTotal: (p?.includeInTotal ?? p?.includeInPortfolio) !== false,
     includeInTimeChart: (p?.includeInTimeChart ?? p?.includeInPortfolio) !== false,
+    inAllocation: p?.excludeFromAllocation !== true,
+    finRekening: p?.finRekening || '',
   };
 }
 
@@ -2231,8 +2233,10 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
       includeInTotal: form.includeInTotal !== false,
       includeInTimeChart: form.includeInTimeChart !== false,
       isMixed: form.unit === 'mixed',
+      excludeFromAllocation: form.inAllocation === false,
     };
     delete p.includeInPortfolio;
+    if (form.unit === 'eur' && form.finRekening) p.finRekening = form.finRekening; else delete p.finRekening;
     if (form.unit === 'crypto' && form.spotKey) p.spotKey = form.spotKey; else delete p.spotKey;
     if (form.logo) p.logo = form.logo; else delete p.logo;
     if (form.unit === 'part' && form.ticker.trim()) p.ticker = form.ticker.trim().toUpperCase(); else delete p.ticker;
@@ -2357,6 +2361,24 @@ function PartyForm({ app, open, party = null, startInDelete = false, onClose }) 
               </div>
             )}
           </div>
+          {form.unit === 'eur' && party?.id !== FIN_OVER_PARTY_ID && (() => {
+            const list = app.finSpaar || [];
+            const names = list.map(a => a.naam);
+            if (form.finRekening && !names.includes(form.finRekening)) names.push(form.finRekening);
+            return (
+              <Field label="Koppelen aan spaarrekening" htmlFor="ps-f-finrek"
+                hint={list.length
+                  ? 'Saldo komt uit je Financieel-systeem (bankkoppeling). Elke verandering wordt automatisch als inleg of opname geboekt.'
+                  : 'Nog geen spaarrekening ontvangen uit Financieel. Koppel daar bij Bank je spaarrekening (ABN AMRO opnieuw koppelen en de spaarrekening aanvinken); daarna kun je hem hier kiezen. Tot dan vul je het bedrag zelf in.'}>
+                <Select id="ps-f-finrek" value={form.finRekening} onChange={e => set('finRekening', e.target.value)} data-testid="party-finrek">
+                  <option value="">Niet gekoppeld (zelf bijhouden)</option>
+                  {names.map(n => { const a = list.find(x => x.naam === n); return <option key={n} value={n}>{n}{a ? ` · ${fmtMoney(a.bedrag)}` : ' · niet gevonden'}</option>; })}
+                </Select>
+              </Field>
+            );
+          })()}
+          <Switch checked={form.inAllocation} onChange={v => set('inAllocation', v)} label="Meetellen in doelverdeling"
+            description="Uit voor een buffer of potje: telt wel mee in je vermogen, niet in Plan → Verdeling." />
           <Switch checked={form.includeInTotal} onChange={v => set('includeInTotal', v)} label="Meetellen in totale waarde" />
           <Switch checked={form.includeInTimeChart} onChange={v => set('includeInTimeChart', v)} label="Meetellen in waarde-over-tijd grafiek" />
           {party && (

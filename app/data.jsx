@@ -34,14 +34,17 @@ const PARTIES = [
   { id: 'goud',         name: 'Fysiek Goud',   category: 'Edelmetaal',   subtitle: 'Eigen bezit — gram',       color: 'oklch(75% 0.15 70)',  unit: 'gram',  unitLabel: 'g',     goal: 20 },
   { id: 'zilver',       name: 'Fysiek Zilver', category: 'Edelmetaal',   subtitle: 'Eigen bezit — ounce',      color: 'oklch(70% 0.03 240)', unit: 'ounce', unitLabel: 'oz',    goal: 30 },
   { id: 'cash',         name: 'Cash',          category: 'Liquide',      subtitle: 'Directe reserve',          color: 'oklch(55% 0.05 160)', unit: 'eur',   unitLabel: '€',     goal: 2000 },
+  // Buffer (spaarrekening): telt mee in je vermogen, niet in de doelverdeling. Optioneel gekoppeld aan een spaarrekening
+  // uit het Financieel Systeem (finRekening = naam daar): het saldo wordt dan automatisch bijgeboekt.
+  { id: 'buffer',       name: 'Buffer',        category: 'Liquide',      subtitle: 'ABN AMRO spaarrekening',   color: 'oklch(60% 0.09 185)', unit: 'eur',   unitLabel: '€',     goal: 0, excludeFromAllocation: true },
   // Live post: waarde komt uit Supabase-rij portfolio/id 'financieel-over' (Financieel Systeem), niet uit transacties.
   // Id blijft 'lopende-rekening' voor compatibiliteit met bestaande, gesyncte partijlijsten.
   { id: 'lopende-rekening', name: 'Vrij op rekening', category: 'Liquide', subtitle: 'Financieel · live', color: 'oklch(62% 0.06 200)', unit: 'eur', unitLabel: '€', goal: 0 },
 ];
 // Partijen die ook bij bestaande (gesyncte) partijlijsten worden toegevoegd, tenzij de gebruiker ze verwijderde (tombstone).
 // Positie: direct na het anker in ALWAYS_SEEDED_AFTER als dat er is, anders achteraan.
-const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening', 'trading212-cfd'];
-const ALWAYS_SEEDED_AFTER = { 'trading212-cfd': 'trading212' };
+const ALWAYS_SEEDED_PARTY_IDS = ['lopende-rekening', 'trading212-cfd', 'buffer'];
+const ALWAYS_SEEDED_AFTER = { 'trading212-cfd': 'trading212', buffer: 'cash' };
 
 // ===== Vrij op rekening (live uit het Financieel Systeem) =====
 const FIN_OVER_PARTY_ID = 'lopende-rekening';
@@ -2434,6 +2437,8 @@ function buildFlowSeries(transactions, parties, spots = {}) {
 }
 
 function dtIncluded(p) { return (p.includeInTotal ?? p.includeInPortfolio) !== false; }
+// Telt mee in de doelverdeling (Plan → Verdeling, afwijkingen)? Een buffer of potje niet.
+function inAllocation(p) { return dtIncluded(p) && p.excludeFromAllocation !== true; }
 function dtInChart(p)  { return (p.includeInTimeChart ?? p.includeInPortfolio) !== false; }
 
 // Samenvatting van een crypto-post = som van zijn coin-sub-holdings (+ eventuele boekingen direct op de post).
@@ -3004,10 +3009,69 @@ function pmRegroup(model) {
   return { ...model, summaries, open, closed, included: swap(model.included), byId };
 }
 
+// Spaarrekeningen uit het Financieel Systeem: [{ naam, bedrag, bijgewerkt }] of null.
+function finSpaarList(j) {
+  if (!j || !Array.isArray(j.spaarrekeningen)) return null;
+  return j.spaarrekeningen.filter(r => r && r.naam && Number.isFinite(+r.bedrag))
+    .map(r => ({ naam: String(r.naam), bedrag: Math.round(+r.bedrag * 100) / 100, bijgewerkt: r.bijgewerkt || null }));
+}
+// Saldo van een gekoppelde spaarrekening overnemen: het verschil met de huidige waarde wordt één boeking per dag
+// ('bank-<partij>-<datum>-…', inleg of opname). Bij elke nieuwe stand wordt de boeking van vandaag bijgesteld, zodat de
+// waarde altijd gelijk is aan het banksaldo. Geeft { transactions, deleted } of null als er niets verandert.
+const BANK_SYNC_PREFIX = 'bank-';
+function isBankSyncTx(t) { return !!t && String(t.id || '').indexOf(BANK_SYNC_PREFIX) === 0; }
+function bankSyncMerge(transactions, partyId, saldo, valueNow, today = todayIsoLocal(), now = new Date().toISOString()) {
+  if (!Number.isFinite(saldo) || !Number.isFinite(valueNow)) return null;
+  const pre = `${BANK_SYNC_PREFIX}${partyId}-${today}`;
+  const txs = transactions || [];
+  const mine = txs.filter(t => t.party === partyId && String(t.id || '').indexOf(pre) === 0).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const signed = mine.reduce((a, t) => a + (t.type === 'opname' ? -(+t.amountEur || 0) : (+t.amountEur || 0)), 0);
+  const diff = Math.round((saldo - (valueNow - signed)) * 100) / 100;
+  const keep = mine[0];
+  const want = Math.abs(diff) < 0.005 ? null
+    : { type: diff > 0 ? 'inleg' : 'opname', amountEur: Math.abs(diff) };
+  const remove = new Set(mine.slice(want ? 1 : 0).map(t => t.id));
+  let next = txs.filter(t => !remove.has(t.id));
+  let changed = remove.size > 0;
+  if (want) {
+    if (keep) {
+      if (keep.type !== want.type || Math.abs((+keep.amountEur || 0) - want.amountEur) > 0.004) {
+        next = next.map(t => (t.id === keep.id ? { ...t, ...want, updatedAt: now } : t));
+        changed = true;
+      }
+    } else {
+      next = [...next, { id: `${pre}-${Date.now().toString(36)}`, party: partyId, date: today, ...want,
+        note: 'Saldo spaarrekening (automatisch uit Financieel)', updatedAt: now }];
+      changed = true;
+    }
+  }
+  if (!changed) return null;
+  const deleted = {};
+  remove.forEach(id => { deleted[id] = now; });
+  return { transactions: next, deleted };
+}
+
+// Netto inleg per partij in een maand (stortingen − opnames), uit de reeks netto inleg per partij.
+function monthInflowByParty(model, monthKey = todayIsoLocal().slice(0, 7)) {
+  const ser = (model && model.series) || {};
+  const dates = ser.dates || [], nb = ser.netByParty || {};
+  const out = {};
+  if (!dates.length) return out;
+  let i0 = -1;
+  for (let i = 0; i < dates.length; i++) { if (dates[i].slice(0, 7) < monthKey) i0 = i; else break; }
+  const last = dates.length - 1;
+  for (const id of Object.keys(nb)) {
+    const arr = nb[id] || [];
+    const v = (arr[last] || 0) - (i0 >= 0 ? (arr[i0] || 0) : 0);
+    if (Math.abs(v) >= 0.005) out[id] = v;
+  }
+  return out;
+}
+
 function driftRows(summaries, targetAllocation, tolerancePt = ATTENTION_THRESHOLDS.driftPt) {
   const grouping = (targetAllocation && targetAllocation.grouping) || 'category';
   const map = new Map();
-  for (const s of (summaries || []).filter(x => dtIncluded(x.party))) {
+  for (const s of (summaries || []).filter(x => inAllocation(x.party))) {
     const parts = grouping === 'party' ? [{ category: s.party.id, value: Math.max(0, s.currentValueEur || 0) }] : allocPartsOf(s);
     for (const pt of parts) {
       const key = pt.category;
@@ -3146,7 +3210,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, inAllocation, dtIncluded, finSpaarList, bankSyncMerge, isBankSyncTx, monthInflowByParty, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,

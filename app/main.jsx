@@ -1417,6 +1417,7 @@ function App() {
   // ?sleutel= in plaats van een Authorization-header: dan is er geen CORS-preflight nodig.
   const financieelSleutel = (state.tweaks && state.tweaks.financieelSleutel) || '';
   const [financieelApi, setFinancieelApi] = React.useState(null);
+  const [finSpaar, setFinSpaar] = React.useState(null);
   const [financieelStatus, setFinancieelStatus] = React.useState({ error: null });
   React.useEffect(() => {
     if (!financieelSleutel) { setFinancieelApi(null); setFinancieelStatus({ error: null }); return; }
@@ -1428,6 +1429,8 @@ function App() {
       }))
       .then(j => {
         if (stop) return;
+        const sp = finSpaarList(j);
+        setFinSpaar(prev => (JSON.stringify(prev) === JSON.stringify(sp) ? prev : sp));
         const fo = financieelApiToOver(j);
         if (!fo) throw new Error('Geen bedrag ontvangen');
         setFinancieelApi(prev => (JSON.stringify(prev) === JSON.stringify(fo) ? prev : fo));
@@ -2311,6 +2314,25 @@ function App() {
     });
   }, [finBel, finBelReady, sbOk, state.transactions, allParties, setSyncedState]);
 
+  // Gekoppelde spaarrekeningen (bijv. Buffer ↔ ABN-spaarrekening in Financieel): waarde = banksaldo.
+  React.useEffect(() => {
+    if (!finSpaar || !finSpaar.length) return;
+    if (sbOk && !transactionsLoadedRef.current) return;
+    const links = allParties.filter(p => p && p.unit === 'eur' && p.finRekening && p.id !== FIN_OVER_PARTY_ID)
+      .map(p => ({ p, acc: finSpaar.find(a => a.naam === p.finRekening) })).filter(x => x.acc);
+    if (!links.length) return;
+    setSyncedState(s => {
+      let txs = s.transactions || [], del = {}, any = false;
+      for (const { p, acc } of links) {
+        const cur = model.byId[p.id] ? (+model.byId[p.id].currentValueEur || 0) : 0;
+        const r = bankSyncMerge(txs, p.id, acc.bedrag, cur);
+        if (r) { txs = r.transactions; del = { ...del, ...r.deleted }; any = true; }
+      }
+      if (!any) return s;
+      return { ...s, transactions: txs, deletedTransactionIds: { ...(s.deletedTransactionIds || {}), ...del } };
+    });
+  }, [finSpaar, model, sbOk, allParties, setSyncedState]); // eslint-disable-line
+
   // ── iOS-widget: publiceer de hero-getallen naar portfolio.data.widgetSnapshot ──
   // Alleen na een geslaagde Supabase-load met transacties, zonder openstaande save/fout,
   // met live koersen; en alleen bij ≥ € 1 verschil in totaal of ≥ 10 min sinds de vorige write.
@@ -2694,11 +2716,11 @@ function App() {
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
     openTx, editTx, completeFinTx, cancelFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
-    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday, finLog, financieelOverRaw,
+    overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday, finLog, financieelOverRaw, finSpaar,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
     chainBalances, chainLoading, refreshChain, financieelOver, financieelStatus, finBelStatus,
-    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live, intraday, finLog, financieelOverRaw,
+    stockQuotes, stockStatus, refreshStocks, t212Live, t212LiveError, refreshT212Live, intraday, finLog, financieelOverRaw, finSpaar,
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
