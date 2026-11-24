@@ -266,7 +266,9 @@ function finBelMerge(transactions, beleggingen, opts = {}) {
     const want = b.soort === 'opname'
       ? { id, party: b.positie, type: 'opname', date: b.datum, amountEur: b.bedrag, note: finBelNote(b),
           _t212Id: !stukOpname ? FIN_BEL_AUTO : (cur && cur._t212Id === FIN_BEL_OPNAME_OK && Math.abs((+cur.amountEur || 0) - b.bedrag) < 0.005 ? FIN_BEL_OPNAME_OK : FIN_BEL_OPNAME) }
-      : { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b), _t212Id: isT212 ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
+      // Op een europositie (Cash, Buffer) is er niets aan te vullen: het bedrag ís de waarde → direct verwerkt.
+      : { id, party: b.positie, type: 'inleg', date: b.datum, amountEur: b.bedrag, note: finBelNote(b),
+          _t212Id: isT212 || ((opts.parties || []).find(x => x && x.id === b.positie) || {}).unit === 'eur' ? FIN_BEL_AUTO : FIN_BEL_AANVULLEN };
     if (!cur) { upserts.set(id, { ...want, updatedAt: now }); added++; continue; }
     const same = ['party', 'type', 'date', 'amountEur', 'note', '_t212Id'].every(k => (cur[k] ?? null) === (want[k] ?? null));
     if (!same) {
