@@ -123,6 +123,8 @@ injectStyles('allocation', `
 .al-mp__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 14px; }
 .al-mp__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .al-mp__edit { display: grid; }
+.al-mp__lbl { display: grid; gap: 2px; min-width: 0; }
+.al-mp__lbl small { font-size: 12px; color: var(--fg-subtle); padding-left: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .al-mp__pct { color: var(--fg-subtle); font-size: 12px; margin-left: 4px; }
 .al-mp__tot { font-weight: 600; }
 .al-mp__amt { display: grid; justify-items: end; gap: 2px; }
@@ -424,7 +426,18 @@ function AlVerdelingView({ app }) {
 // 2. De rest gaat naar de onderdelen die het verst onder hun doel zitten (computeAllocation).
 // Gerekend vanaf de stand aan het begin van de maand, zodat het plan niet verschuift terwijl je inlegt;
 // 'al gedaan' = netto inleg deze maand, 'nog' = plan − al gedaan.
-// Vaste verdeling van je maandbedrag: per positie een percentage dat bewaard blijft (monthlyPlan.split).
+// Groepen voor de vaste maandverdeling.
+const MP_BUCKETS = [
+  { key: 'pe',      label: 'Private equity', color: 'var(--cat-pe)',  match: p => assetClassOf(p) === 'pe' },
+  { key: 'meesman', label: 'Meesman',        color: 'var(--cat-idx)', match: p => p.id === 'meesman' },
+  { key: 'aandelen', label: 'Aandelen',      color: 'var(--cat-br)',  match: p => p.id === 'trading212' },
+  { key: 'goud',    label: 'Goud',           color: 'oklch(75% 0.15 70)', match: p => ['goud', 'goldrepublic', 'finst-paxg'].includes(p.id) },
+  { key: 'zilver',  label: 'Zilver',         color: 'oklch(70% 0.03 240)', match: p => p.id === 'zilver' },
+  { key: 'crypto',  label: 'Crypto',         color: 'var(--cat-cr)',  match: p => assetClassOf(p) === 'cr' && p.id !== 'finst-paxg' },
+  { key: 'buffer',  label: 'Buffer',         color: 'oklch(60% 0.09 185)', match: p => p.id === 'buffer' },
+];
+
+// Vaste verdeling van je maandbedrag: per groep (MP_BUCKETS) een percentage dat bewaard blijft (monthlyPlan.split).
 // Elke maand vul je in wat je overhoudt; per positie zie je wat je stort (op hele euro's), min wat je deze maand al inlegde.
 function AlFixedSplit({ app, amount }) {
   const privacy = usePrivacy();
@@ -446,24 +459,20 @@ function AlFixedSplit({ app, amount }) {
   };
   const [editing, setEditing] = useState(false);
 
-  const [showAll, setShowAll] = useState(false);
-  // Kiesbare posities: zonder Vrij op rekening; een crypto-post (Finst, Wallet) per munt. Standaard alleen posities met
-  // waarde, een doel of een percentage; 'Alle posities' toont de rest.
-  const all = React.useMemo(() => {
+  // Vaste groepen voor je maandbedrag; per groep tellen alle bijbehorende posities mee voor 'al ingelegd'.
+  const items = React.useMemo(() => {
     const inflow = monthInflowByParty(model);
     const leaves = model.leavesByPost || {};
-    const out = [];
-    (model.summaries || []).filter(x => x.party.id !== FIN_OVER_PARTY_ID && dtIncluded(x.party)).forEach(x => {
-      const ls = (leaves[x.party.id] || []).filter(l => model.byId[l.id]).map(l => ({ s: model.byId[l.id], name: l.coin ? (l.coin === 'BTC' ? 'Bitcoin' : l.coin === 'ETH' ? 'Ethereum' : l.coin) : l.name }));
-      const list = ls.length ? ls.map(l => ({ s: l.s, label: `${l.name} via ${x.party.name}` })) : [{ s: x, label: x.party.name }];
-      list.forEach(({ s: y, label }) => out.push({
-        key: y.party.id, label, color: partyColorOf(y.party), done: inflow[y.party.id] || 0,
-        main: (y.currentValueEur || 0) > 0.5 || +y.party.goal > 0 || y.party.id === 'buffer',
-      }));
+    const ids = s2 => [s2.party.id, ...((leaves[s2.party.id] || []).map(l => l.id))];
+    const sums = (model.summaries || []).filter(x => x.party.id !== FIN_OVER_PARTY_ID && dtIncluded(x.party));
+    return MP_BUCKETS.map(b => {
+      const members = sums.filter(x => b.match(x.party));
+      const done = members.reduce((a, x) => a + ids(x).reduce((a2, id) => a2 + (inflow[id] || 0), 0), 0);
+      const where = members.filter(x => (x.currentValueEur || 0) > 0.5 || x.party.id === 'buffer').map(x => x.party.name);
+      const w = where.join(', ');
+      return { key: b.key, label: b.label, color: b.color, done, where: w && w !== b.label ? w : '' };
     });
-    return out;
   }, [model]);
-  const items = showAll ? all : all.filter(x => x.main || +draft[x.key] > 0);
   const sum = items.reduce((a, x) => a + (+draft[x.key] || 0), 0);
   const sumOk = Math.abs(sum - 100) < 0.05;
   const hasSplit = sum > 0;
@@ -491,14 +500,13 @@ function AlFixedSplit({ app, amount }) {
       </div>
       {showEdit && (
         <div className="al-mp__edit">
-          {!hasSplit && <div className="al-msg" style={{ marginTop: 0 }}>Geef per positie aan welk deel van je maandbedrag erheen gaat. Dit wordt onthouden.</div>}
+          {!hasSplit && <div className="al-msg" style={{ marginTop: 0 }}>Geef per groep aan welk deel van je maandbedrag erheen gaat. Dit wordt onthouden.</div>}
           {items.map(x => (
             <div className="al-mp__row" key={x.key}>
-              <span className="al-label"><Swatch color={x.color} />{x.label}</span>
+              <span className="al-mp__lbl"><span className="al-label"><Swatch color={x.color} />{x.label}</span>{x.where && <small>{x.where}</small>}</span>
               <AlTargetInput value={draft[x.key]} onChange={v => setPct(x.key, v)} label={`Deel ${x.label}`} testId={`split-${x.key}`} />
             </div>
           ))}
-          {all.length > items.length || showAll ? <button type="button" className="ps-link" style={{ justifySelf: 'start', marginTop: 6 }} onClick={() => setShowAll(!showAll)}>{showAll ? 'Minder posities' : `Alle posities (${all.length})`}</button> : null}
           {hasSplit && !sumOk && <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="al-msg" style={{ margin: 0 }}>Samen {fmtPct(sum, { decimals: 1, sign: false })}{sum < 100 ? ': de rest blijft onverdeeld.' : ': meer dan 100%.'}</span>
             <Button size="sm" onClick={normalize}>Schaal naar 100%</Button></div>}
@@ -508,7 +516,7 @@ function AlFixedSplit({ app, amount }) {
         <div className="al-mp__list">
           {rows.map(x => (
             <div className="al-mp__row" key={x.key}>
-              <span className="al-label"><Swatch color={x.color} />{x.label} <small className="al-mp__pct num">{fmtPct(x.pct, { decimals: x.pct % 1 ? 1 : 0, sign: false })}</small></span>
+              <span className="al-mp__lbl"><span className="al-label"><Swatch color={x.color} />{x.label} <small className="al-mp__pct num">{fmtPct(x.pct, { decimals: x.pct % 1 ? 1 : 0, sign: false })}</small></span>{x.where && <small>{x.where}</small>}</span>
               <span className="al-mp__amt num">
                 <b>{money(x.plan, { decimals: 0 })}</b>
                 <small>{x.done >= 0.5 ? <>al {money(x.done)} · {x.todo >= 0.5 ? <>nog <b>{money(x.todo, { decimals: 0 })}</b></> : 'klaar ✓'}</> : 'nog niets ingelegd'}</small>

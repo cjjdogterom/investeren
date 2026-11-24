@@ -2574,7 +2574,8 @@ function buildPortfolioModel({ parties = [], transactions = [], summaries, flows
   const chartIds = summaries.filter(s => dtInChart(s.party)).map(s => s.party.id);
   const empty = [], closed = [], open = [];
   for (const s of summaries) {
-    if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5)) empty.push(s);
+    // De buffer staat altijd bij je posities, ook leeg (dan zie je hem en kun je er een doel voor zetten).
+    if (!s.transactions.length && !(Math.abs(s.currentValueEur || 0) >= 0.5) && s.party.id !== 'buffer') empty.push(s);
     else if (isClosedSummary(s)) closed.push(s);
     else open.push(s);
   }
