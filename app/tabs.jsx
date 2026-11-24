@@ -217,7 +217,9 @@ function TrTable({ app, groups, showParty = true, menu = true }) {
                       isFinBelAanvullen(tx)
                         ? { label: 'Aanvullen', icon: 'pencil', onClick: () => app.completeFinTx(tx) }
                         : { label: 'Bewerken', icon: 'pencil', onClick: () => app.editTx(tx) },
-                      { label: 'Verwijderen', icon: 'trash-2', danger: true, onClick: () => app.deleteTx(tx.id) },
+                      String(tx.id).indexOf('fin-') === 0
+                        ? { label: 'Annuleren (uit Financieel)', icon: 'x', danger: true, onClick: () => app.cancelFinTx(tx) }
+                        : { label: 'Verwijderen', icon: 'trash-2', danger: true, onClick: () => app.deleteTx(tx.id) },
                     ]} />}
                   </td>
                 </tr>

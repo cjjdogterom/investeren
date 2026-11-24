@@ -2641,6 +2641,17 @@ function App() {
   const openTx = React.useCallback((preset = null) => openOverlay({ kind: 'tx', preset: preset || null, initial: null }), [openOverlay]);
   const editTx = React.useCallback(tx => openOverlay({ kind: 'tx', preset: null, initial: tx }), [openOverlay]);
   // Aan te vullen boeking uit Financieel: open het bewerkformulier als koop (stuk-partijen) of inleg.
+  // Belegging uit Financieel annuleren: weg uit Investeren en komt bij de volgende synchronisatie niet terug
+  // (het id blijft als verwijderd bewaard). In Financieel zelf verandert er niets.
+  const cancelFinTx = React.useCallback(async tx => {
+    if (!tx) return false;
+    const party = allPartiesRef.current.find(p => p.id === tx.party);
+    const body = [party ? party.name : (tx.party || 'Onbekende positie'), fmtDateLong(tx.date), fmtMoney(+tx.amountEur || 0, { decimals: 2 })].join(' · ')
+      + '. Hij verdwijnt uit Investeren en komt bij het synchroniseren niet terug. In je Financieel-systeem blijft de transactie staan; pas daar zo nodig de categorie aan.';
+    const res = await confirmFn({ title: 'Belegging uit Financieel annuleren?', body, confirmLabel: 'Annuleren', cancelLabel: 'Terug' });
+    if (!res.ok) return false;
+    return deleteTx(tx.id, { confirm: false });
+  }, [confirmFn, deleteTx]); // eslint-disable-line
   const completeFinTx = React.useCallback(tx => {
     if (!tx) return;
     const party = allPartiesRef.current.find(p => p.id === tx.party);
@@ -2680,7 +2691,7 @@ function App() {
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
-    openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
+    openTx, editTx, completeFinTx, cancelFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay,
     overlayOpen: overlay !== null, confirm: confirmFn, toast, requestNotify: cfdRequestNotify, intraday, finLog, financieelOverRaw,
   }), [viewState, model, spots, displayTweaks, isMobile, route, navigate, prefs, setPrefs,
     spotStatus, syncStatus, sbOk, supabaseConfig, t212Status, importMsg, meesmanHistStatus,
@@ -2689,7 +2700,7 @@ function App() {
     setSyncedState, updateTweaks, refreshSpot, updateMeesmanNav, loadMeesmanHistory, importT212, deleteT212Txs,
     syncNow, pullNow, exportData, importData, resetData,
     saveTx, saveTxs, deleteTx, saveParty, deleteParty, setWidgetEnabled, setHiddenGroups,
-    openTx, editTx, completeFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
+    openTx, editTx, completeFinTx, cancelFinTx, openTxDetail, openPartyForm, openPrices, openSync, closeOverlay, overlay, confirmFn, toast]);
 
   // Sidebar-tellers
   const driftWarn = React.useMemo(() => {

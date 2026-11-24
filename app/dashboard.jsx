@@ -649,7 +649,10 @@ function OvFinOpen({ app }) {
               title={finBelPartyLabel(parties, tx.party)}
               subtitle={party ? fmtDateLong(tx.date) : `${fmtDateLong(tx.date)} · onbekende positie, kies de juiste bij aanvullen`}
               value={<Money value={+tx.amountEur || 0} decimals={2} />}
-              secondary={<Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>} />
+              secondary={<span style={{ display: 'inline-flex', gap: 6 }}>
+                <Button size="sm" variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>
+                <IconButton size="sm" icon="x" label="Annuleren" title="Annuleren: niet als belegging meetellen" onClick={() => app.cancelFinTx(tx)} />
+              </span>} />
           );
         })}
       </div>

@@ -939,7 +939,9 @@ function TxDetailSheet({ app, open, txId, onClose }) {
   const footer = (
     <div className="md-foot">
       <span className="md-foot__reason" />
-      <Button variant="danger" icon="trash-2" onClick={() => app.deleteTx(tx.id).then(ok => { if (ok && onClose) onClose(); })}>Verwijderen</Button>
+      {String(tx.id).indexOf('fin-') === 0
+        ? <Button variant="danger" icon="x" onClick={() => app.cancelFinTx(tx).then(ok => { if (ok && onClose) onClose(); })}>Annuleren</Button>
+        : <Button variant="danger" icon="trash-2" onClick={() => app.deleteTx(tx.id).then(ok => { if (ok && onClose) onClose(); })}>Verwijderen</Button>}
       {finAanvulTx
         ? <Button variant="primary" icon="pencil" onClick={() => app.completeFinTx(tx)}>Aanvullen</Button>
         : <Button variant="primary" icon="pencil" onClick={() => app.editTx(tx)}>Bewerken</Button>}
