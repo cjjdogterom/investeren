@@ -1338,6 +1338,10 @@ function App() {
   const refreshChainRef = React.useRef(null);
   React.useEffect(() => { try { localStorage.setItem(CHAIN_CACHE_KEY, JSON.stringify(chainBalances)); } catch (e) { /* ignore */ } }, [chainBalances]);
   const [stockQuotes, setStockQuotes] = React.useState(loadStockCache);
+  // Bewaarde Meesman-schattingen per dag (Supabase-rij 'meesman-est'): { days: { 'yyyy-mm-dd': { nav, navDate, official, at } } }
+  const [meesmanEstStore, setMeesmanEstStore] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('investeringen-meesman-est') || 'null') || { days: {} }; } catch (e) { return { days: {} }; }
+  });
   // CFD-posities: live ticks (per seconde in beeld) plus de wisselkoers naar euro.
   const cfdLiveSymbols = React.useMemo(() => {
     const syms = cfdSymbolsOf(state.parties);
@@ -2092,6 +2096,10 @@ function App() {
     Object.entries(chainBalances || {}).map(([k, v]) => `${k}:${v && v.address}:${v && v.qty}`).join(','),
   ].join('|');
   const meesmanEstNow = meesmanEstimate(meesmanNavResolved, meesmanHistResolved, (stockQuotes || {})[MEESMAN_PROXY]);
+  const spyQuote = (stockQuotes || {})[MEESMAN_PROXY];
+  const spyHistSig = spyQuote && spyQuote.history && spyQuote.history.length ? spyQuote.history.length + ':' + spyQuote.history[spyQuote.history.length - 1].date + ':' + spyQuote.history[spyQuote.history.length - 1].eur : '0';
+  const meesmanEstDays = React.useMemo(() => meesmanEstDaily(meesmanHistResolved, spyQuote, meesmanEstStore),
+    [histSig(meesmanHistResolved), spyHistSig, meesmanEstStore, todayIsoLocal()]); // eslint-disable-line
   const spots = React.useMemo(() => ({
     goldSpotEurPerGram:    displayTweaks.goldSpotEurPerGram,
     silverSpotEurPerOunce: displayTweaks.silverSpotEurPerOunce,
@@ -2103,6 +2111,7 @@ function App() {
     meesmanNavEur:         meesmanEstNow ? meesmanEstNow.nav : meesmanNavResolved,
     meesmanNavOfficial:    meesmanNavResolved,
     meesmanEst:            meesmanEstNow,
+    meesmanEstDaily:       meesmanEstDays,
     meesmanNavHistory:     meesmanHistResolved,
     goldHistory:           state.goldHistory   || [],
     silverHistory:         state.silverHistory || [],
@@ -2116,7 +2125,7 @@ function App() {
     t212Live:              t212Live,
     // Rendement Trading 212 vanaf deze datum (standaard 11-11-2026; leeg = vanaf het begin).
     t212Start:             tweaks.t212Start === undefined ? '2026-11-11' : (tweaks.t212Start || null),
-  }), [spotsKey, stockQuotes, modelTicks, tweaks.stockNames, t212Live, tweaks.t212Start]); // eslint-disable-line
+  }), [spotsKey, stockQuotes, modelTicks, tweaks.stockNames, t212Live, tweaks.t212Start, meesmanEstDays]); // eslint-disable-line
 
   // state.parties is dé bron van waarheid (gesynced via Supabase). Fallback op seed PARTIES
   // alleen zolang er nog nooit partijen (of tombstones) waren.
@@ -2409,6 +2418,45 @@ function App() {
       }).then(() => {}, () => {});
   }, [financieelOverRaw && normalizeFinancieelOver(financieelOverRaw) && normalizeFinancieelOver(financieelOverRaw).bedrag, sbOk]); // eslint-disable-line
   React.useEffect(() => { try { localStorage.setItem('investeringen-intraday-v1', JSON.stringify(intraday)); } catch (e) { /* ignore */ } }, [intraday]);
+  // Meesman-schatting van vandaag bewaren (elke minuut komt er een nieuwe ETF-koers): zo is de schatting van
+  // gisteren morgen nog bekend en vergelijkt 1D schatting met schatting.
+  const meesmanEstMergeRef = React.useRef(null);
+  React.useEffect(() => {
+    const est = meesmanEstNow;
+    const today = todayIsoLocal();
+    const entry = est ? { nav: Math.round(est.nav * 1e4) / 1e4, navDate: est.navDate, official: est.official, at: new Date().toISOString() } : null;
+    const merge = remote => {
+      const days = { ...((remote && remote.days) || {}) };
+      if (entry) days[today] = entry;
+      const keep = addDaysIso(today, -800);
+      Object.keys(days).forEach(d => { if (d < keep) delete days[d]; });
+      return { days };
+    };
+    const cur = meesmanEstStore.days && meesmanEstStore.days[today];
+    const changed = entry && (!cur || Math.abs(cur.nav - entry.nav) >= 0.0001 || cur.navDate !== entry.navDate);
+    if (changed) {
+      const next = merge(meesmanEstStore);
+      setMeesmanEstStore(next);
+      try { localStorage.setItem('investeringen-meesman-est', JSON.stringify(next)); } catch (e) { /* ignore */ }
+    }
+    if (!sbOk) return;
+    // Eén keer per sessie de rij ophalen (schattingen van andere apparaten), daarna alleen schrijven bij een wijziging.
+    if (!changed && meesmanEstMergeRef.current) return;
+    const client = getSupabaseClient(supabaseConfig);
+    if (!client) return;
+    meesmanEstMergeRef.current = true;
+    client.from('portfolio').select('data').eq('id', 'meesman-est').maybeSingle().then(({ data }) => {
+      const remote = (data && data.data) || { days: {} };
+      const local = (() => { try { return JSON.parse(localStorage.getItem('investeringen-meesman-est') || 'null'); } catch (e) { return null; } })() || { days: {} };
+      const days = { ...(remote.days || {}) };
+      Object.entries(local.days || {}).forEach(([d, v]) => { if (!days[d] || String(v.at || '') > String(days[d].at || '')) days[d] = v; });
+      const next = merge({ days });
+      setMeesmanEstStore(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      try { localStorage.setItem('investeringen-meesman-est', JSON.stringify(next)); } catch (e) { /* ignore */ }
+      if (JSON.stringify(next) !== JSON.stringify(remote)) return client.from('portfolio').upsert({ id: 'meesman-est', data: next }, { onConflict: 'id' });
+      return null;
+    }).then(() => {}, () => {});
+  }, [meesmanEstNow && meesmanEstNow.nav, meesmanEstNow && meesmanEstNow.navDate, sbOk]); // eslint-disable-line
   const intradayRef = React.useRef({ model: null, ok: false });
   intradayRef.current = { model, spots, ok: sbOk && !syncStatus.error && !syncStatus.loading && !!syncStatus.syncedAt && !!spotStatus.fetchedAt && !spotStatus.loading && (state.transactions || []).length > 0
     && (!t212Sleutel || liveSeenRef.current.t212) && (!financieelSleutel || liveSeenRef.current.fin)

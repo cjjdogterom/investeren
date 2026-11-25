@@ -608,6 +608,38 @@ function meesmanEstimate(navEur, navHistory, quote, todayIso = todayIsoLocal()) 
   if (!(factor > 0.8 && factor < 1.25)) return null;   // onwaarschijnlijke sprong: niet schatten
   return { nav: navEur * factor, official: navEur, navDate, factor, proxy: MEESMAN_PROXY, at: quote.marketTime || quote.fetchedAt || null };
 }
+// Schatting per dag tussen de weekkoersen, zodat de waarde van gisteren ook een schatting is (1D = schatting nu
+// t.o.v. schatting gisteren) en de grafiek per dag meebeweegt. Anker = laatste officiële koers op of vóór die dag;
+// zodra er een nieuwe officiële koers is, rekenen de dagen erna vanaf dat anker. Bron: slotkoersen van de ETF;
+// ontbreken die, dan de bewaarde schatting (rij 'meesman-est', elke minuut bijgewerkt) met hetzelfde anker.
+function meesmanEstDaily(navHistory, quote, stored, todayIso = todayIsoLocal()) {
+  const hist = (navHistory || []).filter(h => h && h.date && +h.nav > 0).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const out = {};
+  if (!hist.length) return out;
+  const spy = ((quote && quote.history) || []).filter(h => h && h.date && +h.eur > 0).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const days = (stored && stored.days) || {};
+  const closeOn = d => { let r = null; for (const h of spy) { if (h.date <= d) r = h; else break; } return r; };
+  let start = hist[0].date;
+  const firstSpy = spy.length ? spy[0].date : null;
+  const firstStored = Object.keys(days).sort()[0] || null;
+  const from = [firstSpy, firstStored].filter(Boolean).sort()[0];
+  if (!from) return out;
+  if (from > start) start = from;
+  let hi = 0;
+  for (let d = start; d < todayIso; d = addDaysIso(d, 1)) {
+    while (hi + 1 < hist.length && hist[hi + 1].date <= d) hi++;
+    const anchor = hist[hi];
+    if (!anchor || anchor.date > d || anchor.date === d) continue;   // officiële koers op die dag
+    const ref = closeOn(anchor.date), cur = closeOn(d);
+    if (ref && cur && cur.date > anchor.date) {
+      const f = +cur.eur / +ref.eur;
+      if (f > 0.8 && f < 1.25) { out[d] = anchor.nav * f; continue; }
+    }
+    const st = days[d];
+    if (st && +st.nav > 0 && st.navDate === anchor.date) out[d] = +st.nav;
+  }
+  return out;
+}
 function spotEurForParty(party, spots) {
   if (party.unit === 'gram')    return spots.goldSpotEurPerGram;
   if (party.unit === 'ounce')   return spots.silverSpotEurPerOunce;
@@ -1779,7 +1811,8 @@ function buildPartyTimeSeries(transactions, parties, spots) {
         v = weeklyInterpolatedValue(totalValuations, iso, s.qty) ?? s.qty;
       } else {
         let px = null;
-        // Meesman: gebruik historische NAV indien beschikbaar
+        // Meesman: tussen de weekkoersen de schatting van die dag (zie meesmanEstDaily), anders de officiële koers
+        if (p.id === 'meesman' && spots.meesmanEstDaily && +spots.meesmanEstDaily[iso] > 0) px = +spots.meesmanEstDaily[iso];
         if (px == null && p.id === 'meesman' && spots.meesmanNavHistory?.length) {
           const histNav = findNavForDate(spots.meesmanNavHistory, iso);
           if (histNav != null) px = histNav;
@@ -2247,10 +2280,11 @@ function holdingSublineBase(s, spots = {}, todayIso = todayIsoLocal()) {
     case 'post':   return { text: postCoinsText(s), staleDays: null };
     case 'gram':
     case 'ounce': {
-      if (s.pmParts) return { text: s.pmParts.map(x => `${x.key === 'fysiek' ? 'Fysiek' : 'ETF'} ${fmtMoney(x.value)}`).join(' · '), staleDays: null };
-      return kind === 'gram'
-        ? { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`, staleDays: null }
-        : { text: `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`, staleDays: null };
+      const base = kind === 'gram'
+        ? `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.goldSpotEurPerGram, { decimals: 2 })}/g`
+        : `${holdingQtyText(s)} · ${fmtMoney(px ?? spots.silverSpotEurPerOunce, { decimals: 2 })}/oz`;
+      const etf = (s.pmParts || []).filter(x => x.key !== 'fysiek').reduce((a, x) => a + (+x.value || 0), 0);
+      return { text: etf > 0.5 ? `${base} · ETF ${fmtMoney(etf)}` : base, staleDays: null };
     }
     case 'mixed':  return { text: `Au ${fmtQty(s.goldQty || 0, 'g', { decimals: 2 })} · Ag ${fmtQty(s.silverQty || 0, 'oz', { decimals: 2 })}`, staleDays: null };
     default: {
@@ -3033,7 +3067,10 @@ function pmRegroup(model) {
     if (!etfs.length) continue;
     const g = model.byId[metal];
     const v = sum(etfs, 'value'), c = sum(etfs, 'cost');
-    const parts = [{ key: 'fysiek', label: metal === 'goud' ? 'Fysiek goud' : 'Fysiek zilver', sub: 'Eigen bezit', value: g.currentValueEur || 0, pnl: g.pnl || 0 }]
+    const gpx = +g.currentUnitPrice || 0;
+    const gq = +g.quantity || 0, gu = metal === 'goud' ? 'g' : 'oz';
+    const fsub = gq > 0 ? `${dtFmt2(gq)} ${gu}${gpx > 0 ? ` · ${fmtMoney(gpx, { decimals: 2 })}/${gu}` : ''}` : 'Eigen bezit';
+    const parts = [{ key: 'fysiek', label: metal === 'goud' ? 'Fysiek goud' : 'Fysiek zilver', sub: fsub, value: g.currentValueEur || 0, pnl: g.pnl || 0 }]
       .concat(etfs.map(x => ({ key: x.symbol, label: x.name || x.symbol, sub: `ETF via Trading 212 · ${x.symbol}`, value: x.value, pnl: x.value - x.cost, quantity: x.quantity, priceEur: x.priceEur })));
     const ng = { ...g, currentValueEur: (g.currentValueEur || 0) + v, costBasis: (g.costBasis || 0) + c, invested: (g.invested || 0) + c, pnl: (g.pnl || 0) + (v - c), pmParts: parts };
     ng.pnlPct = pct(ng.pnl, ng.invested);
@@ -3271,7 +3308,7 @@ Object.assign(window, {
   FIN_OVER_PARTY_ID, FINANCIEEL_API_URL, mergeFinancieelHistory, finHistEntry, financieelHistoryPoints, financieelApiToOver, isFinOverTx, normalizeFinancieelOver, financieelOverSummary, financieelOverStaleDays,
   holdingSubline, holdingQtyText, holdingPriceText, goalProgress, cagrOf, isClosedSummary,
   buildFlowSeries, buildPortfolioModel, seriesExcluding, holdingsAt,
-  intradayClean, allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, inAllocation, dtIncluded, finSpaarList, bankSyncMerge, isBankSyncTx, monthInflowByParty, MEESMAN_PROXY, meesmanEstimate, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
+  intradayClean, allocPartsOf, isPreciousMetalEtf, pmRegroup, pmMetalOf, inAllocation, dtIncluded, finSpaarList, bankSyncMerge, isBankSyncTx, monthInflowByParty, MEESMAN_PROXY, meesmanEstimate, meesmanEstDaily, isSmallAutoTx, setTxBtcHistory, btcPriceOn, txBtcNote, PERIODS, periodRange, periodStats, partyPeriodGain, sumPeriodGains, buildWidgetSnapshot, cumulativeTwr, xirr, monthlyNetFlows, downsample,
   driftRows, PRICE_ASSETS, priceChange, OVERVIEW_MODULES, mergeWidgets, isModuleEnabled,
   PENSION_DEFAULTS, PENSION_LIMITS, computePension, ATTENTION_THRESHOLDS,
   PARTIES, TX_TYPES, TX_LABELS,
